@@ -7,7 +7,7 @@ OpenContracts 集成由 MCP 能力面和 WorkerKey 文件导入面组成。
 ```mermaid
 flowchart LR
     Operator[OpenContracts Operator]
-    MCP[Corpus-scoped OpenContracts MCP]
+    MCP[OpenContracts MCP]
     Gateway[OpenContracts Upload Gateway]
     ImportAPI[Official Document Import API]
     OC[OpenContracts]
@@ -23,7 +23,7 @@ flowchart LR
 
 ## MCP 能力面
 
-OpenContracts 官方 `docs/mcp/` 和运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。项目内的 Skill 和 Persona 根据具体业务任务选择工具，不复制 OpenContracts 的读取实现。
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。项目内的 Skill 和 Persona 根据具体业务任务选择工具，不复制 OpenContracts 的远端读取实现。
 
 推荐 corpus-scoped endpoint：
 
@@ -35,13 +35,15 @@ http://opencontracts-api:8000/mcp/corpus/contracts/
 
 | Tool | 用途 |
 |---|---|
-| `get_corpus_info` | 读取目标 Corpus 信息 |
+| `get_corpus_info` | 读取目标 Corpus 信息和标签集 |
 | `list_documents` | 列出和搜索合同文档 |
-| `get_document_text` | 读取解析后的合同正文 |
-| `list_annotations` | 读取文档标注，可按页和标签筛选 |
+| `get_document_text` | 分窗口读取解析后的合同正文 |
+| `list_annotations` | 读取文档标注，可按页、标签和文本筛选 |
+| `list_relationships` | 读取文档关系和结构化关系数据 |
 | `search_corpus` | 在 Corpus 中执行语义检索 |
-| `list_threads` | 读取 Corpus 讨论线程 |
+| `list_threads` | 读取 Corpus 或文档讨论线程 |
 | `get_thread_messages` | 读取线程消息和层级关系 |
+| `create_thread_message` | 在已有线程中创建消息，需要认证用户上下文 |
 
 MCP Resources：
 
@@ -61,9 +63,9 @@ get_document_text
 search_corpus
 ```
 
-合同问答、风险分析、标注核验和讨论流程按任务增加 `list_annotations`、`list_threads` 和 `get_thread_messages`。
+合同问答、风险分析、结构化关系、标注和讨论流程按任务增加 `list_annotations`、`list_relationships`、`list_threads`、`get_thread_messages` 和 `create_thread_message`。
 
-MCP 连接配置属于 AstrBot MCP 管理界面。上传 Gateway 不保存 MCP 读取凭证。
+MCP 连接与认证属于 AstrBot MCP 管理界面。上传 Gateway 不保存 MCP 读取凭证。`create_thread_message` 由 OpenContracts MCP 在 Tool 内校验认证和资源权限。
 
 ## WorkerKey 文件导入面
 
@@ -100,7 +102,7 @@ sequenceDiagram
     G->>OC: WorkerKey + multipart/form-data
     OC-->>G: created / updated / error
     G-->>O: 标准化写入结果
-    O->>M: get_document_text / list_annotations / search_corpus
+    O->>M: get_document_text / list_annotations / list_relationships / search_corpus
     M-->>O: 处理和检索结果
 ```
 
@@ -118,7 +120,7 @@ stateDiagram-v2
     TextReady --> Processing: 检索尚未就绪
 ```
 
-`created` 或 `updated` 表示导入端点已执行写入。客户侧 `COMPLETE` 由 Operator 根据当前任务要求，通过 MCP 读取和检索结果确认。
+`created` 或 `updated` 表示导入端点已执行写入。客户侧 `COMPLETE` 由 Operator 根据当前任务要求，通过 MCP 的正文、标注、关系或检索结果确认。
 
 ## 本地 Receipt
 
