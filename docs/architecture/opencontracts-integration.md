@@ -2,7 +2,7 @@
 
 ## 运行模型
 
-OpenContracts 集成由读取路径和写入路径组成。
+OpenContracts 集成由 MCP 能力面和 WorkerKey 文件导入面组成。
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
     OC[OpenContracts]
     Receipt[(Upload Audit Receipts)]
 
-    Operator -->|get_corpus_info / list_documents / get_document_text / search_corpus| MCP
+    Operator -->|合同库操作| MCP
     MCP --> OC
     Operator -->|validated upload command| Gateway
     Gateway -->|WorkerKey + multipart| ImportAPI
@@ -21,15 +21,38 @@ flowchart LR
     Gateway --> Receipt
 ```
 
-## 读取路径
+## MCP 能力面
 
-OpenContracts Operator 使用 AstrBot 中配置的 corpus-scoped MCP：
+OpenContracts 官方 `docs/mcp/` 和运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。项目内的 Skill 和 Persona 根据具体业务任务选择工具，不复制 OpenContracts 的读取实现。
+
+推荐 corpus-scoped endpoint：
 
 ```text
 http://opencontracts-api:8000/mcp/corpus/contracts/
 ```
 
-该 endpoint 提供：
+当前 scoped endpoint 提供：
+
+| Tool | 用途 |
+|---|---|
+| `get_corpus_info` | 读取目标 Corpus 信息 |
+| `list_documents` | 列出和搜索合同文档 |
+| `get_document_text` | 读取解析后的合同正文 |
+| `list_annotations` | 读取文档标注，可按页和标签筛选 |
+| `search_corpus` | 在 Corpus 中执行语义检索 |
+| `list_threads` | 读取 Corpus 讨论线程 |
+| `get_thread_messages` | 读取线程消息和层级关系 |
+
+MCP Resources：
+
+```text
+corpus://{corpus_slug}
+document://{corpus_slug}/{document_slug}
+annotation://{corpus_slug}/{document_slug}/{annotation_id}
+thread://{corpus_slug}/threads/{thread_id}
+```
+
+上传流程通常使用：
 
 ```text
 get_corpus_info
@@ -38,17 +61,11 @@ get_document_text
 search_corpus
 ```
 
-读取路径负责：
+合同问答、风险分析、标注核验和讨论流程按任务增加 `list_annotations`、`list_threads` 和 `get_thread_messages`。
 
-- 确认目标 corpus；
-- 按原始文件名主体搜索文档；
-- 获取文档 slug 和标题；
-- 读取解析后的正文窗口；
-- 通过语义搜索核验检索可用性。
+MCP 连接配置属于 AstrBot MCP 管理界面。上传 Gateway 不保存 MCP 读取凭证。
 
-MCP 连接配置属于 AstrBot MCP 管理界面。上传插件不保存 MCP 读取凭证。
-
-## 写入路径
+## WorkerKey 文件导入面
 
 Upload Gateway 使用 CorpusAccessToken 的 WorkerKey 调用：
 
@@ -62,36 +79,47 @@ Authorization: WorkerKey <token>
 - 暂存文件路径、大小和 SHA-256 校验；
 - 原始文件名和标题传递；
 - 客户重新上传确认校验；
-- 新合同导入和同文件名版本写入；
+- 新合同导入和同路径版本写入；
 - 导入结果标准化；
 - 上传审计 receipt。
 
-## 合同发现规则
+## 合同发现与上传流程
 
-首次检查使用 `list_documents(search=<原始文件名主体>)`。Operator 对返回文档的 `title` 做精确比较：
+```mermaid
+sequenceDiagram
+    participant O as OpenContracts Operator
+    participant M as OpenContracts MCP
+    participant G as Upload Gateway
+    participant OC as OpenContracts
 
-- 精确匹配：远端已有对应合同；
-- 没有匹配：可以进入新合同写入；
-- MCP 调用失败或结构不完整：状态为 `BLOCKED`；
-- 检查后发生写入竞争：Gateway 根据导入端点的路径冲突返回 `confirmation_required`。
+    O->>M: get_corpus_info
+    M-->>O: corpus 信息
+    O->>M: list_documents(search=业务检索词)
+    M-->>O: 文档摘要
+    O->>G: opencontracts_upload_document
+    G->>OC: WorkerKey + multipart/form-data
+    OC-->>G: created / updated / error
+    G-->>O: 标准化写入结果
+    O->>M: get_document_text / list_annotations / search_corpus
+    M-->>O: 处理和检索结果
+```
 
-导入端点仍是最终并发保护层。
+具体合同识别策略属于 Skill，可随着业务规则和 MCP 能力演进。Gateway 接收 OpenContracts 导入结果并记录实际写入状态。
 
 ## 处理完成条件
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Discovered
-    Discovered --> ImportAccepted: created / updated
+    [*] --> ImportAccepted
     ImportAccepted --> TextReady: get_document_text 返回正文
-    TextReady --> SearchReady: search_corpus 返回该文档命中
+    TextReady --> SearchReady: search_corpus 返回结果
     SearchReady --> Complete
     ImportAccepted --> Processing: 正文尚未就绪
     TextReady --> Processing: 检索尚未就绪
 ```
 
-`created`、`updated` 或 HTTP 201 表示导入已接收。`COMPLETE` 由 MCP 正文读取和语义检索共同确认。
+`created` 或 `updated` 表示导入端点已执行写入。客户侧 `COMPLETE` 由 Operator 根据当前任务要求，通过 MCP 读取和检索结果确认。
 
 ## 本地 Receipt
 
-Receipt 记录上传发生过的事实，包括文件哈希、原始文件名、文档 ID、服务端导入状态和任务 ID。它用于审计和诊断，不参与远端读取。
+Receipt 记录上传发生过的事实，包括文件哈希、原始文件名、文档 ID、服务端导入状态和任务 ID。它用于审计和诊断，不替代 MCP 提供的远端合同数据。
