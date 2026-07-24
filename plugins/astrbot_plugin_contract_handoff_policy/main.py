@@ -38,7 +38,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.4.1 initialized: instance_id=%s",
+            "Contract handoff policy 0.4.3 initialized: instance_id=%s",
             id(self),
         )
 
@@ -189,8 +189,9 @@ class ContractHandoffPolicy(Star):
 
         canonical = dict(task_context)
         canonical["delegated_agent"] = actual_agent
-        canonical["duplicate_authority"] = "opencontracts_remote_rest"
-        canonical["local_receipts_authoritative"] = False
+        canonical["document_read_channel"] = "opencontracts_mcp"
+        canonical["document_write_channel"] = "worker_key_document_import"
+        canonical["receipt_role"] = "upload_audit"
         canonical["remaining_expected_subagents"] = [
             agent
             for agent in expected_agents
@@ -209,9 +210,32 @@ class ContractHandoffPolicy(Star):
                 )
                 canonical["required_tools"] = branch.get("required_tools", [])
 
+        if actual_agent == "opencontracts_operator":
+            canonical["required_tools"] = [
+                "get_corpus_info",
+                "list_documents",
+                "opencontracts_gateway_status",
+                "opencontracts_upload_document",
+                "get_document_text",
+                "search_corpus",
+            ]
+            canonical["integration_sequence"] = [
+                "discover_with_opencontracts_mcp",
+                "write_with_worker_key_import_gateway",
+                "verify_with_opencontracts_mcp",
+            ]
+            canonical["constraints"] = [
+                "OpenContracts MCP 提供合同发现、正文读取、检索和处理核验",
+                "上传网关使用 WorkerKey 执行文档导入写入",
+                "source_files.original_name 作为远端搜索标题和导入文件名",
+                "receipt 只记录上传审计",
+                "结果在当前企业微信事件中同步返回",
+            ]
+
         original_input = tool_args.get("input")
         if (
-            isinstance(original_input, str)
+            actual_agent != "opencontracts_operator"
+            and isinstance(original_input, str)
             and original_input.strip()
         ):
             canonical["main_agent_note"] = (

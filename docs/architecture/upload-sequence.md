@@ -14,23 +14,21 @@ sequenceDiagram
     participant OC as OpenContracts
     participant RG as Result Guard
 
-    U->>R: 上传合同
-    R->>R: 暂存、SHA-256、pending
-    R-->>U: 操作菜单
-    U->>R: 1
+    U->>R: 上传合同并选择 1
     R->>M: contract_task_context
     M->>H: transfer_to_opencontracts_operator
     H->>O: 同步结构化任务
-    O->>MCP: 查询目标 Corpus 与文档身份
-    MCP->>OC: list/read/search
-    OC-->>MCP: 无匹配文档
-    MCP-->>O: new
-    O->>G: upload_document
-    G->>G: 文件路径、大小、SHA-256 校验
-    G->>OC: WorkerKey 文档导入
+    O->>MCP: get_corpus_info
+    MCP-->>O: corpus 信息
+    O->>MCP: list_documents(search=文件名主体)
+    MCP-->>O: 无精确匹配
+    O->>G: opencontracts_gateway_status
+    G-->>O: WorkerKey 写入配置可用
+    O->>G: opencontracts_upload_document
+    G->>OC: WorkerKey + /api/imports/documents/
     OC-->>G: created / processing
     G-->>O: 上传回执
-    O->>MCP: 核验处理状态
+    O->>MCP: list_documents + get_document_text + search_corpus
     MCP-->>O: processing 或 verified
     O-->>M: 统一状态标记
     M->>RG: 最终结果
@@ -51,8 +49,8 @@ sequenceDiagram
     U->>R: 选择上传
     R->>M: contract_task_context
     M->>O: 上传任务
-    O->>MCP: 查询文档身份
-    MCP-->>O: existing document
+    O->>MCP: list_documents(search=文件名主体)
+    MCP-->>O: 精确标题匹配
     O-->>M: DUPLICATE_CONFIRMATION_REQUIRED
     M->>RG: 最终状态
     RG->>R: preserve pending reason
@@ -75,23 +73,31 @@ sequenceDiagram
     R->>R: 记录 confirmation_id 和时间
     R->>M: reupload task context
     M->>O: 同步重新上传任务
-    O->>MCP: 重新读取远端文档身份
+    O->>MCP: 重新读取远端文档摘要
     MCP-->>O: existing document
     O->>G: upload_document + confirmation_id
-    G->>G: 校验 Router 确认状态
+    G->>G: 校验会话、哈希、确认编号和有效期
     G->>OC: WorkerKey 文档导入
     OC-->>G: updated / processing
     G-->>O: 新版本上传回执
-    O->>MCP: 核验新版本处理状态
+    O->>MCP: 正文和检索核验
     MCP-->>O: processing 或 verified
     O-->>M: 统一状态
     M-->>U: 客户回复
 ```
 
-## 状态原则
+## 写入竞争
 
-- `created` 或 `updated` 表示导入接口已接收并建立文档记录或版本。
-- `processing` 表示 OpenContracts 仍在解析、标注或建立检索数据。
-- `complete` 由 MCP 正文读取和搜索核验共同确认。
-- `duplicate_confirmation_required` 保留 Router pending，等待确定性指令。
-- `blocked` 表示远端状态不足以安全决定是否写入。
+```mermaid
+sequenceDiagram
+    participant O as OpenContracts Operator
+    participant G as Upload Gateway
+    participant OC as OpenContracts
+
+    O->>G: 新合同上传
+    G->>OC: POST /api/imports/documents/
+    OC-->>G: document path conflict
+    G-->>O: confirmation_required
+```
+
+MCP 检查与导入写入之间可能出现并发变化，因此导入端点的路径冲突会转换为重复确认状态。

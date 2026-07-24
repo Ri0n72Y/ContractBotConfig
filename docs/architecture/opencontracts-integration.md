@@ -1,113 +1,97 @@
-# OpenContracts 集成边界
+# OpenContracts 集成架构
 
-## 设计目标
+## 运行模型
 
-OpenContracts 集成分为读取路径和写入路径，两条路径在 AstrBot 中由不同组件承担。
+OpenContracts 集成由读取路径和写入路径组成。
 
 ```mermaid
 flowchart LR
     Operator[OpenContracts Operator]
-    MCP[OpenContracts MCP Tools]
+    MCP[Corpus-scoped OpenContracts MCP]
     Gateway[OpenContracts Upload Gateway]
-    ImportAPI[Official Import API]
+    ImportAPI[Official Document Import API]
     OC[OpenContracts]
-    Receipt[(Local Receipts)]
+    Receipt[(Upload Audit Receipts)]
 
-    Operator -->|list/read/search/status| MCP
+    Operator -->|get_corpus_info / list_documents / get_document_text / search_corpus| MCP
     MCP --> OC
-    Operator -->|upload command| Gateway
-    Gateway -->|WorkerKey| ImportAPI
+    Operator -->|validated upload command| Gateway
+    Gateway -->|WorkerKey + multipart| ImportAPI
     ImportAPI --> OC
     Gateway --> Receipt
 ```
 
 ## 读取路径
 
-OpenContracts Operator 通过 AstrBot 已配置的 MCP Tools 完成：
-
-- Corpus 发现；
-- 文档列表；
-- 远端文档身份解析；
-- 文档正文读取；
-- Corpus 搜索；
-- 上传后的处理状态和检索可用性核验。
-
-工具名称由 OpenContracts MCP 工具发现结果决定。当前可能使用：
+OpenContracts Operator 使用 AstrBot 中配置的 corpus-scoped MCP：
 
 ```text
-list_public_corpuses
+http://opencontracts-api:8000/mcp/corpus/contracts/
+```
+
+该 endpoint 提供：
+
+```text
+get_corpus_info
 list_documents
 get_document_text
 search_corpus
 ```
 
-Phase 2 应在 Skill 和任务上下文中引用实际可用的 MCP Tool 名称。
+读取路径负责：
+
+- 确认目标 corpus；
+- 按原始文件名主体搜索文档；
+- 获取文档 slug 和标题；
+- 读取解析后的正文窗口；
+- 通过语义搜索核验检索可用性。
+
+MCP 连接配置属于 AstrBot MCP 管理界面。上传插件不保存 MCP 读取凭证。
 
 ## 写入路径
 
-Upload Gateway 使用 WorkerKey 调用 OpenContracts 官方文档导入接口，完成：
-
-- 新合同上传；
-- 客户确认后的版本化重新上传；
-- 文件名、标题、Corpus 和 custom metadata 传递；
-- 导入响应标准化；
-- 本地上传回执保存。
-
-## 合同身份解析
-
-Phase 2 将合同身份解析集中到 OpenContracts Operator 的 MCP 读取流程中。身份判定输入包括：
+Upload Gateway 使用 CorpusAccessToken 的 WorkerKey 调用：
 
 ```text
-original_name
-source_sha256
-target corpus
-MCP 返回的 document id/path/title/source metadata
+POST /api/imports/documents/
+Authorization: WorkerKey <token>
 ```
 
-最终匹配规则应由独立的 `DocumentIdentityResolver` 表达，并以单元测试覆盖：
+写入路径负责：
 
-1. 远端无匹配文档；
-2. 远端存在同文件名和同内容；
-3. 远端存在同文件名但内容变化；
-4. MCP 查询不完整或服务不可用；
-5. 确认后的版本化重新上传。
+- 暂存文件路径、大小和 SHA-256 校验；
+- 原始文件名和标题传递；
+- 客户重新上传确认校验；
+- 新合同导入和同文件名版本写入；
+- 导入结果标准化；
+- 上传审计 receipt。
 
-## 凭证模型
+## 合同发现规则
 
-Gateway 的插件配置只保存写入所需 WorkerKey：
+首次检查使用 `list_documents(search=<原始文件名主体>)`。Operator 对返回文档的 `title` 做精确比较：
 
-```text
-auth_mode = worker_key
-auth_token = <WorkerKey>
+- 精确匹配：远端已有对应合同；
+- 没有匹配：可以进入新合同写入；
+- MCP 调用失败或结构不完整：状态为 `BLOCKED`；
+- 检查后发生写入竞争：Gateway 根据导入端点的路径冲突返回 `confirmation_required`。
+
+导入端点仍是最终并发保护层。
+
+## 处理完成条件
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered
+    Discovered --> ImportAccepted: created / updated
+    ImportAccepted --> TextReady: get_document_text 返回正文
+    TextReady --> SearchReady: search_corpus 返回该文档命中
+    SearchReady --> Complete
+    ImportAccepted --> Processing: 正文尚未就绪
+    TextReady --> Processing: 检索尚未就绪
 ```
 
-OpenContracts MCP 的连接配置由 AstrBot MCP 管理界面维护。Gateway 状态返回中不需要读取 Bearer Token 字段。
+`created`、`updated` 或 HTTP 201 表示导入已接收。`COMPLETE` 由 MCP 正文读取和语义检索共同确认。
 
-## 当前实现差异
+## 本地 Receipt
 
-Gateway 0.5.1 当前仍包含：
-
-```text
-GET /api/imports/documents/lookup/
-```
-
-并以该结果作为重复判断来源。Phase 2 的第一项代码变更是将此读取流程迁移到 MCP，然后缩减 Gateway Tool 契约。
-
-## Phase 2 目标 Tool 集
-
-OpenContracts Operator：
-
-```text
-OpenContracts MCP list/read/search tools
-opencontracts_gateway_status
-opencontracts_upload_document
-```
-
-Gateway：
-
-```text
-opencontracts_gateway_status
-opencontracts_upload_document
-```
-
-`opencontracts_check_duplicate` 的职责将在 MCP 身份解析流程稳定后重新评估：可以移除，也可以改为接收已解析的远端文档结果并执行确定性规则，不再自行发起远端读取请求。
+Receipt 记录上传发生过的事实，包括文件哈希、原始文件名、文档 ID、服务端导入状态和任务 ID。它用于审计和诊断，不参与远端读取。
