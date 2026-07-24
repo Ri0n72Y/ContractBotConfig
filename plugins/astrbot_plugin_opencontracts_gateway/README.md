@@ -2,7 +2,7 @@
 
 本插件负责把 AstrBot 暂存合同写入 OpenContracts 官方文档导入端点，并保存上传审计记录。
 
-OpenContracts 合同库操作由 OpenContracts Operator 使用 MCP 完成。官方 `docs/mcp/` 和运行时工具发现是 MCP 能力的事实来源；Gateway 只承担 WorkerKey 文件导入链路。
+OpenContracts 合同库操作由 OpenContracts Operator 使用 MCP 完成。官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是 MCP 能力的事实来源；Gateway 只承担 WorkerKey 文件导入链路。
 
 ## 职责
 
@@ -18,7 +18,7 @@ OpenContracts 合同库操作由 OpenContracts Operator 使用 MCP 完成。官�
 ```mermaid
 flowchart LR
     Operator[OpenContracts Operator]
-    MCP[Corpus-scoped OpenContracts MCP]
+    MCP[OpenContracts MCP]
     Gateway[OpenContracts Upload Gateway]
     FileService[FileService]
     Confirmation[ConfirmationService]
@@ -30,7 +30,7 @@ flowchart LR
     ImportAPI[Official Document Import API]
     OC[OpenContracts]
 
-    Operator -->|Corpus、文档、正文、标注、检索、线程| MCP
+    Operator -->|Corpus、文档、正文、标注、关系、检索、线程| MCP
     MCP --> OC
     Operator -->|staged_path + sha256 + original_name| Gateway
     Gateway --> UploadService
@@ -75,7 +75,7 @@ sequenceDiagram
     P-->>G: 业务决策
     G->>R: 写入上传审计 receipt
     G-->>O: 标准化业务状态
-    O->>M: 根据任务继续读取、标注或检索
+    O->>M: 根据任务继续读取、标注、关系或检索
     M-->>O: 处理结果
 ```
 
@@ -137,12 +137,14 @@ get_corpus_info
 list_documents
 get_document_text
 list_annotations
+list_relationships
 search_corpus
 list_threads
 get_thread_messages
+create_thread_message
 ```
 
-Gateway 不代理这些工具，也不保存 MCP 读取凭证。
+`create_thread_message` 需要认证用户上下文。MCP 认证由 AstrBot MCP 连接管理。Gateway 不代理这些工具，也不保存 MCP 读取凭证。
 
 ## 配置
 
