@@ -29,7 +29,7 @@ main / 944253b
 
 ## OpenContracts MCP 事实来源
 
-OpenContracts 官方 `docs/mcp/` 与运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。本项目不依据局部字段推断 MCP 能力不足，也不在 Gateway 中复制远端读取实现。
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现与运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。本项目不依据局部字段推断 MCP 能力不足，也不在 Gateway 中复制远端读取实现。
 
 Corpus-scoped MCP 当前公开：
 
@@ -38,9 +38,11 @@ get_corpus_info
 list_documents
 get_document_text
 list_annotations
+list_relationships
 search_corpus
 list_threads
 get_thread_messages
+create_thread_message
 ```
 
 对应 Resources：
@@ -52,7 +54,9 @@ annotation://{corpus_slug}/{document_slug}/{annotation_id}
 thread://{corpus_slug}/threads/{thread_id}
 ```
 
-上传、问答、风险分析、标注和讨论线程流程按任务选择这些能力。后续新增 OpenContracts 操作时，先查看官方 `docs/mcp/` 和 AstrBot 中的工具发现结果。
+`create_thread_message` 由 MCP Tool 本身校验认证和资源权限。MCP 认证由 AstrBot MCP 连接管理。
+
+上传、问答、风险分析、关系、标注和讨论线程流程按任务选择这些能力。后续新增 OpenContracts 操作时，先查看官方 `docs/mcp/`、MCP 服务实现和 AstrBot 中的工具发现结果。
 
 ## 已确认的设计
 
@@ -60,7 +64,7 @@ thread://{corpus_slug}/threads/{thread_id}
 
 ```text
 OpenContracts Operator
-├── OpenContracts MCP：Corpus、文档、正文、标注、检索和讨论线程
+├── OpenContracts MCP：Corpus、文档、正文、标注、关系、检索和讨论线程
 └── Upload Gateway：WorkerKey 文档导入
 ```
 
@@ -72,7 +76,7 @@ Gateway 配置中不包含读取 Bearer Token，也不实现 `/api/imports/docum
 
 ### OpenContracts 版本语义
 
-OpenContracts 对同一路径再次导入可返回 `updated`，表示新版本已经写入。Gateway 记录实际服务端结果，并区分带确认和未带确认的版本写入。
+OpenContracts 对同路径再次导入可返回 `updated`，表示新版本已经写入。Gateway 记录实际服务端结果，并区分带确认和未带确认的版本写入。
 
 ## 本轮修复
 
