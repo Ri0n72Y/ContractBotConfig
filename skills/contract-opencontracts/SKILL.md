@@ -7,10 +7,10 @@ description: 使用 OpenContracts MCP 执行合同库操作，并通过 WorkerKe
 
 OpenContracts Operator 使用两个能力面：
 
-- corpus-scoped OpenContracts MCP：Corpus、文档、正文、标注、语义检索和讨论线程；
+- OpenContracts MCP：Corpus、文档、正文、标注、关系、语义检索和讨论线程；
 - `opencontracts_upload_document`：WorkerKey 认证的官方文档导入写入。
 
-OpenContracts 官方 `docs/mcp/` 和运行时工具发现是能力、参数和返回结构的事实来源。新增或调整合同库操作时，先依据当前 MCP 工具清单选择调用方式。
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力、参数和返回结构的事实来源。新增或调整合同库操作时，先依据当前 MCP 工具清单选择调用方式。
 
 建议 MCP 地址：
 
@@ -21,16 +21,20 @@ http://opencontracts-api:8000/mcp/corpus/contracts/
 ## MCP 能力
 
 ```text
-get_corpus_info       读取目标 Corpus 信息
-list_documents        列出和搜索合同文档
-get_document_text     读取解析后的合同正文
-list_annotations      读取文档标注
-search_corpus         执行语义检索
-list_threads          读取 Corpus 讨论线程
-get_thread_messages   读取线程消息
+get_corpus_info        读取目标 Corpus 信息和标签集
+list_documents         列出和搜索合同文档
+get_document_text      分窗口读取解析后的合同正文
+list_annotations       读取文档标注
+list_relationships     读取文档关系和结构化关系
+search_corpus          执行语义检索
+list_threads           读取 Corpus 或文档讨论线程
+get_thread_messages    读取线程消息
+create_thread_message  在已有线程中创建消息
 ```
 
-上传流程使用其中的合同发现、正文读取和检索能力。合同问答、风险分析、标注核验和讨论任务按目标调用其他工具。
+`create_thread_message` 需要经过认证的 MCP 用户上下文。认证与权限由 OpenContracts MCP 和 AstrBot MCP 连接管理。
+
+上传流程使用其中的合同发现、正文读取和检索能力。合同问答、风险分析、关系核验、标注和讨论任务按目标调用其他工具。
 
 ## 上传流程
 
@@ -47,15 +51,22 @@ get_thread_messages   读取线程消息
    - 标题使用合同任务中的业务标题；没有明确标题时使用原始文件名主体
    - `duplicate_confirmation_id` 使用任务上下文中的确认编号
 6. 导入已接收后，通过 `list_documents` 和 `get_document_text` 查找并读取远端合同。
-7. 使用 `search_corpus` 核验当前合同已进入检索链路；任务涉及标注时可调用 `list_annotations`。
+7. 使用 `search_corpus` 核验当前合同已进入检索链路；任务涉及标注或关系时调用 `list_annotations` 或 `list_relationships`。
 8. 正文或检索尚未就绪时首行输出 `[CONTRACT_UPLOAD:PROCESSING]`；当前任务要求的 MCP 核验完成后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
+
+## 其他合同库任务
+
+- 合同条款问答：`list_documents`、`get_document_text`、`search_corpus`。
+- 风险和结构分析：`get_document_text`、`list_annotations`、`list_relationships`、`search_corpus`。
+- Corpus 讨论读取：`list_threads`、`get_thread_messages`。
+- 向已有讨论线程提交消息：`create_thread_message`，仅在用户明确要求且 MCP 已认证时调用。
 
 ## MCP 结果处理
 
 - 以工具实际返回的字段和状态为准；
 - 工具调用失败或当前任务所需结果尚未形成时，返回对应的 `BLOCKED` 或 `PROCESSING` 状态；
 - 不使用本地 receipt 代替 OpenContracts 远端合同数据；
-- 需要标注、线程或消息数据时，直接调用对应 MCP Tool。
+- 需要标注、关系、线程或消息数据时，直接调用对应 MCP Tool。
 
 ## 写入结果
 
