@@ -37,7 +37,7 @@
   "upload_blocked_text": {
     "description": "无法确认远端状态且未执行上传时的客户回复",
     "type": "string",
-    "default": "暂时无法确认合同系统中的文件状态，因此没有执行上传。请检查 OpenContracts REST 路径查询端点及容器服务后重试。"
+    "default": "暂时无法确认合同系统中的文件状态，因此没有执行上传。请检查 OpenContracts MCP 连接和文档导入服务后重试。"
   },
   "upload_failed_text": {
     "description": "正式调用失败时的客户回复",

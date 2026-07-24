@@ -67,7 +67,7 @@ class WecomFinalResultGuard(Star):
             config.get(
                 "upload_blocked_text",
                 "暂时无法确认合同系统中的文件状态，因此没有执行上传。"
-                "请检查 OpenContracts REST 路径查询端点及容器服务后重试。",
+                "请检查 OpenContracts MCP 连接和文档导入服务后重试。",
             )
         ).strip()
         self.upload_failed_text = str(
@@ -88,7 +88,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.2.3 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.0 initialized: instance_id=%s",
             id(self),
         )
 
@@ -143,13 +143,10 @@ class WecomFinalResultGuard(Star):
 
         if (
             '"status": "unknown"' in lowered
-            or "remote_duplicate_check" in lowered
-            or "lookup_path" in lowered
-            or "remote_rest_path" in lowered
-            or "rest_endpoint_missing" in lowered
-            or "remote_duplicate_check" in lowered
-            or "路径重复检查" in value
-            or "rest 路径查询" in lowered
+            or "mcp_document_discovery" in lowered
+            or "mcp_query_incomplete" in lowered
+            or "mcp_unavailable" in lowered
+            or "opencontracts mcp" in lowered
             or "无法确认合同系统" in value
         ):
             return "blocked"
@@ -178,9 +175,10 @@ class WecomFinalResultGuard(Star):
         failed_signals = (
             '"status": "failed"',
             "上传失败",
-            "reupload_path_resolution",
+            "version_write_conflict",
             "request_validation",
             "upstream_service",
+            "import_endpoint_missing",
         )
         if any(
             signal in lowered or signal in value
