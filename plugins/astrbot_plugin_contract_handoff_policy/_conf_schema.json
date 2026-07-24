@@ -1,0 +1,14 @@
+{
+  "force_synchronous_platforms": {
+    "description": "必须同步执行子代理的消息平台",
+    "type": "list",
+    "default": [
+      "wecom"
+    ]
+  },
+  "max_calls_per_agent": {
+    "description": "同一合同任务中每个子代理最多调用次数",
+    "type": "int",
+    "default": 1
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "base_url": "http://opencontracts-api:8000",
+  "auth_mode": "worker_key",
+  "auth_token": "REPLACE_WITH_WORKER_KEY",
+  "lookup_path": "/api/imports/documents/lookup/",
+  "default_corpus_id": "2",
+  "default_corpus_slug": "contracts",
+  "default_make_public": false,
+  "allowed_roots": [
+    "/AstrBot/data/plugins_data/astrbot_plugin_contract_file_router/inbox"
+  ],
+  "data_dir": "data/plugins_data/astrbot_plugin_opencontracts_gateway",
+  "router_state_path": "data/plugins_data/astrbot_plugin_contract_file_router/pending_contract_files.json",
+  "use_receipt_path_hints": true,
+  "remote_timeout_seconds": 30,
+  "require_expected_sha256": true,
+  "max_file_bytes": 104857600,
+  "timeout_seconds": 120,
+  "confirmation_ttl_seconds": 3600,
+  "verify_tls": true
+}

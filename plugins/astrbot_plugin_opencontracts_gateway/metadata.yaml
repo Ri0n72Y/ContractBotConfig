@@ -1,0 +1,9 @@
+name: astrbot_plugin_opencontracts_gateway
+display_name: OpenContracts REST 网关
+desc: 使用 OpenContracts 原生导入 REST API 和配套路由查询 REST 端点完成实时查重、上传及版本化重新上传。
+version: 0.5.1
+author: local
+repo: ""
+astrbot_version: ">=4.23.1,<5"
+support_platforms:
+  - wecom

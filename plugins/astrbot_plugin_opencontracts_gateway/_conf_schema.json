@@ -1,0 +1,20 @@
+{
+  "base_url": {"description":"OpenContracts 服务根地址","type":"string","default":"http://opencontracts-api:8000"},
+  "auth_mode": {"description":"REST 认证方式；路径查重端点使用现有 WorkerKey","type":"string","default":"worker_key","options":["worker_key"]},
+  "auth_token": {"description":"OpenContracts CorpusAccessToken 的 WorkerKey；路径查重和上传复用此凭证","type":"string","default":"","obvious_hint":true},
+  "lookup_path": {"description":"OpenContracts 路径查重 REST 端点；需先安装配套服务端补丁","type":"string","default":"/api/imports/documents/lookup/"},
+  "default_corpus_id": {"description":"可选目标 corpus 原始整数 ID；会与 WorkerKey 绑定的 corpus 交叉校验","type":"string","default":""},
+  "default_corpus_slug": {"description":"目标 corpus slug，仅用于结果标识","type":"string","default":""},
+  "default_make_public": {"description":"合同是否公开","type":"bool","default":false},
+  "allowed_roots": {"description":"允许上传的暂存根目录","type":"list","default":["/AstrBot/data/plugins_data/astrbot_plugin_contract_file_router/inbox"]},
+  "data_dir": {"description":"审计 receipt 目录；receipt 不参与远端不存在判断","type":"string","default":"data/plugins_data/astrbot_plugin_opencontracts_gateway"},
+  "router_state_path": {"description":"合同路由状态文件，用于验证重新上传确认","type":"string","default":"data/plugins_data/astrbot_plugin_contract_file_router/pending_contract_files.json"},
+  "bootstrap_receipts_json": {"description":"可选：导入旧版审计记录或旧路径提示的 JSON 数组","type":"text","default":""},
+  "use_receipt_path_hints": {"description":"重新上传时使用旧 receipt 中的导入文件名恢复同一路径；不用于判定合同是否存在","type":"bool","default":true},
+  "remote_timeout_seconds": {"description":"REST 路径查重超时秒数","type":"int","default":30},
+  "require_expected_sha256": {"description":"强制校验任务 SHA-256","type":"bool","default":true},
+  "max_file_bytes": {"description":"单文件最大字节数","type":"int","default":104857600},
+  "timeout_seconds": {"description":"REST 上传请求超时秒数","type":"int","default":120},
+  "confirmation_ttl_seconds": {"description":"重新上传确认有效期","type":"int","default":3600},
+  "verify_tls": {"description":"HTTPS 证书验证","type":"bool","default":true}
+}
