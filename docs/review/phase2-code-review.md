@@ -8,22 +8,14 @@ Phase 1 已通过 squash merge 进入 `main`：
 944253b  Phase 1 squash
 ```
 
-Phase 2 分支已经重新挂接到该提交，当前 PR 只包含 Phase 2 变更：
+Phase 2 分支已经重新挂接到该提交。当前 PR 的 merge base 是 `944253b`，分支不再携带 squash 前的 Phase 1 提交历史。
 
 ```text
-944253b  Phase 1 squash
-  └── Phase 2-A
+main / 944253b
+  └── phase2-opencontracts-mcp-write-split
 ```
 
-对比 `main`：
-
-```text
-ahead 1
-behind 0
-merge-base = 944253b
-```
-
-旧 PR #2 保留为历史记录。面向 `main` 的审查入口为 PR #3。
+旧 PR #2 保留为历史记录。面向 `main` 的审查入口为 PR #3。PR 合并时使用 squash merge，将 Phase 2-A 的整理提交合并为一个 `main` 提交。
 
 ## 审查范围
 
@@ -143,4 +135,4 @@ python3 -m compileall -q plugins scripts
 
 ## 当前合并状态
 
-Git 历史已经适合对 `main` 审查。PR 保持 Draft，直到当前分支的发布包完成 AstrBot 加载验证。加载通过后即可标记 Ready 并合并。
+Git 历史已经适合对 `main` 审查。PR 保持 Draft，直到当前分支的发布包完成 AstrBot 加载验证。加载通过后即可标记 Ready，并通过 squash merge 合并到 `main`。
