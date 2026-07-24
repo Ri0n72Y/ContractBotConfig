@@ -17,23 +17,25 @@ flowchart LR
 
 ### OpenContracts MCP
 
-OpenContracts 官方 `docs/mcp/` 和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
 
 ```text
 get_corpus_info
 list_documents
 get_document_text
 list_annotations
+list_relationships
 search_corpus
 list_threads
 get_thread_messages
+create_thread_message
 ```
 
-Skill 根据上传、问答、风险分析、标注和讨论线程等任务选择对应工具。
+`create_thread_message` 需要认证用户上下文。Skill 根据上传、问答、风险分析、关系、标注和讨论线程等任务选择对应工具。
 
 ### OpenContracts 写入
 
-Upload Gateway 使用 WorkerKey 和官方 `/api/imports/documents/` 端点。
+Upload Gateway 使用 WorkerKey 和官方 `/api/imports/documents/` 端点完成合同文件导入。
 
 ### Gateway 目录
 
@@ -189,7 +191,7 @@ receipt_role = upload_audit
 ## MVP 完成标准
 
 - OpenContracts 合同库操作来自 MCP Tool 调用；
-- Gateway 状态只报告 WorkerKey 写入配置；
+- Gateway 状态只报告 WorkerKey 文件导入配置；
 - Gateway 运行模块保持职责明确；
 - Router 与 Result Guard 的事件适配层和业务服务分离；
 - 插件 README UML 与代码模块一致；
