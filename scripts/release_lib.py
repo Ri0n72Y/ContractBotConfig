@@ -96,6 +96,13 @@ def skill_versions(root: Path) -> dict[str, str]:
     return versions
 
 
+def display_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def artifact(
     root: Path,
     category: str,
@@ -108,8 +115,8 @@ def artifact(
         category=category,
         name=name,
         version=version,
-        source=str(source.relative_to(root)),
-        file=str(output.relative_to(root)),
+        source=display_path(source, root),
+        file=display_path(output, root),
         size_bytes=output.stat().st_size,
         sha256=sha256(output),
     )
