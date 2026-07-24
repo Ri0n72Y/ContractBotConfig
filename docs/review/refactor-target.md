@@ -4,27 +4,32 @@
 
 ```mermaid
 flowchart LR
-    A[Phase 2-A MCP读取与Gateway拆分]
+    A[Phase 2-A MCP能力与Gateway拆分]
     B[Phase 2-B Router状态机拆分]
     C[Phase 2-C Result Guard拆分]
     D[Phase 2-D Handoff纯函数提取]
-    E[集成测试与发布]
+    E[AstrBot加载与发布]
 
     A --> B --> C --> D --> E
 ```
 
 ## Phase 2-A：已完成
 
-### OpenContracts 读取
+### OpenContracts MCP
 
-OpenContracts Operator 使用 corpus-scoped MCP：
+OpenContracts 官方 `docs/mcp/` 和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
 
 ```text
 get_corpus_info
 list_documents
 get_document_text
+list_annotations
 search_corpus
+list_threads
+get_thread_messages
 ```
+
+Skill 根据上传、问答、风险分析、标注和讨论线程等任务选择对应工具。
 
 ### OpenContracts 写入
 
@@ -49,14 +54,12 @@ plugins/astrbot_plugin_opencontracts_gateway/
 │   ├── __init__.py
 │   ├── confirmation_service.py
 │   ├── file_service.py
+│   ├── import_response_policy.py
 │   ├── import_result_service.py
 │   └── upload_service.py
 ├── storage/
 │   ├── __init__.py
 │   └── receipt_store.py
-├── tests/
-│   ├── __init__.py
-│   └── test_services.py
 ├── _conf_schema.json
 ├── metadata.yaml
 └── README.md
@@ -71,6 +74,7 @@ flowchart TD
     Validator[FileService]
     Confirmation[ConfirmationService]
     ImportClient[ImportClient]
+    ResponsePolicy[ImportResponsePolicy]
     ResultService[ImportResultService]
     ReceiptStore[ReceiptStore]
 
@@ -79,6 +83,7 @@ flowchart TD
     UploadService --> Confirmation
     UploadService --> ImportClient
     UploadService --> ResultService
+    ResultService --> ResponsePolicy
     ResultService --> ReceiptStore
 ```
 
@@ -145,7 +150,7 @@ classDiagram
     PendingContract --> DuplicateConfirmation
 ```
 
-JSON Store 负责 DTO 与持久化字典之间的转换；事件处理器通过服务修改状态。
+JSON Store 负责 DTO 与持久化字典之间的转换；事件处理器通过服务修改状态。Task Context Factory 直接使用当前 MCP 与 Gateway 工具名称。
 
 ## Phase 2-C：WeCom Final Result Guard
 
@@ -162,7 +167,7 @@ plugins/astrbot_plugin_wecom_final_result_guard/
     └── utf8_truncator.py
 ```
 
-正式状态标记是分类器的主要输入。兼容旧文本的规则单独维护，并为每条规则记录移除条件。
+正式状态标记是分类器的主要输入。兼容现有文本的规则单独维护。
 
 ## Phase 2-D：Handoff Policy
 
@@ -181,12 +186,13 @@ document_write_channel = worker_key_document_import
 receipt_role = upload_audit
 ```
 
-## 完成标准
+## MVP 完成标准
 
-- OpenContracts 读取日志来自 MCP Tool 调用；
+- OpenContracts 合同库操作来自 MCP Tool 调用；
 - Gateway 状态只报告 WorkerKey 写入配置；
-- Gateway 运行模块均低于 200 行；
+- Gateway 运行模块保持职责明确；
 - Router 与 Result Guard 的事件适配层和业务服务分离；
-- 状态转换具备单元测试；
 - 插件 README UML 与代码模块一致；
-- 发布脚本输出可安装 ZIP 和 SHA-256 清单。
+- `python3 -m compileall -q plugins scripts` 通过；
+- 发布脚本输出可安装 ZIP 和 SHA-256 清单；
+- ZIP 能在 AstrBot WebUI 中加载并完成最小上传流程。
