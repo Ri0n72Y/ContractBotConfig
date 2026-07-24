@@ -4,7 +4,7 @@
 
 本阶段完成：
 
-1. 将 Corpus、文档、正文、标注、语义搜索和讨论线程等合同库操作统一交给 OpenContracts MCP。
+1. 将 Corpus、文档、正文、标注、关系、语义搜索和讨论线程等合同库操作统一交给 OpenContracts MCP。
 2. 将 Gateway 收敛为 WorkerKey 文档导入、文件校验、确认校验和上传审计。
 3. 删除 Gateway 的 `/api/imports/documents/lookup/` 实现和 `opencontracts_check_duplicate` Tool。
 4. 将 Gateway `main.py` 从约 983 行缩减到约 112 行。
@@ -12,19 +12,23 @@
 
 ## OpenContracts MCP
 
-OpenContracts 官方 `docs/mcp/` 和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
 
 ```text
 get_corpus_info
 list_documents
 get_document_text
 list_annotations
+list_relationships
 search_corpus
 list_threads
 get_thread_messages
+create_thread_message
 ```
 
-上传流程使用其中的合同发现、正文读取和语义检索能力；后续合同分析、标注和讨论流程直接复用同一 MCP 能力面。
+`create_thread_message` 需要认证用户上下文。MCP 认证由 AstrBot MCP 连接管理。
+
+上传流程使用其中的合同发现、正文读取和语义检索能力；后续合同分析、关系、标注和讨论流程直接复用同一 MCP 能力面。
 
 ## 模块图
 
@@ -78,7 +82,7 @@ opencontracts_gateway_status
 opencontracts_upload_document
 ```
 
-远端合同库操作来自 OpenContracts MCP。Gateway 只处理本地暂存文件和 WorkerKey 导入。
+远端合同库操作来自 OpenContracts MCP。Gateway 只处理本地暂存文件和 WorkerKey 文件导入。
 
 ## 配置变化
 
