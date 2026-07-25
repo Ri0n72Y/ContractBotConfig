@@ -11,6 +11,14 @@ def conflict_result(
     http_status: int | None,
 ) -> str:
     """Map an import-path conflict to confirmation or failure."""
+    source_fields = {
+        "original_filename": source.original_filename,
+        "normalized_filename": source.source_filename,
+        "document_title": source.title,
+        "contract_date": source.contract_date,
+        "contract_title": source.contract_title,
+        "source_sha256": source.sha256,
+    }
     if not confirmed:
         return json_result(
             success=False,
@@ -18,10 +26,10 @@ def conflict_result(
             duplicate=True,
             upload_status="not_started",
             processing_status="not_started",
-            source_filename=source.source_filename,
-            source_sha256=source.sha256,
             customer_action="confirm_reupload_or_cancel",
             conflict_detected_during_upload=True,
+            retry_safe=True,
+            **source_fields,
         )
     return json_result(
         success=False,
@@ -30,14 +38,14 @@ def conflict_result(
         processing_status="not_started",
         failure_stage="version_write_conflict",
         error="已确认重新上传，但 OpenContracts 未接受同路径版本写入。",
-        source_filename=source.source_filename,
-        source_sha256=source.sha256,
         http_status=http_status,
+        retry_safe=True,
+        **source_fields,
     )
 
 
 def classify_http(status_code: int | None) -> tuple[str, str]:
-    """Classify non-success HTTP responses."""
+    """Classify non-success HTTP responses known not to have committed."""
     if status_code in {401, 403}:
         return "blocked", "authentication_or_permission"
     if status_code == 404:
