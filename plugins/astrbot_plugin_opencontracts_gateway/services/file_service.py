@@ -4,14 +4,15 @@ import asyncio
 import hashlib
 import mimetypes
 import re
+from datetime import date
 from pathlib import Path
 
 from ..config.settings import GatewaySettings
-from ..domain.models import ValidatedFile
+from ..domain.models import DocumentIdentity, ValidatedFile
 
 
 class FileService:
-    """Validate staged files and derive stable upload metadata."""
+    """Validate staged files and derive a stable contract document identity."""
 
     def __init__(self, settings: GatewaySettings) -> None:
         self.settings = settings
@@ -25,7 +26,7 @@ class FileService:
         return digest.hexdigest()
 
     @staticmethod
-    def _source_filename(value: str, source: Path) -> str:
+    def _original_filename(value: str, source: Path) -> str:
         raw = str(value or "").strip() or source.name
         raw = raw.replace("\\", "/").split("/")[-1]
         legacy = re.fullmatch(r"\d+_[0-9a-fA-F]{8}_(.+)", raw)
@@ -37,11 +38,67 @@ class FileService:
         return raw[:240] or "contract.bin"
 
     @staticmethod
-    def _title(value: str, source_filename: str) -> str:
-        candidate = str(value or "").strip()
-        if not candidate:
-            candidate = Path(source_filename).stem
-        return candidate[:512]
+    def _normalize_date(value: str) -> str | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        match = re.fullmatch(
+            r"(\d{4})\s*(?:年|[-/.])\s*(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*日?",
+            raw,
+        )
+        if not match:
+            match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", raw)
+        if not match:
+            return None
+        try:
+            parsed = date(*(int(part) for part in match.groups()))
+        except ValueError:
+            return None
+        return parsed.isoformat()
+
+    @staticmethod
+    def _normalize_title(value: str) -> str:
+        raw = str(value or "").strip()
+        raw = re.sub(r"[<>:\"/\\|?*\x00-\x1f\x7f]+", "_", raw)
+        raw = re.sub(r"\s+", " ", raw)
+        raw = raw.strip(" ._-")
+        return raw[:180]
+
+    @classmethod
+    def normalize_identity(
+        cls,
+        contract_date: str,
+        contract_title: str,
+    ) -> tuple[DocumentIdentity | None, str | None]:
+        normalized_date = cls._normalize_date(contract_date)
+        if normalized_date is None:
+            return None, "contract_date 必须是有效合同日期，例如 2026-07-25。"
+        normalized_title = cls._normalize_title(contract_title)
+        if not normalized_title:
+            return None, "contract_title 不能为空。"
+        return (
+            DocumentIdentity(
+                contract_date=normalized_date,
+                contract_title=normalized_title,
+                document_title=f"{normalized_date} {normalized_title}",
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _normalized_filename(
+        identity: DocumentIdentity,
+        original_filename: str,
+        source: Path,
+    ) -> str:
+        suffix = Path(original_filename).suffix or source.suffix
+        suffix = suffix.lower()
+        if not re.fullmatch(r"\.[0-9a-z]{1,12}", suffix):
+            suffix = ".bin"
+        prefix = f"{identity.contract_date}_"
+        available = max(1, 240 - len(prefix) - len(suffix))
+        title = identity.contract_title[:available].rstrip(" ._-") or "合同"
+        return f"{prefix}{title}{suffix}"
 
     def _resolve(self, staged_path: str) -> tuple[Path | None, str | None]:
         if not str(staged_path or "").strip():
@@ -77,7 +134,7 @@ class FileService:
         staged_path: str,
         expected_sha256: str,
         source_filename: str,
-        title: str,
+        identity: DocumentIdentity,
     ) -> tuple[ValidatedFile | None, str | None, str | None]:
         source, error = self._resolve(staged_path)
         if error or source is None:
@@ -90,17 +147,25 @@ class FileService:
         if expected and expected != actual:
             return None, actual, "文件 SHA-256 与任务上下文不一致。"
 
-        logical_name = self._source_filename(source_filename, source)
+        original_name = self._original_filename(source_filename, source)
+        normalized_name = self._normalized_filename(
+            identity,
+            original_name,
+            source,
+        )
         content_type = (
-            mimetypes.guess_type(logical_name)[0]
+            mimetypes.guess_type(normalized_name)[0]
             or "application/octet-stream"
         )
         return (
             ValidatedFile(
                 path=source,
                 sha256=actual,
-                source_filename=logical_name,
-                title=self._title(title, logical_name),
+                original_filename=original_name,
+                source_filename=normalized_name,
+                title=identity.document_title,
+                contract_date=identity.contract_date,
+                contract_title=identity.contract_title,
                 content_type=content_type,
             ),
             actual,
