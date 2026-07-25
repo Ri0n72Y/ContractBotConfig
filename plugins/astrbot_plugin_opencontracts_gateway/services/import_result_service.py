@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ..clients.import_client import is_document_conflict
 from ..config.settings import GatewaySettings
 from ..domain.models import ImportResponse, ValidatedFile
@@ -19,6 +21,48 @@ class ImportResultService:
         self.settings = settings
         self.receipts = receipts
 
+    @staticmethod
+    def _source_fields(source: ValidatedFile) -> dict[str, Any]:
+        return {
+            "source_sha256": source.sha256,
+            "original_filename": source.original_filename,
+            "normalized_filename": source.source_filename,
+            "document_title": source.title,
+            "contract_date": source.contract_date,
+            "contract_title": source.contract_title,
+        }
+
+    def _append_receipt(
+        self,
+        source: ValidatedFile,
+        *,
+        task_id: str | None,
+        state: str,
+        document_id: object | None = None,
+        server_status: object | None = None,
+        confirmed: bool = False,
+        write_committed: bool | str = False,
+        manual_review_required: bool = False,
+        failure_stage: str | None = None,
+        http_status: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.receipts.append(
+            {
+                **self._source_fields(source),
+                "document_id": document_id,
+                "server_import_status": server_status,
+                "last_task_id": task_id,
+                "reupload_confirmed": confirmed,
+                "state": state,
+                "write_committed": write_committed,
+                "manual_review_required": manual_review_required,
+                "failure_stage": failure_stage,
+                "http_status": http_status,
+                "error": error,
+            }
+        )
+
     def map(
         self,
         response: ImportResponse,
@@ -28,22 +72,24 @@ class ImportResultService:
         confirmed: bool,
     ) -> str:
         if response.transport_error:
-            return json_result(
-                success=False,
-                status="failed",
-                upload_status="unknown",
-                processing_status="unknown",
-                failure_stage="transport",
+            return self._commit_unknown(
+                source,
+                task_id=task_id,
+                confirmed=confirmed,
+                failure_stage="transport_commit_unknown",
                 error=response.transport_error,
-                source_filename=source.source_filename,
-                source_sha256=source.sha256,
+                http_status=None,
             )
 
         body = response.body
         if response.status_code == 201 and isinstance(body, dict):
             document_id = body.get("document_id")
-            if body.get("ok") and document_id is not None:
-                server_status = body.get("status")
+            server_status = body.get("status")
+            if (
+                body.get("ok") is True
+                and document_id is not None
+                and server_status in {"created", "updated"}
+            ):
                 if server_status == "updated" and not confirmed:
                     return self._unexpected_update(
                         source,
@@ -59,6 +105,28 @@ class ImportResultService:
                     confirmed=confirmed,
                     http_status=response.status_code,
                 )
+
+        if response.status_code is not None and 200 <= response.status_code < 300:
+            return self._commit_unknown(
+                source,
+                task_id=task_id,
+                confirmed=confirmed,
+                failure_stage="unexpected_success_response",
+                error="OpenContracts 返回成功状态码，但响应结构不符合导入契约。",
+                http_status=response.status_code,
+                response=body,
+            )
+
+        if response.status_code is not None and response.status_code >= 500:
+            return self._commit_unknown(
+                source,
+                task_id=task_id,
+                confirmed=confirmed,
+                failure_stage="upstream_commit_unknown",
+                error="OpenContracts 服务端错误，无法确认写入是否已经提交。",
+                http_status=response.status_code,
+                response=body,
+            )
 
         if is_document_conflict(response.status_code, body):
             return conflict_result(
@@ -76,8 +144,8 @@ class ImportResultService:
             failure_stage=stage,
             http_status=response.status_code,
             response=body,
-            source_filename=source.source_filename,
-            source_sha256=source.sha256,
+            retry_safe=True,
+            **self._source_fields(source),
         )
 
     def _accepted(
@@ -90,19 +158,15 @@ class ImportResultService:
         confirmed: bool,
         http_status: int,
     ) -> str:
-        self.receipts.upsert(
-            {
-                "source_sha256": source.sha256,
-                "source_filename": source.source_filename,
-                "document_id": document_id,
-                "document_title": source.title,
-                "corpus_id": self.settings.default_corpus_id or None,
-                "corpus_slug": self.settings.default_corpus_slug or None,
-                "server_import_status": server_status,
-                "processing_status": "processing",
-                "last_task_id": task_id,
-                "reupload_confirmed": confirmed,
-            }
+        self._append_receipt(
+            source,
+            task_id=task_id,
+            state="processing",
+            document_id=document_id,
+            server_status=server_status,
+            confirmed=confirmed,
+            write_committed=True,
+            http_status=http_status,
         )
         return json_result(
             success=True,
@@ -111,15 +175,13 @@ class ImportResultService:
             upload_status="accepted",
             processing_status="processing",
             document_id=document_id,
-            document_title=source.title,
-            source_filename=source.source_filename,
-            source_sha256=source.sha256,
-            corpus_id=self.settings.default_corpus_id or None,
-            corpus_slug=self.settings.default_corpus_slug or None,
             server_import_status=server_status,
             reupload_confirmed=confirmed,
             imported_as_new_version=(server_status == "updated"),
+            write_committed=True,
+            retry_safe=False,
             http_status=http_status,
+            **self._source_fields(source),
         )
 
     def _unexpected_update(
@@ -130,36 +192,72 @@ class ImportResultService:
         task_id: str | None,
         http_status: int,
     ) -> str:
-        self.receipts.upsert(
-            {
-                "source_sha256": source.sha256,
-                "source_filename": source.source_filename,
-                "document_id": document_id,
-                "document_title": source.title,
-                "corpus_id": self.settings.default_corpus_id or None,
-                "corpus_slug": self.settings.default_corpus_slug or None,
-                "server_import_status": "updated",
-                "processing_status": "processing",
-                "last_task_id": task_id,
-                "reupload_confirmed": False,
-                "manual_review_required": True,
-            }
+        error = (
+            "OpenContracts 已写入新版本，但本次任务没有有效的重新上传确认。"
+            "请人工核查，禁止自动重试。"
+        )
+        self._append_receipt(
+            source,
+            task_id=task_id,
+            state="manual_review_required",
+            document_id=document_id,
+            server_status="updated",
+            confirmed=False,
+            write_committed=True,
+            manual_review_required=True,
+            failure_stage="unexpected_unconfirmed_update",
+            http_status=http_status,
+            error=error,
         )
         return json_result(
             success=False,
-            status="failed",
+            status="manual_review_required",
             upload_status="accepted",
             processing_status="processing",
             failure_stage="unexpected_unconfirmed_update",
             write_committed=True,
             manual_review_required=True,
-            error=(
-                "OpenContracts 已写入新版本，但本次任务没有有效的重新上传确认。"
-                "请人工核查，避免再次提交。"
-            ),
+            retry_safe=False,
+            error=error,
             document_id=document_id,
             server_import_status="updated",
-            source_filename=source.source_filename,
-            source_sha256=source.sha256,
             http_status=http_status,
+            **self._source_fields(source),
+        )
+
+    def _commit_unknown(
+        self,
+        source: ValidatedFile,
+        *,
+        task_id: str | None,
+        confirmed: bool,
+        failure_stage: str,
+        error: str,
+        http_status: int | None,
+        response: Any = None,
+    ) -> str:
+        self._append_receipt(
+            source,
+            task_id=task_id,
+            state="manual_review_required",
+            confirmed=confirmed,
+            write_committed="unknown",
+            manual_review_required=True,
+            failure_stage=failure_stage,
+            http_status=http_status,
+            error=error,
+        )
+        return json_result(
+            success=False,
+            status="manual_review_required",
+            upload_status="unknown",
+            processing_status="unknown",
+            failure_stage=failure_stage,
+            write_committed="unknown",
+            manual_review_required=True,
+            retry_safe=False,
+            error=error,
+            http_status=http_status,
+            response=response,
+            **self._source_fields(source),
         )
