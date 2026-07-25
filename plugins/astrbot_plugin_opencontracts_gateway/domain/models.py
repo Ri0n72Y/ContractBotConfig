@@ -6,11 +6,21 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class DocumentIdentity:
+    contract_date: str
+    contract_title: str
+    document_title: str
+
+
+@dataclass(frozen=True)
 class ValidatedFile:
     path: Path
     sha256: str
+    original_filename: str
     source_filename: str
     title: str
+    contract_date: str
+    contract_title: str
     content_type: str
 
 
