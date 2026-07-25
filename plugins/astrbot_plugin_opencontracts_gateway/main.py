@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
@@ -43,12 +41,9 @@ class OpenContractsGateway(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "OpenContracts upload gateway 0.6.0 initialized: "
-            "base_url=%s corpus=%s",
+            "OpenContracts upload gateway 0.6.1 initialized: "
+            "base_url=%s corpus=worker-key-bound",
             self.settings.base_url,
-            self.settings.default_corpus_slug
-            or self.settings.default_corpus_id
-            or "worker-key-bound",
         )
 
     @staticmethod
@@ -82,19 +77,21 @@ class OpenContractsGateway(Star):
         event: AstrMessageEvent,
         staged_path: str,
         expected_sha256: str,
+        contract_date: str,
+        contract_title: str,
         source_filename: str = "",
-        title: str = "",
         description: str = "",
         custom_meta: dict | None = None,
         duplicate_confirmation_id: str = "",
     ) -> str:
-        """向 OpenContracts 官方导入端点上传合同或写入确认后的新版本。
+        """向 WorkerKey 绑定的 Corpus 导入合同或写入确认后的新版本。
 
         Args:
             staged_path(string): 合同路由器返回的绝对暂存路径。
             expected_sha256(string): 路由任务上下文中的 SHA-256。
-            source_filename(string): source_files.original_name。
-            title(string): 文档标题；留空时使用原始文件名。
+            contract_date(string): 合同日期，使用 YYYY-MM-DD。
+            contract_title(string): 合同正文中的合同标题。
+            source_filename(string): source_files.original_name，仅用于保留原始文件名和扩展名。
             description(string): 可选文档说明。
             custom_meta(object): 可选业务元数据。
             duplicate_confirmation_id(string): 路由器签发的重新上传确认编号。
@@ -105,7 +102,8 @@ class OpenContractsGateway(Star):
             staged_path=staged_path,
             expected_sha256=expected_sha256,
             source_filename=source_filename,
-            title=title,
+            contract_date=contract_date,
+            contract_title=contract_title,
             description=description,
             custom_meta=custom_meta,
             duplicate_confirmation_id=duplicate_confirmation_id,
