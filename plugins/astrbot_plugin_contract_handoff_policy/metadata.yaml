@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_handoff_policy
 display_name: 合同子代理委派策略
-desc: 规范合同任务委派上下文，声明 OpenContracts MCP 读取和 WorkerKey 导入写入职责。
-version: 0.4.3
+desc: 规范合同任务委派上下文，保留合同身份、安全约束和 OpenContracts 状态契约。
+version: 0.4.4
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
