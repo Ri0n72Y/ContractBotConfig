@@ -1,6 +1,6 @@
 ---
 name: contract-opencontracts
-description: 使用 OpenContracts MCP 执行合同库操作，并通过 WorkerKey 导入网关完成文件上传和版本写入。
+description: 使用 OpenContracts MCP 执行合同库操作，并通过 WorkerKey 导入网关完成规范化文件上传和版本写入。
 ---
 
 # OpenContracts 操作
@@ -8,72 +8,72 @@ description: 使用 OpenContracts MCP 执行合同库操作，并通过 WorkerKe
 OpenContracts Operator 使用两个能力面：
 
 - OpenContracts MCP：Corpus、文档、正文、标注、关系、语义检索和讨论线程；
-- `opencontracts_upload_document`：WorkerKey 认证的官方文档导入写入。
+- `opencontracts_upload_document`：使用 WorkerKey 向其绑定 Corpus 执行官方文档导入。
 
-OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力、参数和返回结构的事实来源。新增或调整合同库操作时，先依据当前 MCP 工具清单选择调用方式。
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力、参数和返回结构的事实来源。
 
-建议 MCP 地址：
+## 合同身份契约
+
+任务必须包含：
 
 ```text
-http://opencontracts-api:8000/mcp/corpus/contracts/
+contract_identity.contract_date = YYYY-MM-DD
+contract_identity.contract_title = 合同正文中的正式标题
 ```
+
+统一生成：
+
+```text
+document_title = YYYY-MM-DD 合同标题
+normalized_filename = YYYY-MM-DD_合同标题.原扩展名
+```
+
+合同身份缺失或日期无效时，不得调用上传工具，返回 `[CONTRACT_UPLOAD:BLOCKED]`。
 
 ## MCP 能力
 
 ```text
-get_corpus_info        读取目标 Corpus 信息和标签集
-list_documents         列出和搜索合同文档
-get_document_text      分窗口读取解析后的合同正文
-list_annotations       读取文档标注
-list_relationships     读取文档关系和结构化关系
-search_corpus          执行语义检索
-list_threads           读取 Corpus 或文档讨论线程
-get_thread_messages    读取线程消息
-create_thread_message  在已有线程中创建消息
+get_corpus_info
+list_documents
+get_document_text
+list_annotations
+list_relationships
+search_corpus
+list_threads
+get_thread_messages
+create_thread_message
 ```
 
 `create_thread_message` 需要经过认证的 MCP 用户上下文。认证与权限由 OpenContracts MCP 和 AstrBot MCP 连接管理。
-
-上传流程使用其中的合同发现、正文读取和检索能力。合同问答、风险分析、关系核验、标注和讨论任务按目标调用其他工具。
 
 ## 上传流程
 
 对每个 `source_files[]` 按以下顺序执行：
 
-1. 调用 `get_corpus_info`，确认当前 MCP 已连接到目标 Corpus。
-2. 使用 `list_documents` 查找与当前合同对应的远端文档。
-3. 根据业务上下文和 MCP 返回结果判断是否需要客户确认重新上传。
-4. 可以写入时，调用 `opencontracts_gateway_status` 检查 WorkerKey 导入配置。
-5. 调用 `opencontracts_upload_document`，传入：
+1. 调用 `get_corpus_info`，确认当前 corpus-scoped MCP 可用。
+2. 使用 `list_documents(search=document_title)` 查询远端文档，只把返回结果中 `title` 与规范化 `document_title` 完全一致的文档视为同一合同。
+3. 找到完全一致文档且没有有效重新上传确认时，输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]` 并停止。
+4. 远端查询失败、结果不完整或身份字段缺失时输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得把未知状态当作新合同。
+5. 可以写入时调用 `opencontracts_gateway_status`。网关只检查 WorkerKey 导入配置，不要求或报告 Corpus ID。
+6. 调用 `opencontracts_upload_document`，传入：
    - `staged_path`
    - `expected_sha256`
+   - `contract_date`
+   - `contract_title`
    - `source_filename=source_files[].original_name`
-   - 标题使用合同任务中的业务标题；没有明确标题时使用原始文件名主体
    - `duplicate_confirmation_id` 使用任务上下文中的确认编号
-6. 导入已接收后，通过 `list_documents` 和 `get_document_text` 查找并读取远端合同。
-7. 使用 `search_corpus` 核验当前合同已进入检索链路；任务涉及标注或关系时调用 `list_annotations` 或 `list_relationships`。
-8. 正文或检索尚未就绪时首行输出 `[CONTRACT_UPLOAD:PROCESSING]`；当前任务要求的 MCP 核验完成后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
-
-## 其他合同库任务
-
-- 合同条款问答：`list_documents`、`get_document_text`、`search_corpus`。
-- 风险和结构分析：`get_document_text`、`list_annotations`、`list_relationships`、`search_corpus`。
-- Corpus 讨论读取：`list_threads`、`get_thread_messages`。
-- 向已有讨论线程提交消息：`create_thread_message`，仅在用户明确要求且 MCP 已认证时调用。
-
-## MCP 结果处理
-
-- 以工具实际返回的字段和状态为准；
-- 工具调用失败或当前任务所需结果尚未形成时，返回对应的 `BLOCKED` 或 `PROCESSING` 状态；
-- 不使用本地 receipt 代替 OpenContracts 远端合同数据；
-- 需要标注、关系、线程或消息数据时，直接调用对应 MCP Tool。
+7. 网关返回 `manual_review_required=true`、`status=manual_review_required` 或 `write_committed=unknown`，或 failure stage 为 `unexpected_unconfirmed_update`、`transport_commit_unknown`、`upstream_commit_unknown`、`unexpected_success_response` 时，首行输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`。禁止再次调用上传工具。
+8. 导入已接收后，使用规范化 `document_title` 再次调用 `list_documents`，取得文档 slug。
+9. 调用 `get_document_text` 核验正文可读；调用 `search_corpus` 核验该文档已进入检索链路。
+10. 正文或检索尚未就绪时输出 `[CONTRACT_UPLOAD:PROCESSING]`；两项均核验完成后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
 
 ## 写入结果
 
 - `server_import_status=created`：首次导入已接收；
-- `server_import_status=updated`：OpenContracts 已创建新版本；
-- `status=confirmation_required`：写入流程等待客户确认；
-- `status=blocked`：配置、文件、确认或权限条件未满足；
-- `status=failed`：正式导入请求失败或写入结果需要人工核查。
+- `server_import_status=updated` 且确认有效：新版本已写入；
+- `status=confirmation_required`：等待客户确认；
+- `status=blocked`：身份、配置、文件、确认或权限条件未满足，尚未写入；
+- `status=manual_review_required`：可能已写入或已经发生未确认版本写入，禁止自动重试；
+- `status=failed`：已确认没有提交的正式请求失败。
 
-本地 receipt 记录上传审计信息。合同库数据来自 OpenContracts MCP。
+本地 receipt 为追加式上传审计。它不能作为远端合同不存在的依据。
