@@ -2,8 +2,6 @@
   "base_url": "http://opencontracts-api:8000",
   "auth_token": "REPLACE_WITH_WORKER_KEY",
   "import_path": "/api/imports/documents/",
-  "default_corpus_id": "2",
-  "default_corpus_slug": "contracts",
   "default_make_public": false,
   "allowed_roots": [
     "/AstrBot/data/plugins_data/astrbot_plugin_contract_file_router/inbox"
