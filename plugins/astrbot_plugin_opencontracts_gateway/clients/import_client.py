@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -48,7 +47,7 @@ class ImportClient:
                             ),
                             "Accept": "application/json",
                             "User-Agent": (
-                                "AstrBot-OpenContracts-Upload-Gateway/0.6.0"
+                                "AstrBot-OpenContracts-Upload-Gateway/0.6.1"
                             ),
                         },
                         data={**data, "filename": source.source_filename},
