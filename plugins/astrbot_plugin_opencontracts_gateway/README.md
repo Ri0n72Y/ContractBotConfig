@@ -1,17 +1,20 @@
-# OpenContracts 上传网关 0.6.0
+# OpenContracts 上传网关 0.6.1
 
-本插件负责把 AstrBot 暂存合同写入 OpenContracts 官方文档导入端点，并保存上传审计记录。
+本插件负责把 AstrBot 暂存合同写入 OpenContracts 官方文档导入端点，并保存追加式上传审计记录。
 
-OpenContracts 合同库操作由 OpenContracts Operator 使用 MCP 完成。官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是 MCP 能力的事实来源；Gateway 只承担 WorkerKey 文件导入链路。
+OpenContracts 合同库读取由 OpenContracts Operator 使用 MCP 完成。Gateway 只承担合同身份规范化、本地文件校验、重新上传确认校验和 WorkerKey 文件导入。
 
 ## 职责
 
 - 校验暂存路径、普通文件类型、文件大小和 SHA-256。
-- 保留路由任务中的原始文件名。
+- 要求合同日期和合同标题，生成稳定远端身份。
+- 保留原始文件名及扩展名，远端文件名规范为 `YYYY-MM-DD_合同标题.原扩展名`。
+- 远端文档标题规范为 `YYYY-MM-DD 合同标题`。
 - 验证路由器签发的重新上传确认编号。
-- 使用 WorkerKey 调用 `/api/imports/documents/`。
-- 标准化 `created`、`updated`、`processing`、`confirmation_required`、`blocked` 和 `failed`。
-- 保存上传 receipt，供审计和运行诊断使用。
+- 使用 WorkerKey 调用 `/api/imports/documents/`，写入目标由 WorkerKey 绑定。
+- 标准化 `processing`、`confirmation_required`、`blocked`、`manual_review_required` 和 `failed`。
+- 对传输异常、服务端 5xx、成功响应结构异常和未确认版本写入返回人工核查状态，禁止自动重试。
+- 追加保存每次上传 receipt，供审计和运行诊断使用。
 
 ## 集成 UML
 
@@ -30,9 +33,9 @@ flowchart LR
     ImportAPI[Official Document Import API]
     OC[OpenContracts]
 
-    Operator -->|Corpus、文档、正文、标注、关系、检索、线程| MCP
+    Operator -->|Corpus、文档、正文、检索| MCP
     MCP --> OC
-    Operator -->|staged_path + sha256 + original_name| Gateway
+    Operator -->|日期 + 标题 + staged_path + sha256| Gateway
     Gateway --> UploadService
     UploadService --> FileService
     UploadService --> Confirmation
@@ -55,14 +58,13 @@ sequenceDiagram
     participant C as ConfirmationService
     participant I as ImportClient
     participant API as OpenContracts Import API
-    participant P as ImportResponsePolicy
     participant R as ReceiptStore
 
-    O->>M: 按任务调用 MCP 工具
-    M-->>O: 远端合同库结果
-    O->>G: opencontracts_upload_document
-    G->>V: 校验路径、大小、SHA-256、原始文件名
-    V-->>G: ValidatedFile
+    O->>M: 按规范化 document_title 精确查重
+    M-->>O: 远端合同结果
+    O->>G: date + title + staged_path + sha256
+    G->>V: 校验身份、路径、大小和 SHA-256
+    V-->>G: ValidatedFile + 规范化文件名
     opt 携带重新上传确认
         G->>C: 校验会话、文件哈希、确认编号和时效
         C-->>G: confirmed
@@ -71,11 +73,9 @@ sequenceDiagram
     I->>API: WorkerKey + multipart/form-data
     API-->>I: created / updated / error
     I-->>G: ImportResponse
-    G->>P: 解释导入响应和确认状态
-    P-->>G: 业务决策
-    G->>R: 写入上传审计 receipt
+    G->>R: append 上传审计 receipt
     G-->>O: 标准化业务状态
-    O->>M: 根据任务继续读取、标注、关系或检索
+    O->>M: 读取正文并核验检索
     M-->>O: 处理结果
 ```
 
@@ -83,16 +83,19 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Validating
-    Validating --> Blocked: 配置、路径、大小、SHA或确认无效
-    Validating --> Importing: 本地校验通过
+    [*] --> IdentityValidation
+    IdentityValidation --> Blocked: 日期或标题缺失
+    IdentityValidation --> FileValidation: 身份有效
+    FileValidation --> Blocked: 配置、路径、大小、SHA或确认无效
+    FileValidation --> Importing: 本地校验通过
     Importing --> Processing: created
     Importing --> Processing: updated + confirmed
-    Importing --> ReviewRequired: updated + unconfirmed
-    Importing --> ConfirmationRequired: 路径冲突 + unconfirmed
-    Importing --> Failed: 传输或导入失败
+    Importing --> ManualReview: updated + unconfirmed
+    Importing --> ManualReview: timeout / 5xx / unexpected 2xx
+    Importing --> ConfirmationRequired: 写入前路径冲突 + unconfirmed
+    Importing --> Failed: 已确认未提交的请求失败
     Processing --> [*]
-    ReviewRequired --> [*]
+    ManualReview --> [*]
     ConfirmationRequired --> [*]
     Blocked --> [*]
     Failed --> [*]
@@ -103,48 +106,38 @@ stateDiagram-v2
 ```text
 astrbot_plugin_opencontracts_gateway/
 ├── main.py
-├── config/
-│   └── settings.py
-├── domain/
-│   ├── models.py
-│   └── results.py
-├── clients/
-│   └── import_client.py
-├── services/
-│   ├── confirmation_service.py
-│   ├── file_service.py
-│   ├── import_response_policy.py
-│   ├── import_result_service.py
-│   └── upload_service.py
-└── storage/
-    └── receipt_store.py
+├── config/settings.py
+├── domain/models.py
+├── domain/results.py
+├── clients/import_client.py
+├── services/confirmation_service.py
+├── services/file_service.py
+├── services/import_response_policy.py
+├── services/import_result_service.py
+├── services/upload_service.py
+└── storage/receipt_store.py
 ```
 
 `main.py` 只负责 AstrBot 生命周期和两个 LLM Tool 的注册。配置、验证、HTTP 写入、响应策略和持久化分别位于独立模块。
 
-## OpenContracts MCP 能力
+## OpenContracts MCP
 
-建议在 AstrBot MCP 管理界面配置：
+建议在 AstrBot MCP 管理界面配置 corpus-scoped MCP：
 
 ```text
 http://opencontracts-api:8000/mcp/corpus/contracts/
 ```
 
-当前 scoped MCP 工具包括：
+上传流程至少需要：
 
 ```text
 get_corpus_info
 list_documents
 get_document_text
-list_annotations
-list_relationships
 search_corpus
-list_threads
-get_thread_messages
-create_thread_message
 ```
 
-`create_thread_message` 需要认证用户上下文。MCP 认证由 AstrBot MCP 连接管理。Gateway 不代理这些工具，也不保存 MCP 读取凭证。
+Gateway 不代理 MCP 工具，也不保存 MCP 读取凭证。当前 MCP 连接必须指向 WorkerKey 所绑定的业务 Corpus；写入后通过 MCP 结果核验实际落库状态。
 
 ## 配置
 
@@ -152,22 +145,24 @@ create_thread_message
 base_url
 WorkerKey（GUI 字段名 auth_token）
 import_path = /api/imports/documents/
-default_corpus_id
-default_corpus_slug
+default_make_public
 allowed_roots
 data_dir
 router_state_path
+require_expected_sha256
 max_file_bytes
 timeout_seconds
 confirmation_ttl_seconds
 verify_tls
 ```
 
+Gateway 不要求或显示配置 Corpus ID。WorkerKey 的 Corpus 绑定决定写入目标。
+
 ## Tool 契约
 
 ### `opencontracts_gateway_status`
 
-返回 WorkerKey 写入配置、官方导入端点、目标 corpus、允许目录和审计 receipt 数量。
+返回 WorkerKey 是否配置、官方导入端点、允许目录和追加式 receipt 数量。
 
 ### `opencontracts_upload_document`
 
@@ -176,11 +171,19 @@ verify_tls
 ```text
 staged_path
 expected_sha256
+contract_date
+contract_title
 source_filename
-title
 description
 custom_meta
 duplicate_confirmation_id
+```
+
+其中：
+
+```text
+document_title = YYYY-MM-DD 合同标题
+normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
 输出状态：
@@ -189,30 +192,30 @@ duplicate_confirmation_id
 processing
 confirmation_required
 blocked
+manual_review_required
 failed
 ```
 
-`complete` 由 OpenContracts Operator 根据 MCP 读取和检索结果产生。
+`complete` 由 OpenContracts Operator 根据 MCP 正文读取和检索结果产生。
 
 ## Receipt
 
-Receipt 记录：
+Receipt 采用 append-only 记录，每次写入形成独立记录，包括：
 
-- 原始文件 SHA-256；
-- 原始文件名；
-- OpenContracts 文档 ID；
-- corpus 标识；
-- 服务端导入状态；
-- 最近任务 ID；
-- 是否使用客户确认；
-- 是否需要人工核查。
+- receipt ID 和记录时间；
+- 原始文件名、规范化文件名和 SHA-256；
+- 合同日期、合同标题和远端文档标题；
+- OpenContracts 文档 ID 和服务端导入状态；
+- 任务 ID、确认状态和 HTTP 状态；
+- `write_committed`、`manual_review_required` 和 failure stage。
 
-Receipt 的角色是上传审计。远端合同数据来自 MCP。
+Receipt 只用于上传审计，不能作为远端合同存在或不存在的依据。
 
 ## MVP 验证
 
 ```bash
 python3 -m compileall -q plugins scripts
+python scripts/build_release.py --clean
 ```
 
-随后使用发布脚本打包，在 AstrBot WebUI 中加载插件，并执行一次最小合同上传流程。当前阶段不维护单元测试目录。
+随后在 AstrBot WebUI 中加载插件、Skills 和 Persona，并验证首次上传、重复确认、人工核查和正文/检索状态。当前阶段不新增测试目录。
