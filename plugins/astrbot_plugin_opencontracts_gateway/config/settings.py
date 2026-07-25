@@ -23,8 +23,6 @@ class GatewaySettings:
     base_url: str
     worker_key: str
     import_path: str
-    default_corpus_id: str
-    default_corpus_slug: str
     default_make_public: bool
     allowed_roots: tuple[Path, ...]
     data_dir: Path
@@ -63,12 +61,6 @@ class GatewaySettings:
             ).strip().rstrip("/"),
             worker_key=worker_key,
             import_path=import_path,
-            default_corpus_id=str(
-                values.get("default_corpus_id", "")
-            ).strip(),
-            default_corpus_slug=str(
-                values.get("default_corpus_slug", "")
-            ).strip(),
             default_make_public=bool(
                 values.get("default_make_public", False)
             ),
