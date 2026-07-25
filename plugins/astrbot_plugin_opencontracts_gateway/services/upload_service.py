@@ -16,12 +16,16 @@ RESERVED_META_KEYS = {
     "source",
     "source_sha256",
     "source_filename",
+    "original_filename",
+    "normalized_filename",
+    "contract_date",
+    "contract_title",
     "astrbot_task_id",
 }
 
 
 class UploadService:
-    """Coordinate validation, confirmation and WorkerKey document import."""
+    """Coordinate identity, validation, confirmation and WorkerKey import."""
 
     def __init__(
         self,
@@ -44,13 +48,11 @@ class UploadService:
             configured=error is None,
             configuration_error=error,
             read_channel="opencontracts_mcp",
-            write_channel="worker_key_document_import",
+            write_channel="worker_key_bound_document_import",
             base_url=self.settings.base_url,
             import_path=self.settings.import_path,
             worker_key_configured=bool(self.settings.worker_key),
-            default_corpus_id=self.settings.default_corpus_id or None,
-            default_corpus_slug=self.settings.default_corpus_slug or None,
-            receipt_role="upload_audit",
+            receipt_role="append_only_upload_audit",
             receipt_count=self.receipts.count,
             allowed_roots=[str(root) for root in self.settings.allowed_roots],
         )
@@ -59,7 +61,10 @@ class UploadService:
     def _task_meta(
         task_id: str | None,
         source_sha256: str,
-        source_filename: str,
+        original_filename: str,
+        normalized_filename: str,
+        contract_date: str,
+        contract_title: str,
         custom_meta: dict | None,
     ) -> dict[str, Any]:
         safe: dict[str, Any] = {}
@@ -75,7 +80,11 @@ class UploadService:
             {
                 "source": "astrbot",
                 "source_sha256": source_sha256,
-                "source_filename": source_filename,
+                "source_filename": normalized_filename,
+                "original_filename": original_filename,
+                "normalized_filename": normalized_filename,
+                "contract_date": contract_date,
+                "contract_title": contract_title,
                 "astrbot_task_id": task_id,
             }
         )
@@ -89,7 +98,8 @@ class UploadService:
         staged_path: str,
         expected_sha256: str,
         source_filename: str,
-        title: str,
+        contract_date: str,
+        contract_title: str,
         description: str,
         custom_meta: dict | None,
         duplicate_confirmation_id: str,
@@ -104,11 +114,25 @@ class UploadService:
                 error=config_error,
             )
 
+        identity, identity_error = self.files.normalize_identity(
+            contract_date,
+            contract_title,
+        )
+        if identity_error or identity is None:
+            return json_result(
+                success=False,
+                status="blocked",
+                upload_status="not_started",
+                failure_stage="document_identity",
+                error=identity_error,
+                retry_safe=True,
+            )
+
         source, actual_sha256, file_error = await self.files.validate(
             staged_path,
             expected_sha256,
             source_filename,
-            title,
+            identity,
         )
         if file_error or source is None or actual_sha256 is None:
             return json_result(
@@ -118,6 +142,7 @@ class UploadService:
                 failure_stage="file_validation",
                 error=file_error,
                 source_sha256=actual_sha256,
+                retry_safe=True,
             )
 
         confirmed = False
@@ -134,24 +159,27 @@ class UploadService:
                     upload_status="not_started",
                     failure_stage="confirmation_validation",
                     error="重新上传确认无效或已过期。",
-                    source_filename=source.source_filename,
+                    original_filename=source.original_filename,
+                    normalized_filename=source.source_filename,
                     source_sha256=actual_sha256,
+                    retry_safe=True,
                 )
 
         metadata = self._task_meta(
             task_id,
             actual_sha256,
+            source.original_filename,
             source.source_filename,
+            source.contract_date,
+            source.contract_title,
             custom_meta,
         )
         data: dict[str, str] = {
             "title": source.title,
             "description": str(description or "")[:2000],
             "make_public": "true" if self.settings.default_make_public else "false",
-            "custom_meta": json.dumps(metadata, ensure_ascii=False),
+            "custom_meta": json.dumps(metadata, ensure_ascii=False, default=str),
         }
-        if self.settings.default_corpus_id:
-            data["add_to_corpus_id"] = self.settings.default_corpus_id
 
         response = await self.client.upload(source, data)
         return self.results.map(
