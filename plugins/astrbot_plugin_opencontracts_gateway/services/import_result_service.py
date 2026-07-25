@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import uuid
 from typing import Any
 
 from ..clients.import_client import is_document_conflict
@@ -32,6 +34,23 @@ class ImportResultService:
             "contract_title": source.contract_title,
         }
 
+    def _retain_manual_review_copy(
+        self,
+        source: ValidatedFile,
+        task_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        review_dir = self.settings.data_dir / "manual_review"
+        try:
+            review_dir.mkdir(parents=True, exist_ok=True)
+            prefix = str(task_id or uuid.uuid4().hex)[:64]
+            target = review_dir / (
+                f"{prefix}_{uuid.uuid4().hex[:8]}_{source.source_filename}"
+            )
+            shutil.copy2(source.path, target)
+            return str(target.resolve()), None
+        except OSError as exc:
+            return None, str(exc)[:500]
+
     def _append_receipt(
         self,
         source: ValidatedFile,
@@ -46,6 +65,8 @@ class ImportResultService:
         failure_stage: str | None = None,
         http_status: int | None = None,
         error: str | None = None,
+        review_copy_path: str | None = None,
+        review_copy_error: str | None = None,
     ) -> None:
         self.receipts.append(
             {
@@ -60,6 +81,8 @@ class ImportResultService:
                 "failure_stage": failure_stage,
                 "http_status": http_status,
                 "error": error,
+                "review_copy_path": review_copy_path,
+                "review_copy_error": review_copy_error,
             }
         )
 
@@ -196,6 +219,10 @@ class ImportResultService:
             "OpenContracts 已写入新版本，但本次任务没有有效的重新上传确认。"
             "请人工核查，禁止自动重试。"
         )
+        review_copy_path, review_copy_error = self._retain_manual_review_copy(
+            source,
+            task_id,
+        )
         self._append_receipt(
             source,
             task_id=task_id,
@@ -208,6 +235,8 @@ class ImportResultService:
             failure_stage="unexpected_unconfirmed_update",
             http_status=http_status,
             error=error,
+            review_copy_path=review_copy_path,
+            review_copy_error=review_copy_error,
         )
         return json_result(
             success=False,
@@ -221,6 +250,9 @@ class ImportResultService:
             error=error,
             document_id=document_id,
             server_import_status="updated",
+            review_copy_retained=review_copy_path is not None,
+            review_copy_path=review_copy_path,
+            review_copy_error=review_copy_error,
             http_status=http_status,
             **self._source_fields(source),
         )
@@ -236,6 +268,10 @@ class ImportResultService:
         http_status: int | None,
         response: Any = None,
     ) -> str:
+        review_copy_path, review_copy_error = self._retain_manual_review_copy(
+            source,
+            task_id,
+        )
         self._append_receipt(
             source,
             task_id=task_id,
@@ -246,6 +282,8 @@ class ImportResultService:
             failure_stage=failure_stage,
             http_status=http_status,
             error=error,
+            review_copy_path=review_copy_path,
+            review_copy_error=review_copy_error,
         )
         return json_result(
             success=False,
@@ -257,6 +295,9 @@ class ImportResultService:
             manual_review_required=True,
             retry_safe=False,
             error=error,
+            review_copy_retained=review_copy_path is not None,
+            review_copy_path=review_copy_path,
+            review_copy_error=review_copy_error,
             http_status=http_status,
             response=response,
             **self._source_fields(source),
