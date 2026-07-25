@@ -5,7 +5,7 @@
     "default": "http://opencontracts-api:8000"
   },
   "auth_token": {
-    "description": "OpenContracts CorpusAccessToken 的 WorkerKey，用于官方文档导入端点",
+    "description": "OpenContracts CorpusAccessToken 的 WorkerKey；写入目标由该 WorkerKey 绑定",
     "type": "string",
     "default": "",
     "obvious_hint": true
@@ -14,16 +14,6 @@
     "description": "OpenContracts 官方单文档导入端点",
     "type": "string",
     "default": "/api/imports/documents/"
-  },
-  "default_corpus_id": {
-    "description": "可选目标 corpus 原始整数 ID；WorkerKey 会校验 corpus 绑定",
-    "type": "string",
-    "default": ""
-  },
-  "default_corpus_slug": {
-    "description": "目标 corpus slug，用于结果标识和 MCP 配置说明",
-    "type": "string",
-    "default": "contracts"
   },
   "default_make_public": {
     "description": "导入文档是否公开",
@@ -38,7 +28,7 @@
     ]
   },
   "data_dir": {
-    "description": "上传审计 receipt 目录",
+    "description": "追加式上传审计 receipt 目录",
     "type": "string",
     "default": "data/plugins_data/astrbot_plugin_opencontracts_gateway"
   },
