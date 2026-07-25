@@ -38,7 +38,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.4.3 initialized: instance_id=%s",
+            "Contract handoff policy 0.4.4 initialized: instance_id=%s",
             id(self),
         )
 
@@ -70,15 +70,10 @@ class ContractHandoffPolicy(Star):
     @staticmethod
     def _event_key(event: AstrMessageEvent) -> str:
         task_id = event.get_extra("contract_pending_task_id")
-        return (
-            f"{event.unified_msg_origin}:"
-            f"{task_id or id(event)}"
-        )
+        return f"{event.unified_msg_origin}:{task_id or id(event)}"
 
     @staticmethod
-    def _expected_agents(
-        context: dict[str, Any],
-    ) -> list[str]:
+    def _expected_agents(context: dict[str, Any]) -> list[str]:
         agents = context.get("recommended_subagents")
         if isinstance(agents, list):
             return [
@@ -91,6 +86,48 @@ class ContractHandoffPolicy(Star):
         if legacy:
             return [str(legacy)]
         return []
+
+    @staticmethod
+    def _merge_constraints(
+        existing: Any,
+        additions: list[str],
+    ) -> list[str]:
+        merged: list[str] = []
+        candidates = existing if isinstance(existing, list) else []
+        for value in [*candidates, *additions]:
+            text = str(value or "").strip()
+            if text and text not in merged:
+                merged.append(text)
+        return merged
+
+    @staticmethod
+    def _preserve_agent_input(
+        canonical: dict[str, Any],
+        original_input: Any,
+    ) -> None:
+        if not isinstance(original_input, str) or not original_input.strip():
+            return
+        raw = original_input.strip()
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            canonical["main_agent_note"] = raw[:2000]
+            return
+        if not isinstance(parsed, dict):
+            canonical["main_agent_note"] = raw[:2000]
+            return
+
+        identity_source = parsed.get("contract_identity")
+        if not isinstance(identity_source, dict):
+            identity_source = parsed
+        contract_date = str(identity_source.get("contract_date") or "").strip()
+        contract_title = str(identity_source.get("contract_title") or "").strip()
+        if contract_date or contract_title:
+            canonical["contract_identity"] = {
+                "contract_date": contract_date,
+                "contract_title": contract_title,
+            }
+        canonical["main_agent_input"] = parsed
 
     @filter.on_using_llm_tool(priority=1000)
     async def normalize_handoff(
@@ -187,11 +224,12 @@ class ContractHandoffPolicy(Star):
             )
             return
 
+        original_input = tool_args.get("input")
         canonical = dict(task_context)
         canonical["delegated_agent"] = actual_agent
         canonical["document_read_channel"] = "opencontracts_mcp"
-        canonical["document_write_channel"] = "worker_key_document_import"
-        canonical["receipt_role"] = "upload_audit"
+        canonical["document_write_channel"] = "worker_key_bound_document_import"
+        canonical["receipt_role"] = "append_only_upload_audit"
         canonical["remaining_expected_subagents"] = [
             agent
             for agent in expected_agents
@@ -210,6 +248,8 @@ class ContractHandoffPolicy(Star):
                 )
                 canonical["required_tools"] = branch.get("required_tools", [])
 
+        self._preserve_agent_input(canonical, original_input)
+
         if actual_agent == "opencontracts_operator":
             canonical["required_tools"] = [
                 "get_corpus_info",
@@ -220,27 +260,42 @@ class ContractHandoffPolicy(Star):
                 "search_corpus",
             ]
             canonical["integration_sequence"] = [
+                "validate_contract_identity",
                 "discover_with_opencontracts_mcp",
-                "write_with_worker_key_import_gateway",
+                "write_to_worker_key_bound_corpus",
                 "verify_with_opencontracts_mcp",
             ]
-            canonical["constraints"] = [
-                "OpenContracts MCP 提供合同发现、正文读取、检索和处理核验",
-                "上传网关使用 WorkerKey 执行文档导入写入",
-                "source_files.original_name 作为远端搜索标题和导入文件名",
-                "receipt 只记录上传审计",
-                "结果在当前企业微信事件中同步返回",
-            ]
-
-        original_input = tool_args.get("input")
-        if (
-            actual_agent != "opencontracts_operator"
-            and isinstance(original_input, str)
-            and original_input.strip()
-        ):
-            canonical["main_agent_note"] = (
-                original_input.strip()[:1000]
+            canonical["identity_contract"] = {
+                "required_fields": ["contract_date", "contract_title"],
+                "document_title_format": "YYYY-MM-DD 合同标题",
+                "normalized_filename_format": "YYYY-MM-DD_合同标题.原扩展名",
+                "remote_duplicate_key": "exact_document_title",
+                "missing_identity_action": "block_without_upload",
+            }
+            canonical["status_contract"] = {
+                "duplicate": "[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]",
+                "blocked": "[CONTRACT_UPLOAD:BLOCKED]",
+                "processing": "[CONTRACT_UPLOAD:PROCESSING]",
+                "complete": "[CONTRACT_UPLOAD:COMPLETE]",
+                "manual_review": "[CONTRACT_UPLOAD:MANUAL_REVIEW]",
+                "failed": "[CONTRACT_UPLOAD:FAILED]",
+            }
+            canonical["constraints"] = self._merge_constraints(
+                canonical.get("constraints"),
+                [
+                    "OpenContracts MCP 提供远端合同发现、正文读取和检索核验",
+                    "合同日期和合同标题缺失时停止上传",
+                    "远端查重使用规范化 document_title 精确匹配",
+                    "上传网关使用 WorkerKey 写入其绑定的 Corpus，不传配置 Corpus ID",
+                    "传输异常、服务端 5xx 或成功响应结构异常时禁止自动重试",
+                    "manual_review_required 时首行输出人工核查标记",
+                    "source_files.original_name 仅保留原扩展名和审计信息",
+                    "receipt 只记录追加式上传审计",
+                    "结果在当前企业微信事件中同步返回",
+                ],
             )
+        elif isinstance(original_input, str) and original_input.strip():
+            canonical["main_agent_note"] = original_input.strip()[:1000]
 
         tool_args["input"] = json.dumps(
             canonical,
