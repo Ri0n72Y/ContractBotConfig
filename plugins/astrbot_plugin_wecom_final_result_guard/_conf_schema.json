@@ -25,14 +25,19 @@
     "default": 172800
   },
   "upload_processing_text": {
-    "description": "文件已接收但文档处理未完成时的客户回复",
+    "description": "文件已写入但正文解析或检索未完成时的客户回复",
     "type": "string",
-    "default": "合同文件已接收，文档精读、标注和检索仍在处理中。\n\n当前流程已经结束，您可以继续上传合同或提出其他问题。"
+    "default": "合同文件已写入，正文解析或检索仍在处理中。\n\n当前流程已经结束，您可以稍后查询处理状态。"
   },
   "upload_complete_text": {
-    "description": "文档处理完成时的客户回复",
+    "description": "正文可读且已经进入检索时的客户回复",
     "type": "string",
-    "default": "合同已完成上传、精读和标注。\n\n您可以继续上传合同或提出其他问题。"
+    "default": "合同已完成上传，正文可以读取并已进入检索。\n\n您可以继续上传合同或提出其他问题。"
+  },
+  "upload_manual_review_text": {
+    "description": "写入可能已发生且禁止自动重试时的客户回复",
+    "type": "string",
+    "default": "合同系统可能已经接收了本次写入，但当前无法安全确认最终状态。已记录审计信息，请工作人员核查；请勿重复上传。"
   },
   "upload_blocked_text": {
     "description": "无法确认远端状态且未执行上传时的客户回复",
@@ -40,7 +45,7 @@
     "default": "暂时无法确认合同系统中的文件状态，因此没有执行上传。请检查 OpenContracts MCP 连接和文档导入服务后重试。"
   },
   "upload_failed_text": {
-    "description": "正式调用失败时的客户回复",
+    "description": "已确认没有提交的正式调用失败时的客户回复",
     "type": "string",
     "default": "合同暂时无法完成上传。本次流程已结束，请稍后重试或联系工作人员。"
   },
