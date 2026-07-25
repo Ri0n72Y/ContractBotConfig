@@ -16,18 +16,19 @@ sequenceDiagram
 
     U->>R: 上传合同并选择 1
     R->>M: contract_task_context
-    M->>H: transfer_to_opencontracts_operator
-    H->>O: 同步结构化任务
+    M->>M: 提取 contract_date + contract_title
+    M->>H: transfer input(JSON contract_identity)
+    H->>O: 同步结构化任务 + 安全约束
     O->>MCP: get_corpus_info
     MCP-->>O: corpus 信息
-    O->>MCP: list_documents(search=文件名主体)
-    MCP-->>O: 无精确匹配
+    O->>MCP: list_documents(search=YYYY-MM-DD 合同标题)
+    MCP-->>O: 无标题完全一致文档
     O->>G: opencontracts_gateway_status
     G-->>O: WorkerKey 写入配置可用
-    O->>G: opencontracts_upload_document
-    G->>OC: WorkerKey + /api/imports/documents/
-    OC-->>G: created / processing
-    G-->>O: 上传回执
+    O->>G: date + title + staged_path + sha256
+    G->>OC: WorkerKey + YYYY-MM-DD_合同标题.扩展名
+    OC-->>G: created
+    G-->>O: processing
     O->>MCP: list_documents + get_document_text + search_corpus
     MCP-->>O: processing 或 verified
     O-->>M: 统一状态标记
@@ -48,9 +49,10 @@ sequenceDiagram
 
     U->>R: 选择上传
     R->>M: contract_task_context
-    M->>O: 上传任务
-    O->>MCP: list_documents(search=文件名主体)
-    MCP-->>O: 精确标题匹配
+    M->>M: 提取合同日期和标题
+    M->>O: 规范化合同身份
+    O->>MCP: list_documents(search=规范化 document_title)
+    MCP-->>O: 标题完全一致
     O-->>M: DUPLICATE_CONFIRMATION_REQUIRED
     M->>RG: 最终状态
     RG->>R: preserve pending reason
@@ -72,21 +74,53 @@ sequenceDiagram
     U->>R: 重新上传
     R->>R: 记录 confirmation_id 和时间
     R->>M: reupload task context
+    M->>M: 重新确认合同日期和标题
     M->>O: 同步重新上传任务
-    O->>MCP: 重新读取远端文档摘要
+    O->>MCP: 重新读取规范化标题对应文档
     MCP-->>O: existing document
-    O->>G: upload_document + confirmation_id
+    O->>G: date + title + confirmation_id
     G->>G: 校验会话、哈希、确认编号和有效期
     G->>OC: WorkerKey 文档导入
-    OC-->>G: updated / processing
-    G-->>O: 新版本上传回执
+    OC-->>G: updated
+    G-->>O: processing
     O->>MCP: 正文和检索核验
     MCP-->>O: processing 或 verified
     O-->>M: 统一状态
     M-->>U: 客户回复
 ```
 
-## 写入竞争
+## 提交状态未知
+
+```mermaid
+sequenceDiagram
+    participant O as OpenContracts Operator
+    participant G as Upload Gateway
+    participant OC as OpenContracts
+    participant RG as Result Guard
+    participant U as 用户
+
+    O->>G: opencontracts_upload_document
+    G->>OC: POST /api/imports/documents/
+    alt timeout / connection error
+        OC--xG: 响应未知
+        G-->>O: transport_commit_unknown
+    else 5xx
+        OC-->>G: server error
+        G-->>O: upstream_commit_unknown
+    else unexpected 2xx body
+        OC-->>G: success status + invalid contract
+        G-->>O: unexpected_success_response
+    else updated without confirmation
+        OC-->>G: updated
+        G-->>O: unexpected_unconfirmed_update
+    end
+    O-->>RG: MANUAL_REVIEW
+    RG-->>U: 已记录审计，请勿重复上传
+```
+
+上述路径都可能已经写入。Gateway 追加 receipt，Operator 禁止再次调用上传工具。
+
+## 写入前路径冲突
 
 ```mermaid
 sequenceDiagram
@@ -96,8 +130,8 @@ sequenceDiagram
 
     O->>G: 新合同上传
     G->>OC: POST /api/imports/documents/
-    OC-->>G: document path conflict
+    OC-->>G: document path conflict before commit
     G-->>O: confirmation_required
 ```
 
-MCP 检查与导入写入之间可能出现并发变化，因此导入端点的路径冲突会转换为重复确认状态。
+路径冲突只有在能够确认尚未提交时才转换为重复确认状态。
