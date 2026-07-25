@@ -43,9 +43,10 @@ class ImportResultService:
         try:
             review_dir.mkdir(parents=True, exist_ok=True)
             prefix = str(task_id or uuid.uuid4().hex)[:64]
-            target = review_dir / (
-                f"{prefix}_{uuid.uuid4().hex[:8]}_{source.source_filename}"
-            )
+            suffix = source.path.suffix.lower()
+            if not suffix or len(suffix) > 13:
+                suffix = ".bin"
+            target = review_dir / f"{prefix}_{uuid.uuid4().hex[:8]}{suffix}"
             shutil.copy2(source.path, target)
             return str(target.resolve()), None
         except OSError as exc:
