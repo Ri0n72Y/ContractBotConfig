@@ -12,11 +12,12 @@ import astrbot.api.message_components as Comp
 
 
 UPLOAD_MARKERS = {
-    "complete": "[CONTRACT_UPLOAD:COMPLETE]",
-    "processing": "[CONTRACT_UPLOAD:PROCESSING]",
-    "blocked": "[CONTRACT_UPLOAD:BLOCKED]",
-    "failed": "[CONTRACT_UPLOAD:FAILED]",
+    "manual_review": "[CONTRACT_UPLOAD:MANUAL_REVIEW]",
     "duplicate": "[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]",
+    "blocked": "[CONTRACT_UPLOAD:BLOCKED]",
+    "processing": "[CONTRACT_UPLOAD:PROCESSING]",
+    "complete": "[CONTRACT_UPLOAD:COMPLETE]",
+    "failed": "[CONTRACT_UPLOAD:FAILED]",
 }
 
 
@@ -52,22 +53,29 @@ class WecomFinalResultGuard(Star):
         self.upload_processing_text = str(
             config.get(
                 "upload_processing_text",
-                "合同文件已接收，文档精读、标注和检索仍在处理中。\n\n"
-                "当前流程已经结束，您可以继续上传合同或提出其他问题。",
+                "合同文件已写入，正文解析或检索仍在处理中。\n\n"
+                "当前流程已经结束，您可以稍后查询处理状态。",
             )
         ).strip()
         self.upload_complete_text = str(
             config.get(
                 "upload_complete_text",
-                "合同已完成上传、精读和标注。\n\n"
+                "合同已完成上传，正文可以读取并已进入检索。\n\n"
                 "您可以继续上传合同或提出其他问题。",
+            )
+        ).strip()
+        self.upload_manual_review_text = str(
+            config.get(
+                "upload_manual_review_text",
+                "合同系统可能已经接收了本次写入，但当前无法安全确认最终状态。"
+                "已记录审计信息，请工作人员核查；请勿重复上传。",
             )
         ).strip()
         self.upload_blocked_text = str(
             config.get(
                 "upload_blocked_text",
                 "暂时无法确认合同系统中的文件状态，因此没有执行上传。"
-                "请检查 OpenContracts REST 路径查询端点及容器服务后重试。",
+                "请检查 OpenContracts MCP 连接和文档导入服务后重试。",
             )
         ).strip()
         self.upload_failed_text = str(
@@ -88,7 +96,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.2.3 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.1 initialized: instance_id=%s",
             id(self),
         )
 
@@ -130,6 +138,23 @@ class WecomFinalResultGuard(Star):
             if marker in value:
                 return status
 
+        manual_review_signals = (
+            '"status": "manual_review_required"',
+            '"manual_review_required": true',
+            "unexpected_unconfirmed_update",
+            "transport_commit_unknown",
+            "upstream_commit_unknown",
+            "unexpected_success_response",
+            "write_committed=unknown",
+            "需要人工核查",
+            "请勿重复上传",
+        )
+        if any(
+            signal in lowered or signal in value
+            for signal in manual_review_signals
+        ):
+            return "manual_review"
+
         if (
             "confirmation_required" in lowered
             or "duplicate_confirmation_required" in lowered
@@ -143,13 +168,10 @@ class WecomFinalResultGuard(Star):
 
         if (
             '"status": "unknown"' in lowered
-            or "remote_duplicate_check" in lowered
-            or "lookup_path" in lowered
-            or "remote_rest_path" in lowered
-            or "rest_endpoint_missing" in lowered
-            or "remote_duplicate_check" in lowered
-            or "路径重复检查" in value
-            or "rest 路径查询" in lowered
+            or "mcp_document_discovery" in lowered
+            or "mcp_query_incomplete" in lowered
+            or "mcp_unavailable" in lowered
+            or "opencontracts mcp" in lowered
             or "无法确认合同系统" in value
         ):
             return "blocked"
@@ -160,7 +182,8 @@ class WecomFinalResultGuard(Star):
             "后台处理",
             "仍在处理",
             "尚未完成",
-            "精读和标注",
+            "正文解析",
+            "检索仍在处理",
         )
         if accepted_count >= 1 and any(
             signal in lowered or signal in value
@@ -178,9 +201,9 @@ class WecomFinalResultGuard(Star):
         failed_signals = (
             '"status": "failed"',
             "上传失败",
-            "reupload_path_resolution",
+            "version_write_conflict",
             "request_validation",
-            "upstream_service",
+            "import_endpoint_missing",
         )
         if any(
             signal in lowered or signal in value
@@ -194,6 +217,7 @@ class WecomFinalResultGuard(Star):
             "未配置",
             "无法执行上传",
             "上传被阻止",
+            "document_identity",
         )
         if any(
             signal in lowered or signal in value
@@ -207,6 +231,8 @@ class WecomFinalResultGuard(Star):
             return self.upload_complete_text
         if status == "processing":
             return self.upload_processing_text
+        if status == "manual_review":
+            return self.upload_manual_review_text
         if status == "duplicate":
             return self.upload_duplicate_text
         if status == "blocked":
