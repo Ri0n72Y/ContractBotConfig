@@ -27,24 +27,27 @@ description: 合同主人格的客户交互、合同身份提取、同步委派�
 }
 ```
 
-远端统一身份：
+远端身份由 OpenContracts Gateway 确定性规范化。通常格式为：
 
 ```text
 document_title = YYYY-MM-DD 合同标题
 normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
+标题含文件名不安全字符或超过 UTF-8 字节限制时，Gateway 会安全处理文件名并追加短哈希；MCP 查重仍使用 Gateway 返回的完整 `identity.document_title`。
+
 ## 上传流程
 
-1. OpenContracts Operator 使用 corpus-scoped MCP 获取 Corpus 信息，并按规范化 `document_title` 搜索合同。
-2. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
-3. MCP 读取没有完成时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，本次不启动写入。
-4. 新合同或已有有效确认时，检查 WorkerKey 导入网关并执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
-5. 上传参数传递 `contract_date`、`contract_title` 和 `source_files[].original_name`。网关生成规范化远端文件名。
-6. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
-7. 正文可读并通过 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
-8. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
-9. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
+1. OpenContracts Operator 先调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名，取得规范化 `identity.document_title`。
+2. Operator 使用 corpus-scoped MCP 获取 Corpus 信息，并以该 `identity.document_title` 搜索合同。
+3. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+4. MCP 读取没有完成或 Gateway 身份规范化失败时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，本次不启动写入。
+5. 新合同或已有有效确认时，使用 WorkerKey 导入网关执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
+6. 上传参数传递 Gateway 返回的规范化日期和标题，以及 `source_files[].original_name`。网关生成规范化远端文件名。
+7. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
+8. 正文可读并通过 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
+9. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
+10. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
 
 ## 会话控制
 
