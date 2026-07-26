@@ -4,3 +4,4 @@
 secrets/
 contracts/
 __pycache__/
+dist/
