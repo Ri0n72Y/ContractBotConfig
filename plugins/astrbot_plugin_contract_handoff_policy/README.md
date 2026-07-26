@@ -8,13 +8,13 @@
 - 将主人格备注与结构化任务上下文合并。
 - 在企业微信平台和 `current_event_response` 模式下设置同步执行。
 - 记录当前事件中每个子助手的调用次数，并在消息发送完成后清理计数。
-- 为 OpenContracts Operator 重建公开 MCP 任务契约，避免 Router 旧上下文泄漏到子人格。
+- 为 OpenContracts Operator 重建公开 MCP 任务契约，避免旧部署上下文泄漏到子人格。
 - 从 `targets.opencontracts` 取得目标 `corpus_slug`。
 - 声明公开 MCP 读取通道、WorkerKey 写入通道、身份契约、状态契约和安全约束。
 
 ## 公开 MCP 兼容边界
 
-当前 Router 0.5.0 在 Phase 2-B 拆分前仍可能生成旧的 `branch_task.required_tools`。Handoff 不直接透传该列表，而是为 OpenContracts Operator 重建：
+Router 0.5.1 已直接生成公开 MCP 的 `branch_task.required_tools`。Handoff 仍不直接透传该列表，而是为 OpenContracts Operator 重建并校验：
 
 ```text
 list_documents
@@ -46,7 +46,7 @@ Python
 探测其他 MCP URL
 ```
 
-因此，即使 Router 上下文中残留旧工具名，OpenContracts Operator 接收的 `branch_task` 和顶层 `required_tools` 仍保持一致。
+因此，即使旧部署上下文中残留旧工具名，OpenContracts Operator 接收的 `branch_task` 和顶层 `required_tools` 仍保持一致。
 
 ## 组件 UML
 
