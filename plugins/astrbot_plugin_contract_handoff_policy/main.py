@@ -38,7 +38,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.4.4 initialized: instance_id=%s",
+            "Contract handoff policy 0.4.5 initialized: instance_id=%s",
             id(self),
         )
 
@@ -128,6 +128,16 @@ class ContractHandoffPolicy(Star):
                 "contract_title": contract_title,
             }
         canonical["main_agent_input"] = parsed
+
+    @staticmethod
+    def _public_mcp_tools() -> list[str]:
+        return [
+            "list_documents",
+            "opencontracts_gateway_status",
+            "opencontracts_upload_document",
+            "get_document_text",
+            "search_corpus",
+        ]
 
     @filter.on_using_llm_tool(priority=1000)
     async def normalize_handoff(
@@ -227,7 +237,7 @@ class ContractHandoffPolicy(Star):
         original_input = tool_args.get("input")
         canonical = dict(task_context)
         canonical["delegated_agent"] = actual_agent
-        canonical["document_read_channel"] = "opencontracts_mcp"
+        canonical["document_read_channel"] = "opencontracts_public_mcp"
         canonical["document_write_channel"] = "worker_key_bound_document_import"
         canonical["receipt_role"] = "append_only_upload_audit"
         canonical["remaining_expected_subagents"] = [
@@ -236,35 +246,44 @@ class ContractHandoffPolicy(Star):
             if agent != actual_agent
         ]
         branch_tasks = task_context.get("branch_tasks")
+        branch: dict[str, Any] | None = None
         if isinstance(branch_tasks, dict):
-            branch = branch_tasks.get(actual_agent)
-            if isinstance(branch, dict):
-                canonical["branch_task"] = branch
+            candidate = branch_tasks.get(actual_agent)
+            if isinstance(candidate, dict):
+                branch = dict(candidate)
                 canonical["operation"] = branch.get(
                     "operation", canonical.get("operation")
                 )
                 canonical["expected_outputs"] = branch.get(
                     "expected_outputs", canonical.get("expected_outputs")
                 )
-                canonical["required_tools"] = branch.get("required_tools", [])
 
         self._preserve_agent_input(canonical, original_input)
 
         if actual_agent == "opencontracts_operator":
-            canonical["required_tools"] = [
-                "get_corpus_info",
-                "list_documents",
-                "opencontracts_gateway_status",
-                "opencontracts_upload_document",
-                "get_document_text",
-                "search_corpus",
-            ]
+            required_tools = self._public_mcp_tools()
+            corpus_slug = str(
+                (canonical.get("targets") or {}).get("opencontracts") or ""
+            ).strip()
+            canonical["required_tools"] = required_tools
             canonical["integration_sequence"] = [
                 "resolve_identity_with_gateway_status",
-                "discover_with_opencontracts_mcp",
+                "discover_in_target_corpus_with_public_mcp",
                 "write_to_worker_key_bound_corpus",
-                "verify_with_opencontracts_mcp",
+                "verify_in_target_corpus_with_public_mcp",
             ]
+            canonical["mcp_contract"] = {
+                "endpoint": "/mcp/",
+                "corpus_slug": corpus_slug,
+                "corpus_slug_source": "targets.opencontracts",
+                "document_discovery_tool": "list_documents",
+                "missing_corpus_slug_action": "block_without_upload",
+                "forbidden_tools": [
+                    "get_corpus_info",
+                    "opencontracts_check_duplicate",
+                    "list_public_corpuses",
+                ],
+            }
             canonical["identity_contract"] = {
                 "required_fields": ["contract_date", "contract_title"],
                 "canonical_identity_tool": "opencontracts_gateway_status",
@@ -288,9 +307,12 @@ class ContractHandoffPolicy(Star):
             canonical["constraints"] = self._merge_constraints(
                 canonical.get("constraints"),
                 [
-                    "OpenContracts MCP 提供远端合同发现、正文读取和检索核验",
+                    "使用 AstrBot 已配置的 OpenContracts 公开 MCP /mcp/，不得拼接或探测其他 MCP 地址",
+                    "必须使用 targets.opencontracts 作为 list_documents、get_document_text 和 search_corpus 的 corpus_slug",
+                    "目标 Corpus slug 缺失时停止上传，不得调用 list_public_corpuses 猜测目标",
+                    "远端查重使用 opencontracts_gateway_status 返回的 identity.document_title，并对 list_documents 返回标题做完全一致比较",
+                    "不得调用 opencontracts_check_duplicate、get_corpus_info、Shell、Python、通用 HTTP 或读取配置文件绕过标准工具链",
                     "合同日期和合同标题缺失时停止上传",
-                    "远端查重必须使用 opencontracts_gateway_status 返回的 identity.document_title",
                     "上传网关使用 WorkerKey 写入其绑定的 Corpus，不传配置 Corpus ID",
                     "传输异常、服务端 5xx 或成功响应结构异常时禁止自动重试",
                     "manual_review_required 时首行输出人工核查标记",
@@ -299,6 +321,15 @@ class ContractHandoffPolicy(Star):
                     "结果在当前企业微信事件中同步返回",
                 ],
             )
+            canonical["branch_task"] = {
+                "operation": canonical.get("operation"),
+                "required_tools": required_tools,
+                "expected_outputs": canonical.get("expected_outputs", []),
+                "corpus_slug": corpus_slug,
+            }
+        elif branch is not None:
+            canonical["branch_task"] = branch
+            canonical["required_tools"] = branch.get("required_tools", [])
         elif isinstance(original_input, str) and original_input.strip():
             canonical["main_agent_note"] = original_input.strip()[:1000]
 
