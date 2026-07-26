@@ -1,0 +1,84 @@
+name: Router source cleanup
+
+on:
+  push:
+    branches:
+      - agent/fix-public-mcp-upload-flow
+
+permissions:
+  contents: write
+
+jobs:
+  apply-router-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-public-mcp-upload-flow
+          fetch-depth: 0
+
+      - name: Rebuild and validate Router
+        shell: bash
+        run: |
+          set -euo pipefail
+          router='plugins/astrbot_plugin_contract_file_router/main.py'
+          cat .router-cleanup/chunk_*.b64 | base64 --decode > "$router"
+          actual_sha="$(sha256sum "$router" | awk '{print $1}')"
+          test "$actual_sha" = '198eed39c44b776dfcba1de40dd338ab28dbc86186eb32d3b8ef3384eca475b3'
+          python3 -m py_compile "$router"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          metadata = Path('plugins/astrbot_plugin_contract_file_router/metadata.yaml')
+          text = metadata.read_text(encoding='utf-8')
+          text = text.replace('version: 0.5.0', 'version: 0.5.1')
+          metadata.write_text(text, encoding='utf-8')
+
+          versions = Path('VERSIONS.md')
+          text = versions.read_text(encoding='utf-8')
+          text = text.replace(
+              '- astrbot_plugin_contract_file_router: 0.5.0',
+              '- astrbot_plugin_contract_file_router: 0.5.1',
+          )
+          versions.write_text(text, encoding='utf-8')
+
+          readme = Path('plugins/astrbot_plugin_contract_file_router/README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace(
+              '# 合同文件接收与路由 0.5.0',
+              '# 合同文件接收与路由 0.5.1',
+          )
+          text = text.replace(
+              '当前 `main.py` 仍将这些职责放在同一个类中。Phase 2-A 由 Handoff Policy 将上传分支重建为公开 MCP 读取与 WorkerKey 写入能力；Router 的模块拆分和旧 `branch_task` 清理安排在 Phase 2-B。',
+              '当前 `main.py` 仍将这些职责放在同一个类中。Router 0.5.1 已从源头生成公开 MCP 上传任务契约；模块拆分仍安排在 Phase 2-B。',
+          )
+          text = text.replace(
+              'OpenContracts Operator 实际接收的上传能力由 Handoff 0.4.5 重建为：',
+              'Router 0.5.1 直接声明的上传能力为：',
+          )
+          text = text.replace(
+              'Router 0.5.0 中残留的旧 `opencontracts_check_duplicate` 分支声明不会传入 Operator。Phase 2-B 拆分 Router 时将从源头删除该旧声明。',
+              'Router 源码不再声明旧查重工具作为可执行能力；Handoff 仍保留兼容校验，防止旧部署上下文进入 Operator。',
+          )
+          text = text.replace(
+              'list_documents\nopencontracts_gateway_status',
+              'opencontracts_gateway_status\nlist_documents',
+          )
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+          grep -q '"corpus_slug": self.opencontracts_target or None' "$router"
+          grep -q 'list_documents(corpus_slug=targets.opencontracts' "$router"
+          ! grep -A8 '"required_tools": \[' "$router" | grep -q 'opencontracts_check_duplicate'
+          ! grep -A8 '"required_tools": \[' "$router" | grep -q 'get_corpus_info'
+
+          rm -rf .router-cleanup .github/workflows/router-cleanup.yml
+          python3 -m py_compile "$router"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Clean Router public MCP contract'
+          git push origin HEAD:agent/fix-public-mcp-upload-flow
