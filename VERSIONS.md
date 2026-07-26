@@ -2,7 +2,7 @@
 
 ## 插件
 
-- astrbot_plugin_contract_file_router: 0.5.0
+- astrbot_plugin_contract_file_router: 0.5.1
 - astrbot_plugin_contract_handoff_policy: 0.4.5
 - astrbot_plugin_opencontracts_gateway: 0.6.1
 - astrbot_plugin_wecom_final_result_guard: 0.3.2
@@ -31,7 +31,7 @@ Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力
 - OpenContracts 上传网关使用 WorkerKey 向其绑定 Corpus 调用官方 `/api/imports/documents/` 写入端点；
 - 合同远端身份统一为 `YYYY-MM-DD 合同标题`，远端文件名统一为 `YYYY-MM-DD_合同标题.原扩展名`；
 - Gateway 不要求或报告配置 Corpus ID，也不保存 MCP 读取凭证；
-- Handoff 会清除旧 `opencontracts_check_duplicate`、`get_corpus_info` 和 corpus-scoped MCP 契约，向 Operator 发送公开 MCP 工具契约；
+- Router 直接生成公开 MCP 上传任务契约，Handoff 继续执行兼容校验并阻止旧契约进入 Operator；
 - Master 和 Operator Persona/Skill 禁止在上传流程中调用 Shell、Python、通用 HTTP、配置文件读取或直接 MCP JSON-RPC 绕过标准工具链；
 - `BLOCKED` 或 `FAILED` 后任务结束并清理暂存文件，管理员修复后由客户重新上传；
 - 传输异常、服务端 5xx、成功响应结构异常和未确认版本写入进入人工核查，禁止自动重试；
