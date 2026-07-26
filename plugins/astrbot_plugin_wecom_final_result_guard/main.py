@@ -74,14 +74,16 @@ class WecomFinalResultGuard(Star):
         self.upload_blocked_text = str(
             config.get(
                 "upload_blocked_text",
-                "暂时无法确认合同系统中的文件状态，因此没有执行上传。"
-                "请检查 OpenContracts MCP 连接和文档导入服务后重试。",
+                "暂时无法读取目标合同库，因此没有执行上传。"
+                "本次流程已结束。请管理员检查 OpenContracts 公开 MCP 连接、"
+                "目标 Corpus slug 和工具绑定；修复后请重新上传合同文件。",
             )
         ).strip()
         self.upload_failed_text = str(
             config.get(
                 "upload_failed_text",
-                "合同暂时无法完成上传。本次流程已结束，请稍后重试或联系工作人员。",
+                "合同暂时无法完成上传。本次流程已结束。"
+                "修复后请重新上传合同文件，或联系工作人员。",
             )
         ).strip()
         self.upload_duplicate_text = str(
@@ -96,7 +98,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.3.1 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.2 initialized: instance_id=%s",
             id(self),
         )
 
