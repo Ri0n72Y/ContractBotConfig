@@ -40,14 +40,14 @@
     "default": "合同系统可能已经接收了本次写入，但当前无法安全确认最终状态。已记录审计信息，请工作人员核查；请勿重复上传。"
   },
   "upload_blocked_text": {
-    "description": "无法确认远端状态且未执行上传时的客户回复",
+    "description": "无法读取目标合同库且未执行上传时的客户回复",
     "type": "string",
-    "default": "暂时无法确认合同系统中的文件状态，因此没有执行上传。请检查 OpenContracts MCP 连接和文档导入服务后重试。"
+    "default": "暂时无法读取目标合同库，因此没有执行上传。本次流程已结束。请管理员检查 OpenContracts 公开 MCP 连接、目标 Corpus slug 和工具绑定；修复后请重新上传合同文件。"
   },
   "upload_failed_text": {
     "description": "已确认没有提交的正式调用失败时的客户回复",
     "type": "string",
-    "default": "合同暂时无法完成上传。本次流程已结束，请稍后重试或联系工作人员。"
+    "default": "合同暂时无法完成上传。本次流程已结束。修复后请重新上传合同文件，或联系工作人员。"
   },
   "upload_duplicate_text": {
     "description": "检测到相同合同并等待客户确认时的回复",
