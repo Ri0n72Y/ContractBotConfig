@@ -12,12 +12,12 @@ import astrbot.api.message_components as Comp
 
 
 UPLOAD_MARKERS = {
-    "complete": "[CONTRACT_UPLOAD:COMPLETE]",
-    "processing": "[CONTRACT_UPLOAD:PROCESSING]",
     "manual_review": "[CONTRACT_UPLOAD:MANUAL_REVIEW]",
-    "blocked": "[CONTRACT_UPLOAD:BLOCKED]",
-    "failed": "[CONTRACT_UPLOAD:FAILED]",
     "duplicate": "[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]",
+    "blocked": "[CONTRACT_UPLOAD:BLOCKED]",
+    "processing": "[CONTRACT_UPLOAD:PROCESSING]",
+    "complete": "[CONTRACT_UPLOAD:COMPLETE]",
+    "failed": "[CONTRACT_UPLOAD:FAILED]",
 }
 
 
