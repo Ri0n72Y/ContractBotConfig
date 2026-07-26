@@ -62,14 +62,24 @@ class OpenContractsGateway(Star):
         self,
         event: AstrMessageEvent,
         check: str = "configuration",
+        contract_date: str = "",
+        contract_title: str = "",
+        source_filename: str = "",
     ) -> str:
-        """检查 WorkerKey 文档导入配置。
+        """检查 WorkerKey 导入配置并返回可用于 MCP 查重的规范化合同身份。
 
         Args:
             check(string): 固定填写 configuration。
+            contract_date(string): 可选合同日期；与合同标题一起提供时返回规范化身份。
+            contract_title(string): 可选合同正式标题。
+            source_filename(string): 可选原始文件名，用于生成规范化远端文件名。
         """
         del event, check
-        return self.uploads.status()
+        return self.uploads.status(
+            contract_date=contract_date,
+            contract_title=contract_title,
+            source_filename=source_filename,
+        )
 
     @filter.llm_tool(name="opencontracts_upload_document")
     async def opencontracts_upload_document(
