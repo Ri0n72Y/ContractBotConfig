@@ -62,7 +62,7 @@ class FileService:
         raw = re.sub(r"[<>:\"/\\|?*\x00-\x1f\x7f]+", "_", raw)
         raw = re.sub(r"\s+", " ", raw)
         raw = raw.strip(" ._-")
-        return raw[:180]
+        return raw[:480]
 
     @staticmethod
     def _truncate_utf8(value: str, max_bytes: int) -> str:
@@ -109,15 +109,26 @@ class FileService:
         if not re.fullmatch(r"\.[0-9a-z]{1,12}", suffix):
             suffix = ".bin"
         prefix = f"{identity.contract_date}_"
+        candidate = f"{prefix}{identity.contract_title}{suffix}"
+        if len(candidate.encode("utf-8")) <= 240:
+            return candidate
+
+        digest = hashlib.sha256(
+            identity.document_title.encode("utf-8")
+        ).hexdigest()[:10]
         available_bytes = max(
             1,
-            240 - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8")),
+            240
+            - len(prefix.encode("utf-8"))
+            - len(suffix.encode("utf-8"))
+            - len(digest)
+            - 1,
         )
         title = cls._truncate_utf8(
             identity.contract_title,
             available_bytes,
         ).rstrip(" ._-") or "合同"
-        return f"{prefix}{title}{suffix}"
+        return f"{prefix}{title}_{digest}{suffix}"
 
     def _resolve(self, staged_path: str) -> tuple[Path | None, str | None]:
         if not str(staged_path or "").strip():
