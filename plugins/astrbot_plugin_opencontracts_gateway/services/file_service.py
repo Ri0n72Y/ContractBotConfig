@@ -64,6 +64,18 @@ class FileService:
         raw = raw.strip(" ._-")
         return raw[:180]
 
+    @staticmethod
+    def _truncate_utf8(value: str, max_bytes: int) -> str:
+        chars: list[str] = []
+        size = 0
+        for char in value:
+            char_size = len(char.encode("utf-8"))
+            if size + char_size > max_bytes:
+                break
+            chars.append(char)
+            size += char_size
+        return "".join(chars)
+
     @classmethod
     def normalize_identity(
         cls,
@@ -85,8 +97,9 @@ class FileService:
             None,
         )
 
-    @staticmethod
+    @classmethod
     def _normalized_filename(
+        cls,
         identity: DocumentIdentity,
         original_filename: str,
         source: Path,
@@ -96,8 +109,14 @@ class FileService:
         if not re.fullmatch(r"\.[0-9a-z]{1,12}", suffix):
             suffix = ".bin"
         prefix = f"{identity.contract_date}_"
-        available = max(1, 240 - len(prefix) - len(suffix))
-        title = identity.contract_title[:available].rstrip(" ._-") or "合同"
+        available_bytes = max(
+            1,
+            240 - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8")),
+        )
+        title = cls._truncate_utf8(
+            identity.contract_title,
+            available_bytes,
+        ).rstrip(" ._-") or "合同"
         return f"{prefix}{title}{suffix}"
 
     def _resolve(self, staged_path: str) -> tuple[Path | None, str | None]:
