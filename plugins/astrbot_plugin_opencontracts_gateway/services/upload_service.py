@@ -42,11 +42,29 @@ class UploadService:
         self.receipts = receipts
         self.results = ImportResultService(settings, receipts)
 
-    def status(self) -> str:
+    def status(
+        self,
+        contract_date: str = "",
+        contract_title: str = "",
+        source_filename: str = "",
+    ) -> str:
         error = self.settings.validation_error()
+        identity = None
+        identity_error = None
+        if any(
+            str(value or "").strip()
+            for value in (contract_date, contract_title, source_filename)
+        ):
+            identity, identity_error = self.files.preview_identity(
+                contract_date,
+                contract_title,
+                source_filename,
+            )
         return json_result(
             configured=error is None,
             configuration_error=error,
+            identity=identity,
+            identity_error=identity_error,
             read_channel="opencontracts_mcp",
             write_channel="worker_key_bound_document_import",
             base_url=self.settings.base_url,
