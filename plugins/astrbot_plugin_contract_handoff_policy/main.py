@@ -260,16 +260,21 @@ class ContractHandoffPolicy(Star):
                 "search_corpus",
             ]
             canonical["integration_sequence"] = [
-                "validate_contract_identity",
+                "resolve_identity_with_gateway_status",
                 "discover_with_opencontracts_mcp",
                 "write_to_worker_key_bound_corpus",
                 "verify_with_opencontracts_mcp",
             ]
             canonical["identity_contract"] = {
                 "required_fields": ["contract_date", "contract_title"],
-                "document_title_format": "YYYY-MM-DD 合同标题",
-                "normalized_filename_format": "YYYY-MM-DD_合同标题.原扩展名",
-                "remote_duplicate_key": "exact_document_title",
+                "canonical_identity_tool": "opencontracts_gateway_status",
+                "document_title_source": "gateway_status.identity.document_title",
+                "normalized_filename_source": (
+                    "gateway_status.identity.normalized_filename"
+                ),
+                "remote_duplicate_key": (
+                    "gateway_status.identity.document_title"
+                ),
                 "missing_identity_action": "block_without_upload",
             }
             canonical["status_contract"] = {
@@ -285,7 +290,7 @@ class ContractHandoffPolicy(Star):
                 [
                     "OpenContracts MCP 提供远端合同发现、正文读取和检索核验",
                     "合同日期和合同标题缺失时停止上传",
-                    "远端查重使用规范化 document_title 精确匹配",
+                    "远端查重必须使用 opencontracts_gateway_status 返回的 identity.document_title",
                     "上传网关使用 WorkerKey 写入其绑定的 Corpus，不传配置 Corpus ID",
                     "传输异常、服务端 5xx 或成功响应结构异常时禁止自动重试",
                     "manual_review_required 时首行输出人工核查标记",
