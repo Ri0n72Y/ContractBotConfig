@@ -59,10 +59,16 @@ class FileService:
     @staticmethod
     def _normalize_title(value: str) -> str:
         raw = str(value or "").strip()
-        raw = re.sub(r"[<>:\"/\\|?*\x00-\x1f\x7f]+", "_", raw)
+        raw = re.sub(r"[\x00-\x1f\x7f]+", " ", raw)
         raw = re.sub(r"\s+", " ", raw)
-        raw = raw.strip(" ._-")
+        raw = raw.strip()
         return raw[:480]
+
+    @staticmethod
+    def _filename_title(value: str) -> str:
+        raw = re.sub(r"[<>:\"/\\|?*\x00-\x1f\x7f]+", "_", value)
+        raw = re.sub(r"\s+", " ", raw)
+        return raw.strip(" ._-")
 
     @staticmethod
     def _truncate_utf8(value: str, max_bytes: int) -> str:
@@ -109,8 +115,13 @@ class FileService:
         if not re.fullmatch(r"\.[0-9a-z]{1,12}", suffix):
             suffix = ".bin"
         prefix = f"{identity.contract_date}_"
-        candidate = f"{prefix}{identity.contract_title}{suffix}"
-        if len(candidate.encode("utf-8")) <= 240:
+        filename_title = cls._filename_title(identity.contract_title) or "合同"
+        candidate = f"{prefix}{filename_title}{suffix}"
+        requires_hash = (
+            filename_title != identity.contract_title
+            or len(candidate.encode("utf-8")) > 240
+        )
+        if not requires_hash:
             return candidate
 
         digest = hashlib.sha256(
@@ -125,10 +136,37 @@ class FileService:
             - 1,
         )
         title = cls._truncate_utf8(
-            identity.contract_title,
+            filename_title,
             available_bytes,
         ).rstrip(" ._-") or "合同"
         return f"{prefix}{title}_{digest}{suffix}"
+
+    @classmethod
+    def preview_identity(
+        cls,
+        contract_date: str,
+        contract_title: str,
+        source_filename: str = "",
+    ) -> tuple[dict[str, str] | None, str | None]:
+        identity, error = cls.normalize_identity(contract_date, contract_title)
+        if error or identity is None:
+            return None, error
+        source = Path(str(source_filename or "contract.bin"))
+        original_name = cls._original_filename(source_filename, source)
+        normalized_name = cls._normalized_filename(
+            identity,
+            original_name,
+            source,
+        )
+        return (
+            {
+                "contract_date": identity.contract_date,
+                "contract_title": identity.contract_title,
+                "document_title": identity.document_title,
+                "normalized_filename": normalized_name,
+            },
+            None,
+        )
 
     def _resolve(self, staged_path: str) -> tuple[Path | None, str | None]:
         if not str(staged_path or "").strip():
