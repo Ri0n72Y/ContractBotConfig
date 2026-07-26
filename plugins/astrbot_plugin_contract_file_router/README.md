@@ -2,8 +2,6 @@
 
 本插件是合同流程的入口适配器，负责把企业微信文件事件转换为可恢复的合同任务，并在当前消息事件中启动主人格请求。
 
-本次仅完善架构文档，插件版本保持 `0.5.0`。
-
 ## 职责
 
 - 接收 AstrBot 文件组件并复制到插件暂存目录。
@@ -14,7 +12,7 @@
 - 在任务完成、取消或过期后清理暂存文件。
 - 与最终结果保护插件共享取消任务和重复确认状态。
 
-OpenContracts 的远端读取由 OpenContracts Operator 调用 MCP Tools 完成；Router 只提供文件、用户意图和任务状态。
+OpenContracts 的合同发现、正文读取和检索由 OpenContracts Operator 使用 MCP 完成；Router 提供文件、用户意图、确认状态和任务契约。
 
 ## 组件 UML
 
@@ -54,7 +52,7 @@ classDiagram
     ContractFileRouter --> TaskContextFactory
 ```
 
-当前 `main.py` 仍将这些职责放在同一个类中。图中的辅助组件是 Phase 2 的拆分目标。
+当前 `main.py` 仍将这些职责放在同一个类中。Phase 2-A 由 Handoff Policy 将上传分支规范化为 MCP 读取与 WorkerKey 写入能力；Router 的模块拆分和任务上下文清理安排在 Phase 2-B。
 
 ## 会话状态 UML
 
@@ -64,10 +62,10 @@ stateDiagram-v2
     Idle --> AwaitingAction: 收到并暂存文件
     AwaitingAction --> TaskRunning: 选择快速分析或提问
     AwaitingAction --> UploadRunning: 选择上传
-    UploadRunning --> AwaitingDuplicateConfirmation: 远端返回合同已存在
+    UploadRunning --> AwaitingDuplicateConfirmation: MCP或导入竞争发现已有合同
     AwaitingDuplicateConfirmation --> ReuploadRunning: 回复重新上传
     AwaitingDuplicateConfirmation --> Idle: 回复取消或结束
-    ReuploadRunning --> AwaitingDuplicateConfirmation: 重新上传未启动或需要再次确认
+    ReuploadRunning --> AwaitingDuplicateConfirmation: 再次需要确认
     UploadRunning --> Idle: 完成、处理中回复或失败
     ReuploadRunning --> Idle: 完成、处理中回复或失败
     TaskRunning --> Idle: 结果发送完成
@@ -83,6 +81,8 @@ sequenceDiagram
     participant M as Master Persona
     participant H as Handoff Policy
     participant O as OpenContracts Operator
+    participant MCP as OpenContracts MCP
+    participant G as Upload Gateway
 
     U->>R: 上传文件
     R->>R: 暂存、校验、创建 pending
@@ -92,7 +92,13 @@ sequenceDiagram
     R->>M: 显式 LLM 请求
     M->>H: transfer_to_opencontracts_operator
     H->>O: 规范化后的同步任务
-    O-->>M: 上传业务状态
+    O->>MCP: 获取 corpus 和远端文档摘要
+    alt 新合同或已有重新上传确认
+        O->>G: WorkerKey 导入写入
+        G-->>O: 导入状态
+        O->>MCP: 正文和检索核验
+    end
+    O-->>M: 业务状态
     M-->>U: 最终回复
 ```
 
@@ -113,9 +119,20 @@ branch_tasks
 expected_outputs
 ```
 
-OpenContracts Operator 使用这些字段调用 MCP 读取工具和上传 Gateway。`original_name` 是远端合同身份解析和上传文件名的输入，`staged_path` 只用于 Gateway 读取本地暂存文件。
+上传分支声明的能力包括：
 
-## Phase 2 拆分目标
+```text
+get_corpus_info
+list_documents
+opencontracts_gateway_status
+opencontracts_upload_document
+get_document_text
+search_corpus
+```
+
+`original_name` 是 MCP 文档搜索和导入文件名的输入；`staged_path` 由上传网关读取本地暂存文件。
+
+## 后续拆分目标
 
 ```text
 astrbot_plugin_contract_file_router/

@@ -1,85 +1,75 @@
-# Phase 2 重构目标
+# Phase 2 重构目标与进度
 
-本文件将 Phase 1 UML 转换为可执行的代码拆分计划。Phase 1 不修改运行时代码和组件版本。
-
-## 重构顺序
+## 顺序
 
 ```mermaid
 flowchart LR
-    A[MCP 读取链路落地]
-    B[Gateway 写入职责收敛]
-    C[Router 状态机拆分]
-    D[Result Guard 分类拆分]
-    E[Handoff 协议收敛]
-    F[Persona 与 Skill 更新]
-    G[集成测试与发布]
+    A[Phase 2-A MCP能力与Gateway拆分]
+    B[Phase 2-B Router状态机拆分]
+    C[Phase 2-C Result Guard拆分]
+    D[Phase 2-D Handoff纯函数提取]
+    E[AstrBot加载与发布]
 
-    A --> B --> C --> D --> E --> F --> G
+    A --> B --> C --> D --> E
 ```
 
-## 1. OpenContracts Operator 与 MCP
+## Phase 2-A：已完成
 
-### 目标
+### OpenContracts MCP
 
-OpenContracts Operator 直接调用 MCP Tools 获取合同列表、文档正文、搜索结果和处理状态，并将远端数据转换为稳定业务判断。
+OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时工具发现是能力清单的事实来源。Corpus-scoped MCP 当前提供：
 
-### 目标服务模型
-
-```mermaid
-classDiagram
-    class OpenContractsOperator {
-        +resolve_document_identity(task)
-        +upload_contract(task)
-        +verify_processing(document)
-    }
-
-    class McpDocumentReader {
-        +list_documents(corpus)
-        +get_document_text(document)
-        +search_corpus(corpus, query)
-    }
-
-    class DocumentIdentityResolver {
-        +resolve(source_file, remote_documents) IdentityResult
-    }
-
-    class UploadGatewayTool {
-        +status()
-        +upload_document(command)
-    }
-
-    OpenContractsOperator --> McpDocumentReader
-    OpenContractsOperator --> DocumentIdentityResolver
-    OpenContractsOperator --> UploadGatewayTool
+```text
+get_corpus_info
+list_documents
+get_document_text
+list_annotations
+list_relationships
+search_corpus
+list_threads
+get_thread_messages
+create_thread_message
 ```
 
-`DocumentIdentityResolver` 的判断规则需要固定输入、固定输出和单元测试，避免由自然语言临时决定。
+`create_thread_message` 需要认证用户上下文。Skill 根据上传、问答、风险分析、关系、标注和讨论线程等任务选择对应工具。
 
-## 2. OpenContracts Gateway
+### 合同身份
 
-### 目标目录
+主人格从合同正文提取：
+
+```text
+contract_date = YYYY-MM-DD
+contract_title = 合同正文中的正式标题
+```
+
+Gateway 统一生成：
+
+```text
+document_title = YYYY-MM-DD 合同标题
+normalized_filename = YYYY-MM-DD_合同标题.原扩展名
+```
+
+Operator 使用规范化标题进行 MCP 候选搜索和完全一致比较。身份缺失时停止上传。
+
+### OpenContracts 写入
+
+Upload Gateway 使用 WorkerKey 和官方 `/api/imports/documents/` 端点完成合同文件导入。写入目标由 WorkerKey 绑定；Gateway 不要求配置 Corpus ID。
+
+### Gateway 目录
 
 ```text
 plugins/astrbot_plugin_opencontracts_gateway/
 ├── main.py
-├── config/
-│   ├── __init__.py
-│   └── settings.py
-├── domain/
-│   ├── __init__.py
-│   ├── upload_command.py
-│   └── upload_result.py
-├── clients/
-│   ├── __init__.py
-│   └── import_client.py
-├── services/
-│   ├── __init__.py
-│   ├── confirmation_service.py
-│   ├── file_validation_service.py
-│   └── upload_service.py
-├── storage/
-│   ├── __init__.py
-│   └── receipt_store.py
+├── config/settings.py
+├── domain/models.py
+├── domain/results.py
+├── clients/import_client.py
+├── services/confirmation_service.py
+├── services/file_service.py
+├── services/import_response_policy.py
+├── services/import_result_service.py
+├── services/upload_service.py
+├── storage/receipt_store.py
 ├── _conf_schema.json
 ├── metadata.yaml
 └── README.md
@@ -91,29 +81,36 @@ plugins/astrbot_plugin_opencontracts_gateway/
 flowchart TD
     Main[main.py Tool Adapter]
     UploadService[UploadService]
-    Validator[FileValidationService]
+    Validator[FileService]
     Confirmation[ConfirmationService]
     ImportClient[ImportClient]
+    ResponsePolicy[ImportResponsePolicy]
+    ResultService[ImportResultService]
     ReceiptStore[ReceiptStore]
-    Domain[Domain DTOs]
 
     Main --> UploadService
     UploadService --> Validator
     UploadService --> Confirmation
     UploadService --> ImportClient
-    UploadService --> ReceiptStore
-    UploadService --> Domain
+    UploadService --> ResultService
+    ResultService --> ResponsePolicy
+    ResultService --> ReceiptStore
 ```
 
-### `main.py` 目标
+### 提交状态
 
-- 读取 AstrBot config；
-- 创建依赖；
-- 注册 `opencontracts_gateway_status`；
-- 注册 `opencontracts_upload_document`；
-- 将领域结果序列化为 Tool JSON。
+以下情况进入人工核查并禁止自动重试：
 
-## 3. Contract File Router
+```text
+unexpected_unconfirmed_update
+transport_commit_unknown
+upstream_commit_unknown
+unexpected_success_response
+```
+
+Receipt 使用 append-only 审计记录。
+
+## Phase 2-B：Contract File Router
 
 ### 目标目录
 
@@ -121,148 +118,66 @@ flowchart TD
 plugins/astrbot_plugin_contract_file_router/
 ├── main.py
 ├── domain/
-│   ├── __init__.py
 │   ├── actions.py
 │   ├── pending_contract.py
 │   └── task_state.py
 ├── handlers/
-│   ├── __init__.py
 │   ├── file_event_handler.py
 │   └── text_event_handler.py
 ├── services/
-│   ├── __init__.py
 │   ├── conversation_service.py
 │   ├── session_service.py
 │   ├── staging_service.py
 │   └── task_context_factory.py
 ├── storage/
-│   ├── __init__.py
 │   ├── cancelled_task_store.py
 │   └── pending_store.py
-├── ui/
-│   ├── __init__.py
-│   └── prompts.py
-├── _conf_schema.json
-├── metadata.yaml
-└── README.md
+└── ui/prompts.py
 ```
 
-### 状态模型
+Task Context Factory 直接使用当前 MCP 与 Gateway 工具名称，移除 `opencontracts_check_duplicate` 遗留字段。状态模型应增加对人工核查任务的明确处理策略。
 
-```mermaid
-classDiagram
-    class PendingContract {
-        +session_id: str
-        +state: TaskState
-        +files: list~SourceFile~
-        +created_at: float
-        +updated_at: float
-        +dispatch: DispatchInfo?
-        +confirmation: DuplicateConfirmation?
-    }
-
-    class SourceFile {
-        +original_name: str
-        +staged_path: str
-        +sha256: str
-        +size_bytes: int
-    }
-
-    class DispatchInfo {
-        +task_id: str
-        +operation: str
-        +started_at: float
-    }
-
-    class DuplicateConfirmation {
-        +confirmation_id: str
-        +confirmed_at: float?
-    }
-
-    PendingContract --> SourceFile
-    PendingContract --> DispatchInfo
-    PendingContract --> DuplicateConfirmation
-```
-
-JSON Store 负责 DTO 与持久化字典之间的转换，事件处理器不直接拼接状态字段。
-
-## 4. WeCom Final Result Guard
-
-### 目标目录
+## Phase 2-C：WeCom Final Result Guard
 
 ```text
 plugins/astrbot_plugin_wecom_final_result_guard/
 ├── main.py
-├── classification/
-│   ├── __init__.py
-│   └── upload_status_classifier.py
-├── mapping/
-│   ├── __init__.py
-│   └── customer_message_mapper.py
-├── storage/
-│   ├── __init__.py
-│   └── cancelled_task_store.py
-├── text/
-│   ├── __init__.py
-│   └── utf8_truncator.py
-├── _conf_schema.json
-├── metadata.yaml
-└── README.md
+├── classification/upload_status_classifier.py
+├── mapping/customer_message_mapper.py
+├── storage/cancelled_task_store.py
+└── text/utf8_truncator.py
 ```
 
-正式状态标记是分类器的主要输入；兼容旧文本的规则单独维护并记录移除条件。
+正式状态标记是分类器的主要输入。`MANUAL_REVIEW` 优先于 `PROCESSING` 和 `FAILED`；兼容文本规则单独维护。
 
-## 5. Handoff Policy
+## Phase 2-D：Handoff Policy
 
-该插件保持小型。建议提取两个纯函数模块：
+该插件保持小型，计划提取：
 
 ```text
-routing.py          # agent/tool/branch resolution
-canonical_task.py   # canonical JSON construction
+routing.py
+canonical_task.py
 ```
 
-委派协议使用能力描述：
+规范化上下文使用：
 
 ```text
-read_channel = opencontracts_mcp
-write_channel = opencontracts_import_gateway
+document_read_channel = opencontracts_mcp
+document_write_channel = worker_key_bound_document_import
+receipt_role = append_only_upload_audit
 ```
 
-## 6. Persona 与 Skill
+Handoff 必须合并 Router 原有安全约束，并保留主人格传入的结构化合同身份。
 
-代码接口稳定后进行内容更新：
+## MVP 完成标准
 
-- Master Persona 保留客户交互、核验要求和协作范围；
-- OpenContracts Persona 保留合同库操作范围和结果质量；
-- `contract-opencontracts` 记录 MCP 读取与 Gateway 上传顺序；
-- `contract-result-verification` 只定义统一状态及完成条件；
-- Router 动态上下文只提供数据和动作，不复制整段 Skill。
-
-这些文件行为变化时分别推进 Persona 和 Skill 版本。
-
-## 7. 兼容策略
-
-Phase 2 可分两个 PR：
-
-### PR 1：读取迁移
-
-- 增加 MCP 身份解析流程；
-- 更新 Operator Skill、Persona 和工具分配文档；
-- Gateway 保留旧 Tool 名称作为兼容层；
-- 增加新合同、重复合同和未知状态测试。
-
-### PR 2：文件拆分
-
-- 保持 Tool 名称、配置键和状态标记稳定；
-- 按目标目录移动实现；
-- 加入单元测试；
-- 删除已无调用的 REST lookup 实现和配置。
-
-## 8. 完成标准
-
-- OpenContracts 读取日志来自 MCP Tool 调用；
-- Gateway 状态只报告写入配置；
-- Router 和 Gateway `main.py` 各自主要承担适配与协调；
-- 每个状态转换有测试；
-- 每个插件 README UML 与代码模块一致；
-- `scripts/build_release.py` 能输出可安装 ZIP 和校验清单。
+- OpenContracts 合同库操作来自 MCP Tool 调用；
+- Gateway 只报告 WorkerKey 文件导入配置，不要求 Corpus ID；
+- 合同远端身份按日期和标题规范化；
+- 提交状态未知进入人工核查且禁止自动重试；
+- Receipt 为 append-only 审计；
+- Gateway 运行模块保持职责明确；
+- 插件 README UML 与代码模块一致；
+- `python3 -m compileall -q plugins scripts` 通过；
+- `python scripts/build_release.py --clean` 输出可安装 ZIP 和 SHA-256 清单；
+- ZIP 能在 AstrBot WebUI 中加载并完成最小上传流程。

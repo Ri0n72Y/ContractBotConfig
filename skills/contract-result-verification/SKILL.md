@@ -1,18 +1,27 @@
 ---
 name: contract-result-verification
-description: 核验 OpenContracts 上传结果并输出企业微信状态标记。
+description: 核验 OpenContracts MCP 读取结果和 WorkerKey 导入结果，并输出企业微信状态标记。
 ---
 
 # 结果核验
 
-内部可以保留文档标识、远端路径查询和处理状态；客户回复不得展示任务编号、哈希、内部路径、数据库约束或子代理原始报告。
+内部可以保留文档标识、MCP 工具结果、规范化合同身份和导入处理状态；客户回复使用自然业务语言。
 
 ## 状态优先级
 
-1. 文档路径已存在、`confirmation_required` 或路径唯一约束冲突：`[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`
-2. REST 路径查询失败、端点不存在、认证失败或结果不完整，且没有执行上传：`[CONTRACT_UPLOAD:BLOCKED]`
-3. 文件已接收，正文、标注或检索尚未核验完成：`[CONTRACT_UPLOAD:PROCESSING]`
-4. 文档正文可读并通过检索验证：`[CONTRACT_UPLOAD:COMPLETE]`
-5. 已调用正式能力但失败：`[CONTRACT_UPLOAD:FAILED]`
+1. Gateway 返回 `manual_review_required=true`、`status=manual_review_required`，或写入提交状态未知：`[CONTRACT_UPLOAD:MANUAL_REVIEW]`。
+2. Gateway 返回未确认的 `updated`，即 `failure_stage=unexpected_unconfirmed_update`：`[CONTRACT_UPLOAD:MANUAL_REVIEW]`。
+3. MCP 已找到规范化标题完全一致的文档，且没有有效重新上传确认：`[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+4. 导入端点在写入前返回可确认的文档路径冲突：`[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+5. MCP Corpus 或文档发现没有完成，且没有执行写入：`[CONTRACT_UPLOAD:BLOCKED]`。
+6. 合同日期、合同标题、WorkerKey、文件校验、确认校验或权限条件未满足：`[CONTRACT_UPLOAD:BLOCKED]`。
+7. 文件已接收，正文或语义检索尚未就绪：`[CONTRACT_UPLOAD:PROCESSING]`。
+8. 文档正文可读，并通过 `search_corpus` 检索到该文档内容：`[CONTRACT_UPLOAD:COMPLETE]`。
+9. 已确认没有发生提交且正式导入失败：`[CONTRACT_UPLOAD:FAILED]`。
 
-暂存成功、HTTP 接收、文档记录创建和 `processing` 都不能单独证明文档处理完成。首次上传应核验服务端返回 `created`；确认重新上传成功时应核验服务端返回 `updated` 或等价的新版本结果。
+## 安全规则
+
+- `transport_commit_unknown`、`upstream_commit_unknown` 和 `unexpected_success_response` 均视为可能已经提交，禁止自动重试。
+- `HTTP 201`、`created`、`updated` 和 `processing` 只证明写入或处理阶段，不代表正文及检索完成。
+- 完成状态只声明“正文可读并已进入检索”；没有调用 `list_annotations` 时，不声明标注已经完成。
+- WorkerKey 决定写入 Corpus。Gateway 不要求或显示配置 Corpus ID；写入后仍必须通过当前 corpus-scoped MCP 核验远端结果。

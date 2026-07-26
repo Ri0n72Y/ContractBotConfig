@@ -1,7 +1,7 @@
 name: astrbot_plugin_wecom_final_result_guard
 display_name: 企业微信最终结果保护
-desc: 将合同技术状态转换为客户回复，保护重复确认状态并抑制已结束任务的迟到结果。
-version: 0.2.3
+desc: 将 OpenContracts MCP、导入和人工核查状态转换为企业微信客户回复。
+version: 0.3.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
