@@ -1,4 +1,4 @@
-# 合同文件接收与路由 0.5.0
+# 合同文件接收与路由 0.5.1
 
 本插件是合同流程的入口适配器，负责把企业微信文件事件转换为可恢复的合同任务，并在当前消息事件中启动主人格请求。
 
@@ -53,7 +53,7 @@ classDiagram
     ContractFileRouter --> TaskContextFactory
 ```
 
-当前 `main.py` 仍将这些职责放在同一个类中。Phase 2-A 由 Handoff Policy 将上传分支重建为公开 MCP 读取与 WorkerKey 写入能力；Router 的模块拆分和旧 `branch_task` 清理安排在 Phase 2-B。
+当前 `main.py` 仍将这些职责放在同一个类中。Router 0.5.1 已从源头生成公开 MCP 上传任务契约；模块拆分仍安排在 Phase 2-B。
 
 ## 会话状态 UML
 
@@ -91,11 +91,11 @@ sequenceDiagram
     R->>R: 暂存、校验、创建 pending
     R-->>U: 显示操作菜单
     U->>R: 选择上传
-    R->>R: 创建 contract_task_context + targets.opencontracts
+    R->>R: 创建 public MCP contract_task_context
     R->>M: 显式 LLM 请求
     M->>H: transfer_to_opencontracts_operator
-    H->>H: 重建 public MCP branch_task
-    H->>O: 规范化后的同步任务
+    H->>H: 校验并规范化 public MCP branch_task
+    H->>O: 同步上传任务
     O->>G: 取得规范化合同身份
     O->>MCP: list_documents(corpus_slug, search=document_title)
     alt 新合同或已有重新上传确认
@@ -125,19 +125,19 @@ branch_tasks
 expected_outputs
 ```
 
-`targets.opencontracts` 来自插件配置 `opencontracts_target`，默认值为 `contracts`。Handoff 将其转换为 Operator 的 `mcp_contract.corpus_slug` 和 `branch_task.corpus_slug`。
+`targets.opencontracts` 来自插件配置 `opencontracts_target`，默认值为 `contracts`。Router 同时把该值写入 `branch_tasks.opencontracts_operator.corpus_slug`；Handoff 将其规范化为 Operator 的 `mcp_contract.corpus_slug`。
 
-OpenContracts Operator 实际接收的上传能力由 Handoff 0.4.5 重建为：
+Router 0.5.1 直接声明的上传能力为：
 
 ```text
-list_documents
 opencontracts_gateway_status
+list_documents
 opencontracts_upload_document
 get_document_text
 search_corpus
 ```
 
-Router 0.5.0 中残留的旧 `opencontracts_check_duplicate` 分支声明不会传入 Operator。Phase 2-B 拆分 Router 时将从源头删除该旧声明。
+Router 源码不再声明 `opencontracts_check_duplicate` 或 `get_corpus_info` 作为可执行能力。Handoff 仍保留兼容校验，防止旧部署上下文进入 Operator。
 
 `original_name` 只用于保留原扩展名和审计信息；MCP 查重使用 Gateway 返回的规范化 `identity.document_title`。
 
