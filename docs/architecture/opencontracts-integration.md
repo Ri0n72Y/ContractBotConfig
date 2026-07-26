@@ -2,18 +2,18 @@
 
 ## 运行模型
 
-OpenContracts 集成由 MCP 能力面和 WorkerKey 文件导入面组成。
+OpenContracts 集成由公开 MCP 能力面和 WorkerKey 文件导入面组成。
 
 ```mermaid
 flowchart LR
     Operator[OpenContracts Operator]
-    MCP[OpenContracts MCP]
+    MCP[OpenContracts Public MCP]
     Gateway[OpenContracts Upload Gateway]
     ImportAPI[Official Document Import API]
     OC[OpenContracts]
     Receipt[(Append-only Upload Audit)]
 
-    Operator -->|合同库操作| MCP
+    Operator -->|目标 Corpus 合同库操作| MCP
     MCP --> OC
     Operator -->|规范化合同身份 + upload command| Gateway
     Gateway -->|WorkerKey + multipart| ImportAPI
@@ -25,34 +25,35 @@ flowchart LR
 
 OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时 `tools/list` 是 MCP 能力、参数和返回结构的事实来源。项目内的 Skill 和 Persona 根据具体业务任务选择工具，不复制 OpenContracts 的远端读取实现。
 
-推荐 corpus-scoped endpoint：
+AstrBot 配置公开 endpoint：
 
 ```text
-http://opencontracts-api:8000/mcp/corpus/contracts/
+http://opencontracts-api:8000/mcp/
 ```
 
-当前 scoped endpoint 提供：
+公开 endpoint 提供：
 
 | Tool | 用途 |
 |---|---|
-| `get_corpus_info` | 读取目标 Corpus 信息和标签集 |
-| `list_documents` | 列出和搜索合同文档 |
-| `get_document_text` | 分窗口读取解析后的合同正文 |
+| `list_public_corpuses` | 列出当前调用者可见的 Corpus；不用于上传目标选择 |
+| `list_documents` | 按明确 `corpus_slug` 列出和搜索合同文档 |
+| `get_document_text` | 按明确 `corpus_slug` 分窗口读取解析后的合同正文 |
 | `list_annotations` | 读取文档标注，可按页、标签和文本筛选 |
 | `list_relationships` | 读取文档关系和结构化关系数据 |
-| `search_corpus` | 在 Corpus 中执行语义检索 |
+| `search_corpus` | 按明确 `corpus_slug` 执行语义检索 |
 | `list_threads` | 读取 Corpus 或文档讨论线程 |
 | `get_thread_messages` | 读取线程消息和层级关系 |
 | `create_thread_message` | 在已有线程中创建消息，需要认证用户上下文 |
 
-上传流程通常使用：
+上传流程使用：
 
 ```text
-get_corpus_info
 list_documents
 get_document_text
 search_corpus
 ```
+
+目标 Corpus slug 由 Router 配置 `opencontracts_target` 提供，经任务上下文 `targets.opencontracts` 和 Handoff 传给 Operator。上传流程不调用 `list_public_corpuses` 猜测目标，也不依赖不存在的 `get_corpus_info`。
 
 合同问答、风险分析、结构化关系、标注和讨论流程按任务增加其他 MCP 工具。MCP 连接与认证属于 AstrBot MCP 管理界面。Gateway 不保存 MCP 读取凭证。
 
@@ -72,7 +73,7 @@ document_title = YYYY-MM-DD 合同标题
 normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
-`list_documents(search=document_title)` 只负责缩小候选集，Operator 还必须对返回结果的 `title` 做完全一致比较。日期或标题无法可靠取得时停止写入。
+`list_documents(corpus_slug=targets.opencontracts, search=document_title)` 只负责缩小候选集，Operator 还必须对返回结果的 `title` 做完全一致比较。日期、标题或目标 Corpus slug 无法可靠取得时停止写入。
 
 ## WorkerKey 文件导入面
 
@@ -100,30 +101,41 @@ Authorization: WorkerKey <token>
 sequenceDiagram
     participant M as Master
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant G as Upload Gateway
     participant OC as OpenContracts
 
     M->>M: 提取 contract_date + contract_title
-    M->>O: 结构化合同身份
-    O->>MCP: get_corpus_info
-    MCP-->>O: corpus 信息
-    O->>MCP: list_documents(search=规范化 document_title)
+    M->>O: 结构化合同身份 + target corpus slug
+    O->>G: opencontracts_gateway_status
+    G-->>O: normalized identity
+    O->>MCP: list_documents(corpus_slug, search=document_title)
     MCP-->>O: 文档摘要
     O->>O: title 完全一致比较
     O->>G: date + title + staged_path + sha256
     G->>OC: WorkerKey + normalized_filename
     OC-->>G: created / updated / error
     G-->>O: processing / manual_review / blocked / failed
-    O->>MCP: get_document_text + search_corpus
+    O->>MCP: list_documents + get_document_text + search_corpus
     MCP-->>O: 正文和检索结果
 ```
+
+## Persona 与 Skill 工具边界
+
+AstrBot 当前不能按 Persona 关闭 Shell、Python 等系统工具，因此上传边界由 Persona 和 Skill 约束：
+
+- Master 只读取当前合同并执行一次同步 Handoff；
+- Operator 只使用公开 MCP Tools 和 Gateway Tools；
+- 不调用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或 URL 探测；
+- 任一 `[CONTRACT_UPLOAD:*]` 标记均为 Master 的终态，收到后停止全部工具调用。
+
+Handoff 会重建 Operator 的 `branch_task`，清除 Router 旧上下文中可能残留的 `opencontracts_check_duplicate`、`get_corpus_info` 和 corpus-scoped MCP 契约。
 
 ## 状态语义
 
 - `processing`：导入已接收，正文或检索尚未完成。
 - `confirmation_required`：写入前已确认远端同一合同存在，需要客户授权版本写入。
-- `blocked`：身份、MCP、配置、文件、确认或权限条件未满足，尚未写入。
+- `blocked`：身份、目标 Corpus slug、MCP、配置、文件、确认或权限条件未满足，尚未写入。
 - `manual_review_required`：写入可能已经发生，或已经发生未确认版本写入；禁止自动重试。
 - `failed`：已确认没有发生提交的正式请求失败。
 
@@ -135,6 +147,8 @@ transport_commit_unknown
 upstream_commit_unknown
 unexpected_success_response
 ```
+
+`blocked` 或 `failed` 后 Router 清理暂存文件。本阶段不保留失败后重试状态；管理员修复后由客户重新上传合同文件。
 
 ## 处理完成条件
 
