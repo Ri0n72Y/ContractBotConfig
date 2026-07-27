@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_doc_preconverter
 display_name: 旧版 Word 合同预转换
 desc: 在合同路由前将 .doc 文件通过 Gotenberg/LibreOffice 转换为 PDF，避免乱码并阻止原始二进制内容进入 LLM 读取流程。
-version: 0.1.0
+version: 0.1.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
