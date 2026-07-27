@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_handoff_policy
 display_name: 合同子代理委派策略
-desc: 规范公开 MCP 合同任务委派上下文，保留合同身份、安全约束和 OpenContracts 状态契约。
-version: 0.4.5
+desc: 规范上传与合同库读取委派，限制主人格工具边界，并发送长任务即时提示。
+version: 0.4.6
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
