@@ -6,7 +6,7 @@
 
 ## 实现
 
-安装 `astrbot_plugin_contract_doc_preconverter-0.1.0.zip`。插件以事件优先级 `1100` 运行，高于 Contract File Router 的 `1000`。
+安装 `astrbot_plugin_contract_doc_preconverter-0.1.1.zip`。插件以事件优先级 `1100` 运行，高于 Contract File Router 的 `1000`。
 
 ```text
 企业微信 .doc
@@ -30,27 +30,78 @@
 http://gotenberg:3000/forms/libreoffice/convert
 ```
 
-AstrBot 容器必须与 Gotenberg 位于可互通的 Docker 网络。若服务名不同，在插件 WebUI 中设置完整 `converter_url`。
+OpenContracts 官方 Compose 中，Gotenberg 只在 Docker bridge 网络内监听 `3000`，没有宿主机端口映射。AstrBot 能访问 `opencontracts-api` 并不能自动证明它也能解析或访问 `gotenberg`。
 
-OpenContracts 上游 Compose 已提供 Gotenberg 服务时，可以复用同一个实例；不要求 OpenContracts 再次转换，因为 Gateway 收到的工作文件已经是 PDF。
+先确认服务存在：
 
-## 失败语义
+```bash
+docker ps --format '{{.Names}}\t{{.Status}}\t{{.Networks}}' | grep -E '(^|[[:space:]])gotenberg([[:space:]]|$)'
+```
+
+再从 AstrBot 容器确认 DNS 和健康状态：
+
+```bash
+docker exec -it <astrbot-container> python - <<'PY'
+import socket
+import urllib.request
+
+print("gotenberg_ip:", socket.gethostbyname("gotenberg"))
+print(urllib.request.urlopen("http://gotenberg:3000/health", timeout=5).read().decode())
+PY
+```
+
+若失败，检查网络：
+
+```bash
+docker inspect <astrbot-container> --format '{{json .NetworkSettings.Networks}}'
+docker inspect gotenberg --format '{{json .NetworkSettings.Networks}}'
+```
+
+持久化做法是在 AstrBot 的 Compose 中加入 Gotenberg 所在的外部网络。例如：
+
+```yaml
+services:
+  astrbot:
+    networks:
+      - default
+      - opencontracts
+
+networks:
+  opencontracts:
+    external: true
+    name: <OpenContracts 实际网络名>
+```
+
+修改后重建 AstrBot 容器。临时执行 `docker network connect` 只适合验证，容器重建后可能丢失。
+
+若使用其他可达地址，在插件 WebUI 中设置完整 `converter_url`。不要把无认证的 Gotenberg 端口暴露到公网。
+
+## 失败语义和诊断
 
 以下情况直接终止当前事件：
 
-- Gotenberg 不可达或超时；
+- Gotenberg DNS 解析失败、拒绝连接或超时；
 - HTTP 转换失败；
 - 返回内容不是 PDF；
 - 原文件或转换后文件超过配置大小；
 - 源文件路径不可用。
 
-客户提示固定为：
+0.1.1 开始，日志记录安全错误码：
 
 ```text
-暂时无法读取该旧版 Word 文件。请将文件另存为 DOCX 或 PDF 后重新上传。
+Contract DOC preconversion failed before routing: code=converter_dns_failed endpoint=http://gotenberg:3000/forms/libreoffice/convert
 ```
 
-失败后不得继续读取原始 `.doc`，也不得把转换响应正文、合同正文或二进制内容写入日志。
+常见错误码：
+
+- `converter_dns_failed`：AstrBot 容器无法解析服务名；
+- `converter_connection_refused`：Gotenberg 未启动或端口不可达；
+- `converter_timeout`：连接或转换超时；
+- `converter_http_<status>`：Gotenberg 返回 HTTP 错误；
+- `converter_returned_non_pdf`：返回体不是 PDF；
+- `source_size_invalid`：原始文件为空或超过配置限制。
+
+服务不可用时提示客户稍后重试；文件本身无法转换时提示另存为 DOCX 或 PDF。失败后不得继续读取原始 `.doc`，也不得把转换响应正文、合同正文或二进制内容写入日志。
 
 ## 部署
 
@@ -61,10 +112,10 @@ python3 -m compileall -q plugins scripts
 python3 scripts/build_release.py --clean
 ```
 
-安装：
+安装或替换：
 
 ```text
-astrbot_plugin_contract_doc_preconverter-0.1.0.zip
+astrbot_plugin_contract_doc_preconverter-0.1.1.zip
 ```
 
 现有 Router、Handoff、Gateway、Skills 和 Personas 无需因该功能升级版本。安装后使用真实 `.doc` 文件验证：转换成功、PDF 可读、上传成功、OpenContracts 正文与检索就绪，以及日志中没有合同全文或乱码内容。
