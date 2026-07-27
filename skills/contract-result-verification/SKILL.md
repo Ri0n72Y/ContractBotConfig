@@ -7,7 +7,22 @@ description: 核验 OpenContracts 公开 MCP 读取结果和 WorkerKey 导入结
 
 内部可以保留文档标识、MCP 工具结果、规范化合同身份和导入处理状态；客户回复使用自然业务语言。
 
-## 状态优先级
+## 合同库读取状态
+
+1. 文档发现或 MCP 调用失败、目标缺失、结果结构不可核验、分片 offset 不前进：`[CONTRACT_READ:FAILED]`。
+2. 目标文档存在，但 `page_count=0`、`total_chars=0`、正文为空或没有首段正文：`[CONTRACT_READ:PENDING]`。
+3. 多份目标文档中仅部分正文按分片完整读取：`[CONTRACT_READ:PARTIAL]`。
+4. 所有目标文档正文均从 `char_offset=0` 读取至 `next_offset=null`：`[CONTRACT_READ:READY]`。
+
+读取核验规则：
+
+- `search_corpus` 空结果不能替代正文读取，也不能证明分片失败；
+- `total_chars=0` 表示没有可分片正文，不应继续尝试后续 offset；
+- `PARTIAL` 的分析范围只能覆盖已读取文档；
+- 不得使用 Shell、Grep、本地文件、历史会话正文或模型记忆补齐 MCP 空结果；
+- 任一 `CONTRACT_READ` 状态均为当前轮次终态。
+
+## 上传状态优先级
 
 1. Gateway 返回 `manual_review_required=true`、`status=manual_review_required`，或写入提交状态未知：`[CONTRACT_UPLOAD:MANUAL_REVIEW]`。
 2. Gateway 返回未确认的 `updated`，即 `failure_stage=unexpected_unconfirmed_update`：`[CONTRACT_UPLOAD:MANUAL_REVIEW]`。
@@ -32,4 +47,4 @@ description: 核验 OpenContracts 公开 MCP 读取结果和 WorkerKey 导入结
 - `HTTP 201`、`created`、`updated` 和 `processing` 只证明写入或处理阶段，不代表正文及检索完成。
 - 完成状态只声明“正文可读并已进入检索”；没有调用 `list_annotations` 时，不声明标注已经完成。
 - WorkerKey 决定写入 Corpus。Gateway 不要求或显示配置 Corpus ID；写入后通过 AstrBot 已配置的公开 MCP `/mcp/`，使用 `targets.opencontracts` 作为 `corpus_slug` 核验远端结果。
-- 不使用 `get_corpus_info`、`opencontracts_check_duplicate`、Shell、Python、通用 HTTP 或直接 MCP JSON-RPC 补救失败。
+- 不使用 `get_corpus_info`、`opencontracts_check_duplicate`、Shell、Grep、Python、通用 HTTP 或直接 MCP JSON-RPC 补救失败。
