@@ -2,6 +2,7 @@
 
 ## 插件
 
+- astrbot_plugin_contract_doc_preconverter: 0.1.0
 - astrbot_plugin_contract_file_router: 0.5.1
 - astrbot_plugin_contract_handoff_policy: 0.4.5
 - astrbot_plugin_opencontracts_gateway: 0.6.1
@@ -29,6 +30,7 @@ Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力
 - AstrBot 配置 OpenContracts 公开 `/mcp/`，Operator 使用任务上下文中的 `targets.opencontracts` 作为目标 `corpus_slug`；
 - 公开 MCP 的 `list_documents`、`get_document_text` 和 `search_corpus` 提供合同发现、正文读取和语义检索；
 - OpenContracts 上传网关使用 WorkerKey 向其绑定 Corpus 调用官方 `/api/imports/documents/` 写入端点；
+- `.doc` 文件在进入 Contract File Router 前由 DOC Preconverter 通过 Gotenberg/LibreOffice 转换为 PDF；转换失败时停止当前事件，不把原始 `.doc` 交给 LLM 或上传链路；
 - 合同远端身份统一为 `YYYY-MM-DD 合同标题`，远端文件名统一为 `YYYY-MM-DD_合同标题.原扩展名`；
 - Gateway 不要求或报告配置 Corpus ID，也不保存 MCP 读取凭证；
 - Router 直接生成公开 MCP 上传任务契约，Handoff 继续执行兼容校验并阻止旧契约进入 Operator；
