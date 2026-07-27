@@ -266,8 +266,12 @@ class ContractHandoffPolicy(Star):
         if tool_set is None or not hasattr(tool_set, "tools"):
             return
         before = [str(getattr(tool, "name", "")) for tool in tool_set.tools]
-        if "transfer_to_opencontracts_operator" not in before:
-            # Sub-agent requests share the same event extras; only restrict the Master tool set.
+        operator_tools = {"list_documents", "get_document_text", "search_corpus"}
+        if (
+            "transfer_to_opencontracts_operator" not in before
+            and operator_tools.intersection(before)
+        ):
+            # Sub-agent requests share the same event extras; do not remove MCP tools.
             return
         event.set_extra("contract_database_read_task", True)
         if tool_set is not None and hasattr(tool_set, "tools"):
