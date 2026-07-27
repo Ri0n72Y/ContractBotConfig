@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,19 @@ UPLOAD_MARKERS = {
     "complete": "[CONTRACT_UPLOAD:COMPLETE]",
     "failed": "[CONTRACT_UPLOAD:FAILED]",
 }
+
+BLOCKED_MISSING_DATE_TEXT = (
+    "合同正文中未找到可靠的合同日期，因此没有执行上传。"
+    "请补充合同日期后重新上传合同文件。"
+)
+BLOCKED_MISSING_TITLE_TEXT = (
+    "合同正文中未找到可靠的正式标题，因此没有执行上传。"
+    "请补充合同标题后重新上传合同文件。"
+)
+BLOCKED_MISSING_IDENTITY_TEXT = (
+    "合同正文中缺少可靠的合同日期和正式标题，因此没有执行上传。"
+    "请补充这些信息后重新上传合同文件。"
+)
 
 
 class WecomFinalResultGuard(Star):
@@ -98,7 +112,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.3.2 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.3 initialized: instance_id=%s",
             id(self),
         )
 
@@ -228,7 +242,36 @@ class WecomFinalResultGuard(Star):
             return "blocked"
         return None
 
-    def _customer_upload_text(self, status: str) -> str:
+    @staticmethod
+    def _blocked_reason(text: str) -> str:
+        value = text or ""
+        lowered = value.lower()
+        separators = r"[^。；，,\n]{0,32}"
+        missing = (
+            r"(?:无法提取|无法可靠|未找到可靠|未找到|缺少|字段为空|"
+            r"为空白|需要补充|请补充|请您补充|missing|required|empty|null)"
+        )
+        date_term = r"(?:合同日期|签订日期|签署日期|生效日期|contract_date)"
+        title_term = r"(?:合同正式标题|正式标题|合同标题|contract_title)"
+
+        date_missing = bool(
+            re.search(date_term + separators + missing, lowered, re.IGNORECASE)
+            or re.search(missing + separators + date_term, lowered, re.IGNORECASE)
+        )
+        title_missing = bool(
+            re.search(title_term + separators + missing, lowered, re.IGNORECASE)
+            or re.search(missing + separators + title_term, lowered, re.IGNORECASE)
+        )
+
+        if date_missing and title_missing:
+            return "missing_identity"
+        if date_missing:
+            return "missing_date"
+        if title_missing:
+            return "missing_title"
+        return "system"
+
+    def _customer_upload_text(self, status: str, raw_text: str = "") -> str:
         if status == "complete":
             return self.upload_complete_text
         if status == "processing":
@@ -238,6 +281,13 @@ class WecomFinalResultGuard(Star):
         if status == "duplicate":
             return self.upload_duplicate_text
         if status == "blocked":
+            reason = self._blocked_reason(raw_text)
+            if reason == "missing_date":
+                return BLOCKED_MISSING_DATE_TEXT
+            if reason == "missing_title":
+                return BLOCKED_MISSING_TITLE_TEXT
+            if reason == "missing_identity":
+                return BLOCKED_MISSING_IDENTITY_TEXT
             return self.upload_blocked_text
         return self.upload_failed_text
 
@@ -323,7 +373,15 @@ class WecomFinalResultGuard(Star):
         if self.customer_facing_upload_results and self._upload_operation(event):
             upload_status = self._classify_upload_result(raw_final_text)
             if upload_status is not None:
-                raw_final_text = self._customer_upload_text(upload_status)
+                blocked_reason = (
+                    self._blocked_reason(raw_final_text)
+                    if upload_status == "blocked"
+                    else None
+                )
+                raw_final_text = self._customer_upload_text(
+                    upload_status,
+                    raw_final_text,
+                )
                 if upload_status == "duplicate":
                     event.set_extra(
                         "contract_preserve_pending_reason",
@@ -331,8 +389,9 @@ class WecomFinalResultGuard(Star):
                     )
                 logger.info(
                     "WeCom final result guard: normalized contract upload "
-                    "result for customer, status=%s.",
+                    "result for customer, status=%s blocked_reason=%s.",
                     upload_status,
+                    blocked_reason,
                 )
 
         final_text, truncated = self._truncate_utf8(
