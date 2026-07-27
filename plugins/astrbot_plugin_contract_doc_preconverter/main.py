@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 import socket
@@ -80,7 +81,7 @@ class ContractDocPreconverter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract DOC preconverter 0.1.2 initialized: enabled=%s endpoint=%s",
+            "Contract DOC preconverter 0.1.3 initialized: enabled=%s endpoint=%s",
             self.enabled,
             self._endpoint_label(),
         )
@@ -97,33 +98,48 @@ class ContractDocPreconverter(Star):
             return False
         name = str(getattr(component, "name", None) or "").strip()
         if not name:
-            raw = getattr(component, "file", None)
-            name = Path(str(raw or "")).name
+            name = str(
+                getattr(component, "file_", None)
+                or getattr(component, "url", None)
+                or ""
+            )
         return Path(name).suffix.lower() == ".doc"
 
     @staticmethod
     async def _component_path(component: Any) -> str | None:
-        raw = getattr(component, "file", None)
-        if raw:
-            candidate = Path(str(raw)).expanduser()
+        """Resolve an AstrBot File component without reading its .file property in async code."""
+        getter = getattr(component, "get_file", None)
+        if callable(getter):
             try:
-                if candidate.is_file():
-                    return str(candidate)
-            except OSError:
-                pass
-
-        converter = getattr(component, "convert_to_file_path", None)
-        if callable(converter):
-            try:
-                value = converter()
-                if hasattr(value, "__await__"):
+                value = getter()
+                if inspect.isawaitable(value):
                     value = await value
                 if value:
                     return str(value)
             except Exception as exc:
                 raise DocConversionError("source_path_resolve_failed") from exc
 
-        return str(raw) if raw else None
+        for field in ("file_", "path"):
+            raw = getattr(component, field, None)
+            if raw:
+                candidate = Path(str(raw)).expanduser()
+                try:
+                    if candidate.is_file():
+                        return str(candidate)
+                except OSError:
+                    continue
+
+        converter = getattr(component, "convert_to_file_path", None)
+        if callable(converter):
+            try:
+                value = converter()
+                if inspect.isawaitable(value):
+                    value = await value
+                if value:
+                    return str(value)
+            except Exception as exc:
+                raise DocConversionError("source_path_resolve_failed") from exc
+        return None
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -226,21 +242,24 @@ class ContractDocPreconverter(Star):
         return result
 
     def _write_audit(self, payload: dict[str, Any]) -> None:
-        record = {
-            "recorded_at": time.time(),
-            **payload,
-        }
+        record = {"recorded_at": time.time(), **payload}
         try:
             with self.audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("Contract DOC conversion audit write failed: %s", exc)
 
-    async def _convert_component(self, component: Any) -> dict[str, Any]:
+    async def _convert_component(
+        self,
+        component: Any,
+    ) -> tuple[dict[str, Any], Any]:
         source_value = await self._component_path(component)
         if not source_value:
             raise DocConversionError("source_path_missing")
-        source = Path(source_value).expanduser().resolve()
+        try:
+            source = Path(source_value).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise DocConversionError("source_path_invalid") from exc
         if not source.is_file():
             raise DocConversionError("source_file_missing")
 
@@ -272,8 +291,14 @@ class ContractDocPreconverter(Star):
             raise DocConversionError("converted_file_write_failed") from exc
         output_sha256 = self._sha256(output)
 
-        setattr(component, "file", str(output))
-        setattr(component, "name", output_name)
+        try:
+            replacement = Comp.File(name=output_name, file=str(output))
+        except Exception as exc:
+            try:
+                output.unlink()
+            except OSError:
+                pass
+            raise DocConversionError("component_replacement_failed") from exc
 
         result = {
             "source_name": Path(original_name).name,
@@ -287,7 +312,7 @@ class ContractDocPreconverter(Star):
             "status": "complete",
         }
         self._write_audit(result)
-        return result
+        return result, replacement
 
     @staticmethod
     def _failure_code(exc: Exception) -> str:
@@ -313,12 +338,15 @@ class ContractDocPreconverter(Star):
             return
         self._cleanup_expired()
 
-        components = [
-            component
-            for component in getattr(event.message_obj, "message", [])
+        message = getattr(event.message_obj, "message", None)
+        if not isinstance(message, list):
+            return
+        doc_indexes = [
+            index
+            for index, component in enumerate(message)
             if self._is_doc_component(component)
         ]
-        if not components:
+        if not doc_indexes:
             return
 
         if not self.enabled:
@@ -327,9 +355,12 @@ class ContractDocPreconverter(Star):
             return
 
         converted: list[dict[str, Any]] = []
+        replacements: list[tuple[int, Any]] = []
         try:
-            for component in components:
-                converted.append(await self._convert_component(component))
+            for index in doc_indexes:
+                result, replacement = await self._convert_component(message[index])
+                converted.append(result)
+                replacements.append((index, replacement))
         except Exception as exc:
             for item in converted:
                 try:
@@ -359,6 +390,8 @@ class ContractDocPreconverter(Star):
             yield event.plain_result(self._failure_text(code))
             return
 
+        for index, replacement in replacements:
+            message[index] = replacement
         event.set_extra("contract_doc_conversions", converted)
         logger.info(
             "Contract DOC preconversion completed for %s file(s).",
