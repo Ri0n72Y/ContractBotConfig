@@ -1,10 +1,10 @@
-# 合同文件接收与路由 0.5.3
+# 合同文件接收与路由 0.5.4
 
 本插件把企业微信文件事件转换为可恢复的合同任务，在当前消息事件中启动主人格请求，并管理暂存文件生命周期。
 
 ## AstrBot 入口
 
-`main.py` 必须实际定义继承 `Star` 的插件类。Router 0.5.3 在 `main.py` 中定义 `Main`，并继承 `runtime.py` 中的运行实现。不能只在 `main.py` 导入运行类，否则 AstrBot 插件扫描不会把该导入类注册为当前插件的 Star。
+`main.py` 必须实际定义继承 `Star` 的插件类，并在同一模块注册事件处理器。Router 0.5.4 在 `main.py` 中定义 `Main`，把 `intake`、`attach_context` 和 `clear_pending_after_result` 三个带装饰器的入口注册到 `main` 模块；具体状态机与文件逻辑继续委托给 `runtime.py`。入口加载时会移除导入运行实现产生的临时 Star 与 Handler 注册，避免处理器留在 `runtime` 模块而无法绑定。
 
 ## 职责
 
@@ -122,6 +122,6 @@ Router 不声明 `opencontracts_check_duplicate` 或 `get_corpus_info`。MCP 查
 
 ```text
 astrbot_plugin_contract_file_router/
-├── main.py       # 定义 Main Star 插件入口
-└── runtime.py    # 暂存、状态机、任务上下文与事件处理
+├── main.py       # 定义 Main Star 和三个装饰器入口
+└── runtime.py    # 暂存、状态机、任务上下文与事件处理实现
 ```
