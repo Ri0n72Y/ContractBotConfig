@@ -150,8 +150,8 @@ class WecomFinalResultGuard(Star):
             in {"contract_system_upload", "contract_system_reupload"}
         )
 
-    @staticmethod
-    def _classify_upload_result(text: str) -> str | None:
+    @classmethod
+    def _classify_upload_result(cls, text: str) -> str | None:
         value = text or ""
         lowered = value.lower()
         for status, marker in UPLOAD_MARKERS.items():
@@ -202,6 +202,10 @@ class WecomFinalResultGuard(Star):
             signal in lowered or signal in value
             for signal in blocked_read_signals
         ):
+            return "blocked"
+
+        # 模型偶尔会漏掉显式标记，但明确要求补充合同身份字段；此时仍保留任务。
+        if cls._blocked_reason(value) != "system":
             return "blocked"
 
         accepted_count = lowered.count("accepted") + value.count("成功接收")
