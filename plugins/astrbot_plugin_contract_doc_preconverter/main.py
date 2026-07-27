@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import socket
 import time
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+
+import httpx
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -30,6 +31,7 @@ UNAVAILABLE_ERROR_CODES = {
     "converter_connection_refused",
     "converter_timeout",
     "converter_unreachable",
+    "converter_request_error",
 }
 
 
@@ -78,7 +80,7 @@ class ContractDocPreconverter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract DOC preconverter 0.1.1 initialized: enabled=%s endpoint=%s",
+            "Contract DOC preconverter 0.1.2 initialized: enabled=%s endpoint=%s",
             self.enabled,
             self._endpoint_label(),
         )
@@ -103,21 +105,35 @@ class ContractDocPreconverter(Star):
     async def _component_path(component: Any) -> str | None:
         raw = getattr(component, "file", None)
         if raw:
-            return str(raw)
+            candidate = Path(str(raw)).expanduser()
+            try:
+                if candidate.is_file():
+                    return str(candidate)
+            except OSError:
+                pass
+
         converter = getattr(component, "convert_to_file_path", None)
         if callable(converter):
-            value = converter()
-            if hasattr(value, "__await__"):
-                value = await value
-            return str(value) if value else None
-        return None
+            try:
+                value = converter()
+                if hasattr(value, "__await__"):
+                    value = await value
+                if value:
+                    return str(value)
+            except Exception as exc:
+                raise DocConversionError("source_path_resolve_failed") from exc
+
+        return str(raw) if raw else None
 
     @staticmethod
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for block in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(block)
+        try:
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+        except OSError as exc:
+            raise DocConversionError("source_read_failed") from exc
         return digest.hexdigest()
 
     @staticmethod
@@ -147,62 +163,62 @@ class ContractDocPreconverter(Star):
                 continue
 
     @staticmethod
-    def _multipart_body(file_bytes: bytes, filename: str) -> tuple[bytes, str]:
-        boundary = f"contractbot-{uuid.uuid4().hex}"
-        safe_filename = (
-            filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
-        )
-        prefix = (
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="files"; '
-            f'filename="{safe_filename}"\r\n'
-            "Content-Type: application/msword\r\n\r\n"
-        ).encode("utf-8")
-        suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
-        return prefix + file_bytes + suffix, boundary
-
-    @staticmethod
-    def _url_error_code(exc: URLError) -> str:
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, socket.gaierror):
-            return "converter_dns_failed"
-        if isinstance(reason, ConnectionRefusedError):
-            return "converter_connection_refused"
-        if isinstance(reason, (socket.timeout, TimeoutError)):
-            return "converter_timeout"
+    def _connect_error_code(exc: httpx.ConnectError) -> str:
+        current: BaseException | None = exc
+        for _ in range(8):
+            current = getattr(current, "__cause__", None)
+            if current is None:
+                break
+            if isinstance(current, socket.gaierror):
+                return "converter_dns_failed"
+            if isinstance(current, ConnectionRefusedError):
+                return "converter_connection_refused"
+            if isinstance(current, (socket.timeout, TimeoutError)):
+                return "converter_timeout"
         return "converter_unreachable"
 
     def _convert_sync(self, source: Path, original_name: str) -> bytes:
-        source_size = source.stat().st_size
+        try:
+            source_size = source.stat().st_size
+        except OSError as exc:
+            raise DocConversionError("source_stat_failed") from exc
         if source_size <= 0 or source_size > self.max_file_bytes:
             raise DocConversionError("source_size_invalid")
         if not self.converter_url:
             raise DocConversionError("converter_url_missing")
 
-        file_bytes = source.read_bytes()
-        body, boundary = self._multipart_body(file_bytes, original_name)
-        request = Request(
-            self.converter_url,
-            data=body,
-            method="POST",
-            headers={
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "Accept": "application/pdf",
-            },
-        )
+        timeout = httpx.Timeout(self.request_timeout_seconds)
         try:
-            with urlopen(
-                request,
-                timeout=self.request_timeout_seconds,
-            ) as response:
-                result = response.read(self.max_file_bytes + 1)
-        except HTTPError as exc:
-            raise DocConversionError(f"converter_http_{exc.code}") from exc
-        except URLError as exc:
-            raise DocConversionError(self._url_error_code(exc)) from exc
-        except (socket.timeout, TimeoutError) as exc:
+            with source.open("rb") as file_handle:
+                with httpx.Client(
+                    timeout=timeout,
+                    follow_redirects=False,
+                    trust_env=False,
+                ) as client:
+                    response = client.post(
+                        self.converter_url,
+                        headers={"Accept": "application/pdf"},
+                        files={
+                            "files": (
+                                Path(original_name or "contract.doc").name,
+                                file_handle,
+                                "application/msword",
+                            )
+                        },
+                    )
+        except httpx.TimeoutException as exc:
             raise DocConversionError("converter_timeout") from exc
+        except httpx.ConnectError as exc:
+            raise DocConversionError(self._connect_error_code(exc)) from exc
+        except httpx.RequestError as exc:
+            raise DocConversionError("converter_request_error") from exc
+        except OSError as exc:
+            raise DocConversionError("source_read_failed") from exc
 
+        if response.status_code >= 400:
+            raise DocConversionError(f"converter_http_{response.status_code}")
+
+        result = response.content
         if len(result) > self.max_file_bytes:
             raise DocConversionError("converted_file_too_large")
         if not result.startswith(PDF_MAGIC):
@@ -243,9 +259,17 @@ class ContractDocPreconverter(Star):
             f"{int(time.time())}_{uuid.uuid4().hex[:10]}_{output_name}"
         )
         temporary = output.with_suffix(".tmp")
-        temporary.write_bytes(pdf_bytes)
-        temporary.replace(output)
-        output = output.resolve()
+        try:
+            temporary.write_bytes(pdf_bytes)
+            temporary.replace(output)
+            output = output.resolve()
+        except OSError as exc:
+            try:
+                if temporary.is_file():
+                    temporary.unlink()
+            except OSError:
+                pass
+            raise DocConversionError("converted_file_write_failed") from exc
         output_sha256 = self._sha256(output)
 
         setattr(component, "file", str(output))
@@ -269,7 +293,8 @@ class ContractDocPreconverter(Star):
     def _failure_code(exc: Exception) -> str:
         if isinstance(exc, DocConversionError):
             return exc.code
-        return "unexpected_error"
+        safe_name = re.sub(r"[^0-9A-Za-z_]+", "_", type(exc).__name__)
+        return f"unexpected_{safe_name[:48] or 'error'}"
 
     @staticmethod
     def _failure_text(code: str) -> str:
