@@ -4,6 +4,21 @@
     "type": "int",
     "default": 1800
   },
+  "enable_text_segmentation": {
+    "description": "长文本按自然段拆分并作为多条企业微信消息发送",
+    "type": "bool",
+    "default": true
+  },
+  "max_text_segments": {
+    "description": "单次结果最多发送的文本分段数",
+    "type": "int",
+    "default": 12
+  },
+  "segment_title": {
+    "description": "多段文本消息的标题",
+    "type": "string",
+    "default": "合同分析"
+  },
   "max_non_text_components": {
     "description": "最终消息最多保留的文件或图片组件数",
     "type": "int",
