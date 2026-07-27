@@ -1,12 +1,14 @@
-# 旧版 Word 合同预转换 0.1.2
+# 旧版 Word 合同预转换 0.1.3
 
 本插件在 `astrbot_plugin_contract_file_router` 之前处理企业微信文件事件。发现扩展名为 `.doc` 的旧版 Word 文件时，调用 Gotenberg 的 LibreOffice 转换接口生成 PDF，并把事件中的工作文件替换为该 PDF。Router、主人格和 OpenContracts Gateway 因此只会接触转换后的 PDF。
 
 ## 执行边界
 
 - 仅转换 `.doc`；`.docx`、`.pdf` 和其他格式保持原流程。
+- 使用 AstrBot 4.26.7 的 `await File.get_file()` 获取企业微信文件的本地落盘路径。
 - 转换成功后校验响应以 `%PDF` 开头，并计算源文件与工作文件 SHA-256。
-- 使用 AstrBot 环境已有的 `httpx` 构造标准 multipart 文件上传，不手工拼接 multipart body。
+- 使用 AstrBot 环境已有的 `httpx` 构造标准 multipart 文件上传。
+- 转换后创建新的 `Comp.File(name=..., file=...)` 并替换消息链元素，不给 Pydantic 兼容属性 `File.file` 赋值。
 - 不把文件正文、转换响应正文或原始二进制写入日志。
 - 转换失败时立即结束当前事件，不把原始 `.doc` 交给 LLM。
 - 失败日志记录安全错误码和转换端点；未知异常只记录异常类型。
@@ -47,9 +49,11 @@ Contract DOC preconversion failed before routing: code=converter_http_500 endpoi
 - `converter_http_4xx/5xx`：Gotenberg 返回 HTTP 错误；
 - `converter_returned_non_pdf`：返回体不是 PDF；
 - `source_path_resolve_failed`：企业微信文件组件无法落盘；
+- `source_path_invalid`：落盘路径无法转换为有效本地路径；
 - `source_file_missing`：落盘路径不存在；
 - `source_read_failed`：原始文件读取失败；
 - `converted_file_write_failed`：转换后 PDF 无法写入暂存目录；
+- `component_replacement_failed`：无法创建用于后续流程的 PDF 文件组件；
 - `unexpected_<ExceptionType>`：未覆盖异常，只暴露异常类型，不记录敏感内容。
 
 ## 安装顺序
