@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,22 @@ UPLOAD_MARKERS = {
     "complete": "[CONTRACT_UPLOAD:COMPLETE]",
     "failed": "[CONTRACT_UPLOAD:FAILED]",
 }
+
+BLOCKED_MISSING_DATE_TEXT = (
+    "合同正文中未找到可靠的合同日期，因此没有执行上传。"
+    "当前合同文件已保留，请直接回复合同日期（YYYY-MM-DD），我会继续上传；"
+    "无需重新发送文件。需要放弃请回复“结束”。"
+)
+BLOCKED_MISSING_TITLE_TEXT = (
+    "合同正文中未找到可靠的正式标题，因此没有执行上传。"
+    "当前合同文件已保留，请直接回复正式合同标题，我会继续上传；"
+    "无需重新发送文件。需要放弃请回复“结束”。"
+)
+BLOCKED_MISSING_IDENTITY_TEXT = (
+    "合同正文中缺少可靠的合同日期和正式标题，因此没有执行上传。"
+    "当前合同文件已保留，请补充这些信息后继续；"
+    "无需重新发送文件。需要放弃请回复“结束”。"
+)
 
 
 class WecomFinalResultGuard(Star):
@@ -74,16 +91,17 @@ class WecomFinalResultGuard(Star):
         self.upload_blocked_text = str(
             config.get(
                 "upload_blocked_text",
-                "暂时无法读取目标合同库，因此没有执行上传。"
-                "本次流程已结束。请管理员检查 OpenContracts 公开 MCP 连接、"
-                "目标 Corpus slug 和工具绑定；修复后请重新上传合同文件。",
+                "本次没有执行上传，当前合同文件已保留。"
+                "请管理员检查 OpenContracts 公开 MCP、目标 Corpus slug、"
+                "工具绑定或文件访问条件；修复后请回复“继续”。"
+                "需要放弃当前合同请回复“结束”。",
             )
         ).strip()
         self.upload_failed_text = str(
             config.get(
                 "upload_failed_text",
-                "合同暂时无法完成上传。本次流程已结束。"
-                "修复后请重新上传合同文件，或联系工作人员。",
+                "合同暂时无法完成上传，本次流程已结束。"
+                "请重新上传合同文件，或联系工作人员。",
             )
         ).strip()
         self.upload_duplicate_text = str(
@@ -98,7 +116,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.3.2 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.4 initialized: instance_id=%s",
             id(self),
         )
 
@@ -132,8 +150,8 @@ class WecomFinalResultGuard(Star):
             in {"contract_system_upload", "contract_system_reupload"}
         )
 
-    @staticmethod
-    def _classify_upload_result(text: str) -> str | None:
+    @classmethod
+    def _classify_upload_result(cls, text: str) -> str | None:
         value = text or ""
         lowered = value.lower()
         for status, marker in UPLOAD_MARKERS.items():
@@ -157,25 +175,37 @@ class WecomFinalResultGuard(Star):
         ):
             return "manual_review"
 
-        if (
-            "confirmation_required" in lowered
-            or "duplicate_confirmation_required" in lowered
-            or "document_path_exists" in lowered
-            or "unique_active_path_per_corpus" in lowered
-            or "duplicate key value violates unique constraint" in lowered
-            or "这份合同已经上传过" in value
-            or "这份合同已经存在" in value
+        duplicate_signals = (
+            "confirmation_required",
+            "duplicate_confirmation_required",
+            "document_path_exists",
+            "unique_active_path_per_corpus",
+            "duplicate key value violates unique constraint",
+            "这份合同已经上传过",
+            "这份合同已经存在",
+        )
+        if any(
+            signal in lowered or signal in value
+            for signal in duplicate_signals
         ):
             return "duplicate"
 
-        if (
-            '"status": "unknown"' in lowered
-            or "mcp_document_discovery" in lowered
-            or "mcp_query_incomplete" in lowered
-            or "mcp_unavailable" in lowered
-            or "opencontracts mcp" in lowered
-            or "无法确认合同系统" in value
+        blocked_read_signals = (
+            '"status": "unknown"',
+            "mcp_document_discovery",
+            "mcp_query_incomplete",
+            "mcp_unavailable",
+            "opencontracts mcp",
+            "无法确认合同系统",
+        )
+        if any(
+            signal in lowered or signal in value
+            for signal in blocked_read_signals
         ):
+            return "blocked"
+
+        # 模型偶尔会漏掉显式标记，但明确要求补充合同身份字段；此时仍保留任务。
+        if cls._blocked_reason(value) != "system":
             return "blocked"
 
         accepted_count = lowered.count("accepted") + value.count("成功接收")
@@ -228,7 +258,71 @@ class WecomFinalResultGuard(Star):
             return "blocked"
         return None
 
-    def _customer_upload_text(self, status: str) -> str:
+    @staticmethod
+    def _term_missing(
+        text: str,
+        terms: tuple[str, ...],
+    ) -> bool:
+        lowered = (text or "").lower()
+        missing = (
+            "无法提取",
+            "无法可靠提取",
+            "无法可靠取得",
+            "未找到可靠",
+            "缺少",
+            "字段为空",
+            "为空白",
+            "未填写",
+            "需要补充",
+            "请补充",
+            "请您补充",
+            "missing",
+            "required",
+            "empty",
+            "null",
+        )
+        clauses = [
+            clause.strip()
+            for clause in re.split(r"[\n。；;]", lowered)
+            if clause.strip()
+        ]
+        for clause in clauses:
+            if not any(term.lower() in clause for term in terms):
+                continue
+            if any(signal.lower() in clause for signal in missing):
+                return True
+        return False
+
+    @classmethod
+    def _blocked_reason(cls, text: str) -> str:
+        date_missing = cls._term_missing(
+            text,
+            (
+                "合同日期",
+                "签订日期",
+                "签署日期",
+                "生效日期",
+                "contract_date",
+            ),
+        )
+        title_missing = cls._term_missing(
+            text,
+            (
+                "合同正式标题",
+                "正式标题",
+                "合同标题",
+                "contract_title",
+            ),
+        )
+        if date_missing and title_missing:
+            return "missing_identity"
+        if date_missing:
+            return "missing_date"
+        if title_missing:
+            return "missing_title"
+        return "system"
+
+    def _customer_upload_text(self, status: str, raw_text: str = "") -> str:
         if status == "complete":
             return self.upload_complete_text
         if status == "processing":
@@ -238,6 +332,13 @@ class WecomFinalResultGuard(Star):
         if status == "duplicate":
             return self.upload_duplicate_text
         if status == "blocked":
+            reason = self._blocked_reason(raw_text)
+            if reason == "missing_date":
+                return BLOCKED_MISSING_DATE_TEXT
+            if reason == "missing_title":
+                return BLOCKED_MISSING_TITLE_TEXT
+            if reason == "missing_identity":
+                return BLOCKED_MISSING_IDENTITY_TEXT
             return self.upload_blocked_text
         return self.upload_failed_text
 
@@ -323,16 +424,25 @@ class WecomFinalResultGuard(Star):
         if self.customer_facing_upload_results and self._upload_operation(event):
             upload_status = self._classify_upload_result(raw_final_text)
             if upload_status is not None:
-                raw_final_text = self._customer_upload_text(upload_status)
+                blocked_reason = None
                 if upload_status == "duplicate":
                     event.set_extra(
                         "contract_preserve_pending_reason",
                         "duplicate_confirmation_required",
                     )
+                elif upload_status == "blocked":
+                    blocked_reason = self._blocked_reason(raw_final_text)
+                    event.set_extra("contract_preserve_pending_reason", "blocked")
+                    event.set_extra("contract_blocked_reason", blocked_reason)
+                raw_final_text = self._customer_upload_text(
+                    upload_status,
+                    raw_final_text,
+                )
                 logger.info(
                     "WeCom final result guard: normalized contract upload "
-                    "result for customer, status=%s.",
+                    "result for customer, status=%s blocked_reason=%s.",
                     upload_status,
+                    blocked_reason,
                 )
 
         final_text, truncated = self._truncate_utf8(
