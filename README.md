@@ -10,7 +10,7 @@
 
 1. 接收并暂存企业微信上传的合同文件。
 2. 从合同正文提取合同日期和正式标题，建立稳定远端身份。
-3. 使用 WorkerKey 将合同写入 OpenContracts，并通过 MCP 跟踪正文解析和检索状态。
+3. 使用 WorkerKey 将合同写入 OpenContracts，并通过公开 MCP 跟踪正文解析和检索状态。
 4. 基于现有合同、批准模板和用户信息生成 DOCX 文书。
 
 ## 系统架构
@@ -23,7 +23,7 @@ flowchart LR
     Master[Contract Master Persona]
     Handoff[Contract Handoff Policy]
     OCOperator[OpenContracts Operator Persona]
-    MCP[OpenContracts MCP]
+    MCP[OpenContracts Public MCP]
     Gateway[OpenContracts Upload Gateway]
     ImportAPI[Official Document Import API]
     OpenContracts[OpenContracts]
@@ -51,16 +51,16 @@ flowchart LR
 
 OpenContracts 官方 `docs/mcp/`、MCP 服务实现和运行时 `tools/list` 是 MCP 能力与参数的事实来源。本项目不复制远端读取实现。
 
-推荐 corpus-scoped MCP 地址：
+AstrBot 使用 OpenContracts 公开 MCP 地址：
 
 ```text
-http://opencontracts-api:8000/mcp/corpus/contracts/
+http://opencontracts-api:8000/mcp/
 ```
 
-当前能力包括：
+当前公开 MCP 能力包括：
 
 ```text
-get_corpus_info
+list_public_corpuses
 list_documents
 get_document_text
 list_annotations
@@ -71,6 +71,8 @@ get_thread_messages
 create_thread_message
 ```
 
+上传流程不使用 `list_public_corpuses` 选择目标。目标 Corpus slug 由 Router 配置 `opencontracts_target` 提供，并通过任务上下文 `targets.opencontracts` 传递给 Operator。Operator 把该值作为 `list_documents`、`get_document_text` 和 `search_corpus` 的 `corpus_slug`。
+
 `create_thread_message` 需要认证用户上下文。MCP 认证由 AstrBot MCP 连接管理，不属于上传 Gateway 配置。
 
 合同文件写入使用 WorkerKey 调用官方单文档导入端点：
@@ -80,11 +82,12 @@ POST /api/imports/documents/
 Authorization: WorkerKey <token>
 ```
 
-写入目标由 WorkerKey 绑定。Gateway 不要求或显示配置 Corpus ID。当前 corpus-scoped MCP 应指向同一业务 Corpus，写入后通过 MCP 核验实际远端结果。
+写入目标由 WorkerKey 绑定。Gateway 不要求或显示配置 Corpus ID。公开 MCP 通过明确的目标 `corpus_slug` 读取同一业务合同库，并在写入后核验实际远端结果。
 
 | 能力 | 执行组件 | 配置位置 |
 |---|---|---|
-| Corpus、文档、正文、标注、关系、语义搜索和讨论线程 | OpenContracts Operator 使用 MCP Tools | AstrBot MCP 管理界面 |
+| Corpus 文档、正文、标注、关系、语义搜索和讨论线程 | OpenContracts Operator 使用公开 MCP Tools | AstrBot MCP 管理界面 |
+| 目标 Corpus slug | Router `opencontracts_target` → `targets.opencontracts` | Router 插件 GUI |
 | 新合同上传和确认后的版本写入 | `astrbot_plugin_opencontracts_gateway` | 插件 GUI 中的 WorkerKey |
 | 合同日期、标题和远端文件名规范化 | Gateway `FileService` | Tool 参数 |
 | 本地文件路径、大小和 SHA-256 校验 | Gateway `FileService` | 插件 GUI |
@@ -107,7 +110,7 @@ document_title = YYYY-MM-DD 合同标题
 normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
-MCP 查重使用规范化 `document_title`，并对返回结果做标题完全一致比较。日期或标题无法可靠取得时停止上传，不进行猜测。
+MCP 查重使用规范化 `document_title`，并对返回结果做标题完全一致比较。日期、标题或目标 Corpus slug 无法可靠取得时停止上传，不进行猜测。
 
 ## 工程结构
 
@@ -131,20 +134,20 @@ MCP 查重使用规范化 `document_title`，并对返回结果做标题完全�
 ### Personas
 
 - `contract_master_orchestrator`：唯一客户入口，提取合同身份、选择流程、协调子助手并生成最终回复。
-- `contract_opencontracts_operator`：使用 OpenContracts MCP 和上传 Gateway 执行合同库操作，返回结构化业务状态。
+- `contract_opencontracts_operator`：使用 OpenContracts 公开 MCP 和上传 Gateway 执行合同库操作，返回结构化业务状态。
 - `contract_docassemble_builder`：基于合同库资料、批准模板和用户输入生成 DOCX 文书。
 
 ### Plugins
 
-- `astrbot_plugin_contract_file_router`：文件暂存、会话状态、菜单选择、任务上下文和当前事件内的 LLM 请求。
-- `astrbot_plugin_contract_handoff_policy`：规范委派参数，保留合同身份、安全约束和同步执行模式。
+- `astrbot_plugin_contract_file_router`：文件暂存、会话状态、菜单选择、目标 Corpus slug、任务上下文和当前事件内的 LLM 请求。
+- `astrbot_plugin_contract_handoff_policy`：规范委派参数，清除旧工具契约，保留合同身份、安全约束和同步执行模式。
 - `astrbot_plugin_opencontracts_gateway`：WorkerKey 文件导入、身份规范化、文件校验、确认校验和追加式审计。
 - `astrbot_plugin_wecom_final_result_guard`：将内部状态转换为企业微信客户回复，并优先处理人工核查、重复确认和迟到结果。
 
 ### Skills
 
-- `contract-orchestrator`：主人格的身份提取和上传编排。
-- `contract-opencontracts`：MCP 精确查重、WorkerKey 文件导入和处理核验步骤。
+- `contract-orchestrator`：主人格的身份提取、工具边界和上传终态控制。
+- `contract-opencontracts`：公开 MCP 精确查重、WorkerKey 文件导入和处理核验步骤。
 - `contract-result-verification`：上传状态优先级和完成条件。
 - `contract-conversation-control`：结束、取消、偏离输入和超时恢复。
 - `contract-direct-analysis`：当前合同快速分析。
@@ -169,21 +172,30 @@ MCP 查重使用规范化 `document_title`，并对返回结果做标题完全�
 在 AstrBot MCP 管理界面添加：
 
 ```text
-http://opencontracts-api:8000/mcp/corpus/contracts/
+http://opencontracts-api:8000/mcp/
 ```
 
 上传流程至少需要：
 
 ```text
-get_corpus_info
 list_documents
 get_document_text
 search_corpus
 ```
 
-分析、关系、标注和讨论场景按需分配其他 MCP Tools。
+分析、关系、标注和讨论场景按需分配其他 MCP Tools。不要配置不存在的 `/mcp/corpus/<slug>/` 地址，也不要要求 `get_corpus_info`。
 
-### 5. 配置上传 Gateway
+### 5. 配置目标 Corpus
+
+在 `astrbot_plugin_contract_file_router` 的 WebUI 配置中填写：
+
+```text
+opencontracts_target = contracts
+```
+
+该值是公开 MCP 工具调用使用的 `corpus_slug`。它不是 Corpus ID，也不会传给 WorkerKey 导入接口。
+
+### 6. 配置上传 Gateway
 
 在 `astrbot_plugin_opencontracts_gateway` 的 WebUI 配置中填写：
 
@@ -194,13 +206,14 @@ import_path = /api/imports/documents/
 
 `auth_token` 保存 CorpusAccessToken 的 WorkerKey。写入目标由 WorkerKey 绑定；Gateway 不保存 MCP 读取凭证，也不配置 Corpus ID。
 
-### 6. 分配 Tools
+### 7. Persona 与系统工具边界
 
-| Persona | Tools |
-|---|---|
-| Master | `transfer_to_opencontracts_operator`、`transfer_to_docassemble_builder`、当前合同文件读取工具 |
-| OpenContracts Operator | OpenContracts MCP 当前合同操作工具、`opencontracts_gateway_status`、`opencontracts_upload_document` |
-| Docassemble Builder | Docassemble 生成工具和所需合同读取工具 |
+AstrBot 当前不能按 Persona 关闭内置 Shell、Python 等系统工具，因此边界由 Persona 和 Skill 强制约束：
+
+- Master 在上传期间只读取当前合同并调用 `transfer_to_opencontracts_operator`；
+- Operator 只调用公开 MCP Tools、`opencontracts_gateway_status` 和 `opencontracts_upload_document`；
+- 两者均不得使用 Shell、Python、通用 HTTP、配置文件读取或直接 MCP JSON-RPC 绕过上传链路；
+- Operator 返回任一 `[CONTRACT_UPLOAD:*]` 标记后，Master 立即停止工具调用。
 
 ## 用户流程
 
@@ -222,23 +235,25 @@ sequenceDiagram
     participant R as File Router
     participant M as Master
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant G as Upload Gateway
     participant OC as OpenContracts
 
     U->>R: 上传合同并选择 1
-    R->>M: contract_task_context
+    R->>M: contract_task_context + target corpus slug
     M->>M: 提取 contract_date + contract_title
     M->>O: 同步委派结构化合同身份
-    O->>MCP: 按规范化标题精确查重
+    O->>G: opencontracts_gateway_status
+    G-->>O: normalized identity
+    O->>MCP: list_documents(corpus_slug, document_title)
     MCP-->>O: 远端合同信息
     O->>G: date + title + staged_path + sha256
     G->>OC: WorkerKey + 规范化文件名
     OC-->>G: created / updated / error
     G-->>O: processing / manual_review / error
-    O->>MCP: get_document_text + search_corpus
+    O->>MCP: list_documents + get_document_text + search_corpus
     MCP-->>O: 正文和检索核验
-    O-->>M: 业务状态
+    O-->>M: 标准上传状态
     M-->>U: 客户回复
 ```
 
@@ -254,6 +269,8 @@ sequenceDiagram
 ```
 
 传输异常、服务端 5xx、成功响应结构异常和未确认版本写入均进入 `MANUAL_REVIEW`，禁止自动重试。`COMPLETE` 只表示正文可读并已进入检索；没有核验标注时不声明标注完成。
+
+`BLOCKED` 或 `FAILED` 表示本次流程结束，Router 清理暂存文件。管理员修复后，客户需要重新上传合同文件；当前不提供失败后重试状态。
 
 ## OpenContracts Gateway 0.6.1 模块
 
@@ -283,7 +300,7 @@ python3 -m compileall -q plugins scripts
 python scripts/build_release.py --clean
 ```
 
-随后在 AstrBot WebUI 中加载 Plugin、Skill、Persona 和 MCP 配置，并在真实环境验证首次上传、重复确认、人工核查、正文读取和检索状态。
+随后在 AstrBot WebUI 中加载 Plugin、Skill、Persona 和公开 MCP 配置，并在真实环境验证首次上传、重复确认、人工核查、正文读取和检索状态。
 
 ## 发布打包
 
@@ -304,7 +321,7 @@ dist/
 ## 开发阶段
 
 1. Phase 1：冻结架构，补齐 UML、审计、README 和发布工具。
-2. Phase 2-A：MCP 能力面与 WorkerKey 文件导入面拆分；完成合同身份规范化、提交状态保护和 Upload Gateway 模块化。
+2. Phase 2-A：公开 MCP 能力面与 WorkerKey 文件导入面拆分；完成合同身份规范化、提交状态保护和 Upload Gateway 模块化。
 3. Phase 2-B：拆分 Contract File Router。
 4. Phase 2-C：拆分 WeCom Final Result Guard。
 5. 运行时代码、Skill 或 Persona 行为发生变化时更新对应版本；纯文档变更维持组件版本。

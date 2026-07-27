@@ -1,4 +1,4 @@
-# 合同文件接收与路由 0.5.0
+# 合同文件接收与路由 0.5.1
 
 本插件是合同流程的入口适配器，负责把企业微信文件事件转换为可恢复的合同任务，并在当前消息事件中启动主人格请求。
 
@@ -8,11 +8,12 @@
 - 计算文件 SHA-256、大小和会话文件指纹。
 - 维护等待操作、运行中、重复确认和结束后的会话状态。
 - 生成 `contract_task_context`，将用户选择转换为明确的业务操作。
+- 通过 `opencontracts_target` 配置公开 MCP 使用的目标 Corpus slug。
 - 在企业微信当前事件中创建 LLM 请求。
 - 在任务完成、取消或过期后清理暂存文件。
 - 与最终结果保护插件共享取消任务和重复确认状态。
 
-OpenContracts 的合同发现、正文读取和检索由 OpenContracts Operator 使用 MCP 完成；Router 提供文件、用户意图、确认状态和任务契约。
+OpenContracts 的合同发现、正文读取和检索由 OpenContracts Operator 使用公开 MCP 完成；Router 提供文件、用户意图、目标 Corpus slug、确认状态和任务契约。
 
 ## 组件 UML
 
@@ -52,7 +53,7 @@ classDiagram
     ContractFileRouter --> TaskContextFactory
 ```
 
-当前 `main.py` 仍将这些职责放在同一个类中。Phase 2-A 由 Handoff Policy 将上传分支规范化为 MCP 读取与 WorkerKey 写入能力；Router 的模块拆分和任务上下文清理安排在 Phase 2-B。
+当前 `main.py` 仍将这些职责放在同一个类中。Router 0.5.1 已从源头生成公开 MCP 上传任务契约；模块拆分仍安排在 Phase 2-B。
 
 ## 会话状态 UML
 
@@ -66,11 +67,13 @@ stateDiagram-v2
     AwaitingDuplicateConfirmation --> ReuploadRunning: 回复重新上传
     AwaitingDuplicateConfirmation --> Idle: 回复取消或结束
     ReuploadRunning --> AwaitingDuplicateConfirmation: 再次需要确认
-    UploadRunning --> Idle: 完成、处理中回复或失败
-    ReuploadRunning --> Idle: 完成、处理中回复或失败
+    UploadRunning --> Idle: 完成、处理中回复、阻止或失败
+    ReuploadRunning --> Idle: 完成、处理中回复、阻止或失败
     TaskRunning --> Idle: 结果发送完成
     AwaitingAction --> Idle: 取消、结束或超时
 ```
+
+`BLOCKED` 和 `FAILED` 后当前任务结束并删除暂存文件。管理员修复后，客户需要重新上传合同；当前不维护失败后重试状态。
 
 ## 上传协作时序
 
@@ -81,24 +84,26 @@ sequenceDiagram
     participant M as Master Persona
     participant H as Handoff Policy
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant G as Upload Gateway
 
     U->>R: 上传文件
     R->>R: 暂存、校验、创建 pending
     R-->>U: 显示操作菜单
     U->>R: 选择上传
-    R->>R: 创建 contract_task_context
+    R->>R: 创建 public MCP contract_task_context
     R->>M: 显式 LLM 请求
     M->>H: transfer_to_opencontracts_operator
-    H->>O: 规范化后的同步任务
-    O->>MCP: 获取 corpus 和远端文档摘要
+    H->>H: 校验并规范化 public MCP branch_task
+    H->>O: 同步上传任务
+    O->>G: 取得规范化合同身份
+    O->>MCP: list_documents(corpus_slug, search=document_title)
     alt 新合同或已有重新上传确认
         O->>G: WorkerKey 导入写入
         G-->>O: 导入状态
         O->>MCP: 正文和检索核验
     end
-    O-->>M: 业务状态
+    O-->>M: 标准业务状态
     M-->>U: 最终回复
 ```
 
@@ -113,24 +118,28 @@ source_files[]
 source_files[].original_name
 source_files[].staged_path
 source_files[].sha256
+targets.opencontracts
 duplicate_confirmation
 recommended_subagents
 branch_tasks
 expected_outputs
 ```
 
-上传分支声明的能力包括：
+`targets.opencontracts` 来自插件配置 `opencontracts_target`，默认值为 `contracts`。Router 同时把该值写入 `branch_tasks.opencontracts_operator.corpus_slug`；Handoff 将其规范化为 Operator 的 `mcp_contract.corpus_slug`。
+
+Router 0.5.1 直接声明的上传能力为：
 
 ```text
-get_corpus_info
-list_documents
 opencontracts_gateway_status
+list_documents
 opencontracts_upload_document
 get_document_text
 search_corpus
 ```
 
-`original_name` 是 MCP 文档搜索和导入文件名的输入；`staged_path` 由上传网关读取本地暂存文件。
+Router 源码不再声明 `opencontracts_check_duplicate` 或 `get_corpus_info` 作为可执行能力。Handoff 仍保留兼容校验，防止旧部署上下文进入 Operator。
+
+`original_name` 只用于保留原扩展名和审计信息；MCP 查重使用 Gateway 返回的规范化 `identity.document_title`。
 
 ## 后续拆分目标
 

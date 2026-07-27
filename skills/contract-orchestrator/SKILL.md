@@ -1,6 +1,6 @@
 ---
 name: contract-orchestrator
-description: 合同主人格的客户交互、合同身份提取、同步委派和上传状态编排。
+description: 合同主人格的客户交互、合同身份提取、同步委派和上传终态控制。
 ---
 
 # 合同任务编排
@@ -38,16 +38,45 @@ normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 
 ## 上传流程
 
-1. OpenContracts Operator 先调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名，取得规范化 `identity.document_title`。
-2. Operator 使用 corpus-scoped MCP 获取 Corpus 信息，并以该 `identity.document_title` 搜索合同。
-3. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
-4. MCP 读取没有完成或 Gateway 身份规范化失败时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，本次不启动写入。
-5. 新合同或已有有效确认时，使用 WorkerKey 导入网关执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
-6. 上传参数传递 Gateway 返回的规范化日期和标题，以及 `source_files[].original_name`。网关生成规范化远端文件名。
-7. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
-8. 正文可读并通过 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
-9. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
-10. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
+1. OpenContracts Operator 从任务上下文读取 `targets.opencontracts` 作为公开 MCP 的目标 `corpus_slug`。
+2. Operator 调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名，取得规范化 `identity.document_title`。
+3. Operator 使用 AstrBot 已配置的 OpenContracts 公开 MCP `/mcp/`，调用 `list_documents(corpus_slug=targets.opencontracts, search=identity.document_title)` 查询合同。
+4. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+5. 目标 Corpus slug 缺失、MCP 查询失败或 Gateway 身份规范化失败时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，本次不启动写入。
+6. 新合同或已有有效确认时，使用 WorkerKey 导入网关执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
+7. 上传参数传递 Gateway 返回的规范化日期和标题，以及 `source_files[].original_name`。网关生成规范化远端文件名。
+8. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
+9. 正文可读并通过同一目标 Corpus 的 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
+10. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
+11. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
+
+## 主人格工具边界
+
+合同上传期间，主人格只执行两类工具动作：
+
+```text
+读取当前合同文件
+transfer_to_opencontracts_operator
+```
+
+不得调用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重或上传。
+
+## 终态控制
+
+`transfer_to_opencontracts_operator` 返回内容包含以下任一标记时，该结果即为本次上传的最终内部结果：
+
+```text
+[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]
+[CONTRACT_UPLOAD:BLOCKED]
+[CONTRACT_UPLOAD:PROCESSING]
+[CONTRACT_UPLOAD:COMPLETE]
+[CONTRACT_UPLOAD:MANUAL_REVIEW]
+[CONTRACT_UPLOAD:FAILED]
+```
+
+主人格必须立即停止工具调用，把该结果交给最终结果保护插件。不得继续尝试 Shell、Python、HTTP、第二次 Handoff 或环境修复。
+
+`BLOCKED` 或 `FAILED` 表示本次流程结束且暂存文件会被清理。客户需要在管理员修复后重新上传合同文件；当前不设计失败后重试或保留暂存任务。
 
 ## 会话控制
 

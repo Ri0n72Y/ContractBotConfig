@@ -9,22 +9,20 @@ sequenceDiagram
     participant M as Master
     participant H as Handoff Policy
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant G as Upload Gateway
     participant OC as OpenContracts
     participant RG as Result Guard
 
     U->>R: 上传合同并选择 1
-    R->>M: contract_task_context
+    R->>M: contract_task_context + targets.opencontracts
     M->>M: 提取 contract_date + contract_title
     M->>H: transfer input(JSON contract_identity)
-    H->>O: 同步结构化任务 + 安全约束
-    O->>MCP: get_corpus_info
-    MCP-->>O: corpus 信息
-    O->>MCP: list_documents(search=YYYY-MM-DD 合同标题)
-    MCP-->>O: 无标题完全一致文档
+    H->>O: 同步结构化任务 + public MCP contract
     O->>G: opencontracts_gateway_status
-    G-->>O: WorkerKey 写入配置可用
+    G-->>O: normalized identity
+    O->>MCP: list_documents(corpus_slug, search=document_title)
+    MCP-->>O: 无标题完全一致文档
     O->>G: date + title + staged_path + sha256
     G->>OC: WorkerKey + YYYY-MM-DD_合同标题.扩展名
     OC-->>G: created
@@ -36,6 +34,8 @@ sequenceDiagram
     RG-->>U: 客户回复
 ```
 
+公开 MCP 地址由 AstrBot 配置为 `/mcp/`。所有读取工具使用 `targets.opencontracts` 作为 `corpus_slug`；流程不调用 `get_corpus_info`、`opencontracts_check_duplicate` 或不存在的 corpus-scoped URL。
+
 ## 远端合同已存在
 
 ```mermaid
@@ -44,14 +44,14 @@ sequenceDiagram
     participant R as Router
     participant M as Master
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant RG as Result Guard
 
     U->>R: 选择上传
-    R->>M: contract_task_context
+    R->>M: contract_task_context + target corpus slug
     M->>M: 提取合同日期和标题
     M->>O: 规范化合同身份
-    O->>MCP: list_documents(search=规范化 document_title)
+    O->>MCP: list_documents(corpus_slug, search=document_title)
     MCP-->>O: 标题完全一致
     O-->>M: DUPLICATE_CONFIRMATION_REQUIRED
     M->>RG: 最终状态
@@ -67,7 +67,7 @@ sequenceDiagram
     participant R as Router
     participant M as Master
     participant O as OpenContracts Operator
-    participant MCP as OpenContracts MCP
+    participant MCP as OpenContracts Public MCP
     participant G as Upload Gateway
     participant OC as OpenContracts
 
@@ -76,7 +76,7 @@ sequenceDiagram
     R->>M: reupload task context
     M->>M: 重新确认合同日期和标题
     M->>O: 同步重新上传任务
-    O->>MCP: 重新读取规范化标题对应文档
+    O->>MCP: 按同一 corpus_slug 重新读取规范化标题对应文档
     MCP-->>O: existing document
     O->>G: date + title + confirmation_id
     G->>G: 校验会话、哈希、确认编号和有效期
@@ -88,6 +88,25 @@ sequenceDiagram
     O-->>M: 统一状态
     M-->>U: 客户回复
 ```
+
+## 公开 MCP 或工具失败
+
+```mermaid
+sequenceDiagram
+    participant O as OpenContracts Operator
+    participant MCP as OpenContracts Public MCP
+    participant M as Master
+    participant RG as Result Guard
+    participant U as 用户
+
+    O->>MCP: list_documents(corpus_slug, search)
+    MCP--xO: 连接失败 / 工具缺失 / 响应不完整
+    O-->>M: CONTRACT_UPLOAD:BLOCKED
+    M->>RG: 立即结束，不再调用工具
+    RG-->>U: 本次未上传；修复后重新上传合同
+```
+
+Master 和 Operator 不使用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或 URL 探测补救失败。
 
 ## 提交状态未知
 

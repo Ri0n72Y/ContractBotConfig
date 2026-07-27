@@ -1,11 +1,11 @@
-# 企业微信最终结果保护 0.3.0
+# 企业微信最终结果保护 0.3.2
 
 本插件位于 AstrBot 结果装饰阶段，将合同内部状态转换为一条适合企业微信客服发送的客户回复。
 
 ## 职责
 
 - 读取最终 `MessageEventResult` 并收集 Plain 与非文本组件。
-- 识别合同上传状态标记。
+- 按优先级识别合同上传状态标记，其中人工核查优先于普通处理中。
 - 将内部状态转换为稳定的客户语言。
 - 在重复确认场景设置 `contract_preserve_pending_reason`。
 - 抑制客户已结束任务产生的迟到结果。
@@ -43,7 +43,7 @@ classDiagram
     WecomFinalResultGuard --> Utf8Truncator
 ```
 
-当前实现仍集中在 `main.py`。图中的辅助组件是后续 Phase 2 拆分目标。
+当前实现仍集中在 `main.py`。图中的辅助组件是后续 Phase 2-C 拆分目标。
 
 ## 结果处理时序
 
@@ -69,34 +69,27 @@ sequenceDiagram
 
 ## 状态映射
 
-```mermaid
-flowchart TD
-    Marker[内部状态标记]
-    Complete[COMPLETE]
-    Processing[PROCESSING]
-    Duplicate[DUPLICATE_CONFIRMATION_REQUIRED]
-    Blocked[BLOCKED]
-    Failed[FAILED]
-    Customer[客户回复]
-
-    Marker --> Complete --> Customer
-    Marker --> Processing --> Customer
-    Marker --> Duplicate --> Customer
-    Marker --> Blocked --> Customer
-    Marker --> Failed --> Customer
-```
-
-上游稳定标记：
-
 ```text
-[CONTRACT_UPLOAD:COMPLETE]
-[CONTRACT_UPLOAD:PROCESSING]
+[CONTRACT_UPLOAD:MANUAL_REVIEW]
 [CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]
 [CONTRACT_UPLOAD:BLOCKED]
+[CONTRACT_UPLOAD:PROCESSING]
+[CONTRACT_UPLOAD:COMPLETE]
 [CONTRACT_UPLOAD:FAILED]
 ```
 
-0.3.0 的兼容分类已改为识别 MCP 读取不完整、WorkerKey 导入配置、导入端点和版本写入冲突。客户阻断提示指向 OpenContracts MCP 连接和文档导入服务。
+状态优先级保证包含人工核查信号的混合输出不会被误判为普通处理中。
+
+客户文案语义：
+
+- `MANUAL_REVIEW`：写入可能已经发生，工作人员核查前不要重复上传；
+- `DUPLICATE_CONFIRMATION_REQUIRED`：保留当前任务，等待重新上传或取消；
+- `BLOCKED`：未执行写入，本次任务结束；管理员检查公开 MCP、目标 Corpus slug 和工具绑定后，客户重新上传文件；
+- `PROCESSING`：写入已接收，但正文或检索尚未完成；
+- `COMPLETE`：正文可读并已进入检索；
+- `FAILED`：已确认没有提交，本次任务结束，修复后重新上传文件。
+
+当前不提供 `BLOCKED` 或 `FAILED` 后的失败重试状态。除重复确认外，Router 会在最终结果发送后清理暂存文件。
 
 ## 与 Router 的共享状态
 

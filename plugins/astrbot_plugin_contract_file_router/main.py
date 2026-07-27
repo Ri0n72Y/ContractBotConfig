@@ -175,7 +175,7 @@ class ContractFileRouter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.0 initialized: data_dir=%s",
+            "Contract file router 0.5.1 initialized: data_dir=%s",
             self.data_dir,
         )
 
@@ -588,9 +588,12 @@ class ContractFileRouter(Star):
                     ),
                     "required_tools": [
                         "opencontracts_gateway_status",
-                        "opencontracts_check_duplicate",
+                        "list_documents",
                         "opencontracts_upload_document",
+                        "get_document_text",
+                        "search_corpus",
                     ],
+                    "corpus_slug": self.opencontracts_target or None,
                     "expected_outputs": action["expected_outputs"].get(
                         "opencontracts", []
                     ),
@@ -612,11 +615,14 @@ class ContractFileRouter(Star):
             "duplicate_confirmation": duplicate_confirmation,
             "branch_tasks": branch_tasks,
             "constraints": [
+                "使用 AstrBot 已配置的 OpenContracts 公开 MCP /mcp/，不得拼接或探测其他 MCP 地址",
+                "必须使用 targets.opencontracts 作为 list_documents、get_document_text 和 search_corpus 的 corpus_slug",
+                "目标 Corpus slug 缺失时停止上传，不得调用 list_public_corpuses 猜测目标",
                 "每次由 OpenContracts 远端实时判断合同是否存在",
-                "远端重复查询失败时停止上传，不得把未知状态当作新合同",
+                "远端查询失败时停止上传，不得把未知状态当作新合同",
                 "AstrBot 本地 receipt 不得作为不存在的依据",
                 "上传时将 source_files.original_name 原样传为 source_filename",
-                "不得更换确定性 slug 绕过重复限制",
+                "不得调用 opencontracts_check_duplicate、get_corpus_info、Shell、Python、通用 HTTP 或读取配置文件绕过标准工具链",
                 "企业微信客服必须在本次事件中同步完成",
                 "不得调用 send_message_to_user",
             ],
@@ -629,12 +635,15 @@ class ContractFileRouter(Star):
         }:
             instruction = (
                 "同步调用 opencontracts_operator，background_task=false。"
-                "先调用网关状态和重复检查。远端查询失败时输出 "
-                "[CONTRACT_UPLOAD:BLOCKED]；存在合同时输出 "
+                "先调用 opencontracts_gateway_status 取得规范化身份，再使用公开 MCP 的 "
+                "list_documents(corpus_slug=targets.opencontracts, search=identity.document_title) "
+                "执行精确查重。目标 Corpus slug 缺失或远端查询失败时输出 "
+                "[CONTRACT_UPLOAD:BLOCKED]；存在标题完全一致的合同时输出 "
                 "[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED] 并停止。"
                 "执行上传时必须传递 original_name 作为 source_filename。"
                 "上传已接收但处理未完成时输出 [CONTRACT_UPLOAD:PROCESSING]；"
-                "全文和检索均核验完成时输出 [CONTRACT_UPLOAD:COMPLETE]。"
+                "正文和检索均核验完成时输出 [CONTRACT_UPLOAD:COMPLETE]。"
+                "任一 [CONTRACT_UPLOAD:*] 状态均为终态，主人格不得继续调用工具。"
             )
         elif action["operation"] == "quick_analysis":
             instruction = "由主人格直接分析当前合同，附原文位置，不调用子代理。"
