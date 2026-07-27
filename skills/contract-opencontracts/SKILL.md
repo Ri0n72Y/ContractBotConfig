@@ -1,54 +1,53 @@
 ---
 name: contract-opencontracts
-description: 使用 OpenContracts 公开 MCP 执行目标 Corpus 的合同操作，并通过 WorkerKey 导入网关完成规范化文件上传和版本写入。
+description: 使用 OpenContracts 公开 MCP 确定目标 Corpus，并通过 WorkerKey 导入网关完成规范化合同上传和核验。
 ---
 
 # OpenContracts 操作
 
-OpenContracts Operator 使用两个能力面：
+OpenContracts Operator 使用：
 
-- OpenContracts 公开 MCP `/mcp/`：按明确的 `corpus_slug` 执行文档发现、正文读取和语义检索；
-- OpenContracts Gateway：确定性合同身份规范化，以及使用 WorkerKey 向其绑定 Corpus 执行官方文档导入。
+- 公开 MCP `/mcp/`：列出公开 Corpus、发现文档、读取正文、执行语义检索；
+- OpenContracts Gateway：规范化合同身份，并使用 WorkerKey 向其绑定 Corpus 导入合同。
 
-只使用 AstrBot 已配置并注入的 MCP Tools。不得自行拼接 MCP 地址，不得调用 Shell、Python、通用 HTTP 或读取配置文件绕过标准工具链。
+只使用 AstrBot 已配置并注入的标准工具。不得调用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或其他地址探测。
 
-## 目标 Corpus
+## 目标 Corpus 的确定性解析
 
-任务上下文必须提供：
-
-```text
-targets.opencontracts = 目标 Corpus slug
-```
-
-Handoff 会同时写入：
+任务包含：
 
 ```text
-mcp_contract.corpus_slug
-branch_task.corpus_slug
+mcp_contract.configured_corpus_slug
+mcp_contract.resolution_rules
 ```
 
-三者应一致。上传流程直接把该值作为 `list_documents`、`get_document_text` 和 `search_corpus` 的 `corpus_slug`。
+上传开始后先调用 `list_public_corpuses`。解析规则固定为：
 
-目标 Corpus slug 缺失时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得调用 `list_public_corpuses` 猜测目标，也不得改用不存在的 corpus-scoped MCP 地址。
+1. 公开列表中存在与配置 slug 完全一致的项时，使用该 slug；
+2. 配置 slug 为空或不存在，且公开列表只有一个 Corpus 时，使用该唯一 Corpus；
+3. 公开列表为空，或剩余多个 Corpus 无法唯一确定时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`；
+4. 不得尝试 `contracts`、`default` 等常见名称，不得让模型猜测目标。
 
-## 合同身份契约
-
-任务必须包含：
+解析得到的 slug 是本次任务唯一目标，必须用于：
 
 ```text
-contract_identity.contract_date = 合同日期
-contract_identity.contract_title = 合同正文中的正式标题
+list_documents
+get_document_text
+search_corpus
 ```
 
-在远端查询前，必须调用 `opencontracts_gateway_status`，同时传入：
+## 合同身份
+
+任务必须包含运行时保护插件提供的：
 
 ```text
-contract_date
-contract_title
-source_filename=source_files[].original_name
+contract_identity.contract_date
+contract_identity.contract_title
 ```
 
-使用工具返回的以下字段作为唯一规范化身份：
+该身份由插件在本地内存中提取。Operator 不得调用任何文件读取工具，也不得要求主人格重新读取合同。
+
+调用 `opencontracts_gateway_status`，传入合同日期、合同标题和 `source_files[].original_name`，取得：
 
 ```text
 identity.contract_date
@@ -57,85 +56,43 @@ identity.document_title
 identity.normalized_filename
 ```
 
-通常格式为：
-
-```text
-document_title = YYYY-MM-DD 合同标题
-normalized_filename = YYYY-MM-DD_合同标题.原扩展名
-```
-
-文件名包含不安全字符或超过 UTF-8 字节限制时，Gateway 会安全替换或截断，并追加确定性短哈希。MCP 查重始终使用返回的完整 `identity.document_title`，不得根据文件名自行反推标题。
-
-合同身份缺失、日期无效或 `identity_error` 非空时，不得调用上传工具，返回 `[CONTRACT_UPLOAD:BLOCKED]`。
-
-## 公开 MCP 能力
-
-上传链路使用：
-
-```text
-list_documents
-get_document_text
-search_corpus
-```
-
-其他分析场景可以按需使用：
-
-```text
-list_public_corpuses
-list_annotations
-list_relationships
-list_threads
-get_thread_messages
-create_thread_message
-```
-
-`list_public_corpuses` 不参与上传目标选择。`create_thread_message` 需要经过认证的 MCP 用户上下文。
+MCP 查重只使用完整的 `identity.document_title`。
 
 ## 上传流程
 
-对每个 `source_files[]` 按以下顺序执行：
+1. 调用 `list_public_corpuses` 并按确定性规则得到唯一目标 slug。
+2. 调用 `opencontracts_gateway_status` 获取规范化身份；身份缺失或错误时输出 `[CONTRACT_UPLOAD:BLOCKED]`。
+3. 调用 `list_documents(corpus_slug=解析后值, search=identity.document_title)`；仅把返回标题完全一致的文档视为同一合同。
+4. 已存在且没有有效重新上传确认时，输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+5. MCP 查询失败或返回不完整时输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得把未知状态当作新合同。
+6. 可以写入时调用 `opencontracts_upload_document`，传入暂存路径、SHA-256、Gateway 返回的日期和标题、原始文件名及确认编号。
+7. Gateway 返回 `manual_review_required`、`write_committed=unknown`，或 failure stage 为 `unexpected_unconfirmed_update`、`transport_commit_unknown`、`upstream_commit_unknown`、`unexpected_success_response` 时，输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，禁止再次上传。
+8. 导入已接收后，使用同一解析后 slug 和 `identity.document_title` 再次调用 `list_documents` 获取文档 slug。
+9. 调用 `get_document_text` 和 `search_corpus` 核验正文与检索状态。
+10. 尚未就绪时输出 `[CONTRACT_UPLOAD:PROCESSING]`；均完成时输出 `[CONTRACT_UPLOAD:COMPLETE]`。
 
-1. 读取 `targets.opencontracts`，取得目标 `corpus_slug`；缺失则输出 `[CONTRACT_UPLOAD:BLOCKED]`。
-2. 调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名；确认 WorkerKey 配置可用，并取得 Gateway 返回的规范化身份。
-3. 调用 `list_documents(corpus_slug=目标值, search=identity.document_title)` 查询远端文档，只把返回结果中 `title` 与该值完全一致的文档视为同一合同。
-4. 找到完全一致文档且没有有效重新上传确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]` 并停止。
-5. MCP 查询失败、结果不完整或规范化身份缺失时输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得把未知状态当作新合同。
-6. 可以写入时调用 `opencontracts_upload_document`，传入：
-   - `staged_path`
-   - `expected_sha256`
-   - Gateway 返回的 `identity.contract_date`
-   - Gateway 返回的 `identity.contract_title`
-   - `source_filename=source_files[].original_name`
-   - `duplicate_confirmation_id` 使用任务上下文中的确认编号
-7. 网关返回 `manual_review_required=true`、`status=manual_review_required` 或 `write_committed=unknown`，或 failure stage 为 `unexpected_unconfirmed_update`、`transport_commit_unknown`、`upstream_commit_unknown`、`unexpected_success_response` 时，首行输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`。禁止再次调用上传工具。
-8. 导入已接收后，继续使用同一 `corpus_slug` 和步骤 2 返回的 `identity.document_title` 调用 `list_documents`，取得文档 slug。
-9. 调用 `get_document_text(corpus_slug=目标值, document_slug=...)` 核验正文可读；调用 `search_corpus(corpus_slug=目标值, query=...)` 核验文档已进入检索链路。
-10. 正文或检索尚未就绪时输出 `[CONTRACT_UPLOAD:PROCESSING]`；两项均核验完成后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
+## 隐私边界
 
-## 禁止绕过
-
-以下工具或行为不得用于合同上传：
+合同原文不得出现在：
 
 ```text
+工具返回值
+子人格回复
+主人格回复
+应用日志
+```
+
+禁止使用：
+
+```text
+astrbot_file_read_tool
 opencontracts_check_duplicate
 get_corpus_info
 Shell
 Python
 通用 HTTP
-读取 Gateway 配置文件
-直接调用 MCP JSON-RPC
-探测其他 MCP URL
+配置文件读取
+直接 MCP JSON-RPC
 ```
 
-标准工具缺失或返回失败时，直接输出 `[CONTRACT_UPLOAD:BLOCKED]`。不要尝试修复运行环境。
-
-## 写入结果
-
-- `server_import_status=created`：首次导入已接收；
-- `server_import_status=updated` 且确认有效：新版本已写入；
-- `status=confirmation_required`：等待客户确认；
-- `status=blocked`：身份、配置、文件、确认或权限条件未满足，尚未写入；
-- `status=manual_review_required`：可能已写入或已经发生未确认版本写入，禁止自动重试；
-- `status=failed`：已确认没有提交的正式请求失败。
-
-本地 receipt 为追加式上传审计。它不能作为远端合同不存在的依据。
+标准工具失败时直接返回对应终态，不尝试修复运行环境。本地 receipt 只用于追加式上传审计，不能证明远端合同不存在。
