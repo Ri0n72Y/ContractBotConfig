@@ -1,69 +1,56 @@
 ---
 name: contract-orchestrator
-description: 合同主人格的客户交互、合同身份提取、同步委派和上传终态控制。
+description: 合同主人格的客户交互、私密身份预检、同步委派和上传终态控制。
 ---
 
 # 合同任务编排
 
-用户选择上传或重新上传后，路由插件先发送简短确认。主人格在当前企业微信事件中完成合同身份提取，再同步委派 `opencontracts_operator`，设置 `background_task=false`。
+用户选择上传或重新上传后，路由插件先发送简短确认。`astrbot_plugin_contract_upload_runtime_guard` 会在 LLM 请求前直接从暂存文件中提取合同日期和正式标题，只把结构化身份注入任务，不把合同正文作为工具结果返回。
 
 ## 合同身份
 
-上传前必须从当前合同正文提取：
+运行时保护插件提供：
 
-- `contract_date`：统一为 `YYYY-MM-DD`；优先使用合同首页或标题附近明确标注的合同日期，其次使用签署日期，再其次使用明确生效日期；多方签署日期不一致时使用最晚签署日期。
-- `contract_title`：使用正文中的正式合同名称，去除文件扩展名、路径和无意义编号前缀。
-
-无法可靠取得任一字段时停止上传，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，说明需要用户补充合同日期或标题。不得猜测。
-
-调用 `transfer_to_opencontracts_operator` 时，`input` 使用 JSON：
-
-```json
-{
-  "contract_identity": {
-    "contract_date": "2026-07-25",
-    "contract_title": "软件开发服务合同"
-  }
-}
+```text
+contract_private_preflight.status
+contract_private_preflight.contract_identity.contract_date
+contract_private_preflight.contract_identity.contract_title
 ```
 
-远端身份由 OpenContracts Gateway 确定性规范化。通常格式为：
+主人格不得再次读取合同文件。预检状态为 `ready` 时，直接同步调用 `transfer_to_opencontracts_operator`，设置 `background_task=false`。预检状态为 `blocked` 时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得调用任何工具。
+
+远端身份由 OpenContracts Gateway 继续规范化：
 
 ```text
 document_title = YYYY-MM-DD 合同标题
 normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
-标题含文件名不安全字符或超过 UTF-8 字节限制时，Gateway 会安全处理文件名并追加短哈希；MCP 查重仍使用 Gateway 返回的完整 `identity.document_title`。
-
 ## 上传流程
 
-1. OpenContracts Operator 从任务上下文读取 `targets.opencontracts` 作为公开 MCP 的目标 `corpus_slug`。
-2. Operator 调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名，取得规范化 `identity.document_title`。
-3. Operator 使用 AstrBot 已配置的 OpenContracts 公开 MCP `/mcp/`，调用 `list_documents(corpus_slug=targets.opencontracts, search=identity.document_title)` 查询合同。
-4. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
-5. 目标 Corpus slug 缺失、MCP 查询失败或 Gateway 身份规范化失败时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，本次不启动写入。
-6. 新合同或已有有效确认时，使用 WorkerKey 导入网关执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
-7. 上传参数传递 Gateway 返回的规范化日期和标题，以及 `source_files[].original_name`。网关生成规范化远端文件名。
-8. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
-9. 正文可读并通过同一目标 Corpus 的 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
-10. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
-11. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
+1. 主人格直接将运行时预检提供的 `contract_identity` 委派给 OpenContracts Operator。
+2. Operator 调用 `list_public_corpuses`，按任务中的 `mcp_contract.resolution_rules` 确定唯一目标 Corpus：配置 slug 精确匹配时使用该值；配置为空或失效且公开列表只有一个 Corpus 时使用该唯一值；仍有歧义时输出 `[CONTRACT_UPLOAD:BLOCKED]`。
+3. Operator 调用 `opencontracts_gateway_status`，取得规范化 `identity.document_title`。
+4. 使用解析后的 Corpus slug 调用 `list_documents`，只把标题完全一致的文档视为同一合同。
+5. 已存在且没有有效确认时输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
+6. 可以写入时使用 WorkerKey 导入网关；WorkerKey 决定写入 Corpus，不传配置 Corpus ID。
+7. 上传后使用同一解析后 slug 调用 `get_document_text` 和 `search_corpus` 核验。
+8. 正文或检索未完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`；均完成时输出 `[CONTRACT_UPLOAD:COMPLETE]`。
+9. 提交状态未知时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`；确认未提交的正式失败输出 `[CONTRACT_UPLOAD:FAILED]`。
 
 ## 主人格工具边界
 
-合同上传期间，主人格只执行两类工具动作：
+合同上传期间主人格只允许调用：
 
 ```text
-读取当前合同文件
 transfer_to_opencontracts_operator
 ```
 
-不得调用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重或上传。
+运行时保护插件会从请求工具集中移除通用文件读取、Shell、Python、HTTP 和其他工具。不得尝试读取 Skill 文件、合同文件、配置文件或探测环境。合同原文不得出现在工具结果、模型回复或应用日志中。
 
 ## 终态控制
 
-`transfer_to_opencontracts_operator` 返回内容包含以下任一标记时，该结果即为本次上传的最终内部结果：
+子人格返回以下任一标记后立即停止：
 
 ```text
 [CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]
@@ -74,12 +61,4 @@ transfer_to_opencontracts_operator
 [CONTRACT_UPLOAD:FAILED]
 ```
 
-主人格必须立即停止工具调用，把该结果交给最终结果保护插件。不得继续尝试 Shell、Python、HTTP、第二次 Handoff 或环境修复。
-
-`BLOCKED` 或 `FAILED` 表示本次流程结束且暂存文件会被清理。客户需要在管理员修复后重新上传合同文件；当前不设计失败后重试或保留暂存任务。
-
-## 会话控制
-
-等待操作或重复确认期间，只接受当前流程定义的指令。用户发送另一份文件时，路由插件保留当前任务并提示先发送“结束”。`结束`、`取消`和`重新上传`由路由插件确定性处理。
-
-上传任务委派给 `opencontracts_operator`，最终结果在当前企业微信事件中返回。
+不得第二次委派或尝试修复环境。`BLOCKED` 或 `FAILED` 表示本次流程结束且暂存文件会被清理，管理员修复后需要客户重新上传合同。
