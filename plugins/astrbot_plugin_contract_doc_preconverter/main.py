@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import socket
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from astrbot.api import AstrBotConfig, logger
@@ -17,9 +19,26 @@ import astrbot.api.message_components as Comp
 
 
 DOC_CONVERSION_FAILED_TEXT = (
-    "暂时无法读取该旧版 Word 文件。请将文件另存为 DOCX 或 PDF 后重新上传。"
+    "该旧版 Word 文件无法转换。请将文件另存为 DOCX 或 PDF 后重新上传。"
+)
+DOC_CONVERTER_UNAVAILABLE_TEXT = (
+    "旧版 Word 转换服务当前不可用。请稍后重试，或将文件另存为 DOCX 或 PDF 后重新上传。"
 )
 PDF_MAGIC = b"%PDF"
+UNAVAILABLE_ERROR_CODES = {
+    "converter_dns_failed",
+    "converter_connection_refused",
+    "converter_timeout",
+    "converter_unreachable",
+}
+
+
+class DocConversionError(RuntimeError):
+    """Safe conversion failure carrying a non-sensitive machine-readable code."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 class ContractDocPreconverter(Star):
@@ -59,8 +78,9 @@ class ContractDocPreconverter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract DOC preconverter 0.1.0 initialized: enabled=%s",
+            "Contract DOC preconverter 0.1.1 initialized: enabled=%s endpoint=%s",
             self.enabled,
+            self._endpoint_label(),
         )
 
     def _platform_allowed(self, event: AstrMessageEvent) -> bool:
@@ -106,6 +126,17 @@ class ContractDocPreconverter(Star):
         stem = source[: -len(Path(source).suffix)] or "contract"
         return f"{stem}.pdf"
 
+    def _endpoint_label(self) -> str:
+        try:
+            parsed = urlsplit(self.converter_url)
+            host = parsed.hostname or "unknown"
+            default_port = 443 if parsed.scheme == "https" else 80
+            port = parsed.port or default_port
+            path = parsed.path or "/"
+            return f"{parsed.scheme or 'http'}://{host}:{port}{path}"
+        except Exception:
+            return "invalid-converter-url"
+
     def _cleanup_expired(self) -> None:
         now = time.time()
         for path in self.output_dir.glob("*.pdf"):
@@ -118,7 +149,9 @@ class ContractDocPreconverter(Star):
     @staticmethod
     def _multipart_body(file_bytes: bytes, filename: str) -> tuple[bytes, str]:
         boundary = f"contractbot-{uuid.uuid4().hex}"
-        safe_filename = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        safe_filename = (
+            filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        )
         prefix = (
             f"--{boundary}\r\n"
             'Content-Disposition: form-data; name="files"; '
@@ -128,12 +161,23 @@ class ContractDocPreconverter(Star):
         suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
         return prefix + file_bytes + suffix, boundary
 
+    @staticmethod
+    def _url_error_code(exc: URLError) -> str:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, socket.gaierror):
+            return "converter_dns_failed"
+        if isinstance(reason, ConnectionRefusedError):
+            return "converter_connection_refused"
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            return "converter_timeout"
+        return "converter_unreachable"
+
     def _convert_sync(self, source: Path, original_name: str) -> bytes:
         source_size = source.stat().st_size
         if source_size <= 0 or source_size > self.max_file_bytes:
-            raise ValueError("source_size_invalid")
+            raise DocConversionError("source_size_invalid")
         if not self.converter_url:
-            raise ValueError("converter_url_missing")
+            raise DocConversionError("converter_url_missing")
 
         file_bytes = source.read_bytes()
         body, boundary = self._multipart_body(file_bytes, original_name)
@@ -147,19 +191,22 @@ class ContractDocPreconverter(Star):
             },
         )
         try:
-            with urlopen(request, timeout=self.request_timeout_seconds) as response:
+            with urlopen(
+                request,
+                timeout=self.request_timeout_seconds,
+            ) as response:
                 result = response.read(self.max_file_bytes + 1)
         except HTTPError as exc:
-            raise RuntimeError(f"converter_http_{exc.code}") from exc
+            raise DocConversionError(f"converter_http_{exc.code}") from exc
         except URLError as exc:
-            raise RuntimeError("converter_unreachable") from exc
-        except TimeoutError as exc:
-            raise RuntimeError("converter_timeout") from exc
+            raise DocConversionError(self._url_error_code(exc)) from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise DocConversionError("converter_timeout") from exc
 
         if len(result) > self.max_file_bytes:
-            raise ValueError("converted_file_too_large")
+            raise DocConversionError("converted_file_too_large")
         if not result.startswith(PDF_MAGIC):
-            raise ValueError("converter_returned_non_pdf")
+            raise DocConversionError("converter_returned_non_pdf")
         return result
 
     def _write_audit(self, payload: dict[str, Any]) -> None:
@@ -176,10 +223,10 @@ class ContractDocPreconverter(Star):
     async def _convert_component(self, component: Any) -> dict[str, Any]:
         source_value = await self._component_path(component)
         if not source_value:
-            raise ValueError("source_path_missing")
+            raise DocConversionError("source_path_missing")
         source = Path(source_value).expanduser().resolve()
         if not source.is_file():
-            raise ValueError("source_file_missing")
+            raise DocConversionError("source_file_missing")
 
         original_name = str(
             getattr(component, "name", None) or source.name or "contract.doc"
@@ -192,7 +239,9 @@ class ContractDocPreconverter(Star):
         )
 
         output_name = self._safe_pdf_name(original_name)
-        output = self.output_dir / f"{int(time.time())}_{uuid.uuid4().hex[:10]}_{output_name}"
+        output = self.output_dir / (
+            f"{int(time.time())}_{uuid.uuid4().hex[:10]}_{output_name}"
+        )
         temporary = output.with_suffix(".tmp")
         temporary.write_bytes(pdf_bytes)
         temporary.replace(output)
@@ -215,6 +264,18 @@ class ContractDocPreconverter(Star):
         }
         self._write_audit(result)
         return result
+
+    @staticmethod
+    def _failure_code(exc: Exception) -> str:
+        if isinstance(exc, DocConversionError):
+            return exc.code
+        return "unexpected_error"
+
+    @staticmethod
+    def _failure_text(code: str) -> str:
+        if code in UNAVAILABLE_ERROR_CODES:
+            return DOC_CONVERTER_UNAVAILABLE_TEXT
+        return DOC_CONVERSION_FAILED_TEXT
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1100)
     async def preconvert(
@@ -252,12 +313,25 @@ class ContractDocPreconverter(Star):
                         path.unlink()
                 except OSError:
                     pass
+            code = self._failure_code(exc)
+            event.set_extra("contract_doc_conversion_error", code)
+            self._write_audit(
+                {
+                    "source_format": "doc",
+                    "target_format": "pdf",
+                    "backend": "gotenberg",
+                    "status": "failed",
+                    "error_code": code,
+                }
+            )
             logger.warning(
-                "Contract DOC preconversion failed before routing: %s",
-                type(exc).__name__,
+                "Contract DOC preconversion failed before routing: "
+                "code=%s endpoint=%s",
+                code,
+                self._endpoint_label(),
             )
             event.stop_event()
-            yield event.plain_result(DOC_CONVERSION_FAILED_TEXT)
+            yield event.plain_result(self._failure_text(code))
             return
 
         event.set_extra("contract_doc_conversions", converted)
