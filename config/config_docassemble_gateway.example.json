@@ -2,9 +2,9 @@
   "base_url": "http://docassemble",
   "api_key": "REPLACE_WITH_DOCASSEMBLE_API_KEY",
   "allowed_interviews": [
-    "docassemble.contractbot:data/questions/technical_service_contract.yml"
+    "REPLACE_WITH_FULL_INTERVIEW_FILENAME"
   ],
-  "default_interview": "docassemble.contractbot:data/questions/technical_service_contract.yml",
+  "default_interview": "REPLACE_WITH_FULL_INTERVIEW_FILENAME",
   "result_descriptor_key": "contractbot_document",
   "output_dir": "data/plugins_data/astrbot_plugin_docassemble_gateway/output",
   "timeout_seconds": 90,
