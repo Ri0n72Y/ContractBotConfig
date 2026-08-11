@@ -5,7 +5,7 @@ metadata:
 attachment:
   variable name: contractbot_output
   name: ${ document_title }
-  filename: ${ output_filename }
+  filename: ${ output_basename }
   content: |
     ${ document_body }
   valid formats:
@@ -18,7 +18,7 @@ code: |
     "contractbot_document": {
       "status": "complete",
       "file_number": contractbot_output.docx.number,
-      "filename": contractbot_output.docx.filename,
+      "filename": output_basename + ".docx",
       "extension": "docx"
     }
   })
