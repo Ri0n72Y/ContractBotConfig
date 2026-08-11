@@ -101,6 +101,7 @@ class DocassembleClient:
             "i": interview,
             "session": session,
             "variables": variables,
+            "raw": 0,
         }
         if secret:
             payload["secret"] = secret
