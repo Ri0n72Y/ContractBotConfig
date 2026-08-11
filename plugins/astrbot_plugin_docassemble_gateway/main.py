@@ -65,7 +65,7 @@ class DocassembleGateway(Star):
         *hook_args: Any,
         **hook_kwargs: Any,
     ) -> None:
-        """Remove fallback tools only from the marked Docassemble Builder."""
+        """Remove fallback tools from the marked Docassemble Builder."""
         del event
         req = self._resolve_provider_request(hook_args, hook_kwargs)
         if req is None:
@@ -79,13 +79,6 @@ class DocassembleGateway(Star):
         if not isinstance(tools, list):
             return
         before = [str(getattr(tool, "name", "")) for tool in tools]
-        if "docassemble_generate_document" not in before:
-            logger.error(
-                "Docassemble gateway: marked Builder request is missing "
-                "docassemble_generate_document."
-            )
-            return
-
         tool_set.tools = [
             tool
             for tool in tools
@@ -101,6 +94,11 @@ class DocassembleGateway(Star):
                 "before=%s after=%s",
                 before,
                 after,
+            )
+        if "docassemble_generate_document" not in after:
+            logger.error(
+                "Docassemble gateway: marked Builder request is missing "
+                "docassemble_generate_document; fallback tools remain removed."
             )
 
     @staticmethod
