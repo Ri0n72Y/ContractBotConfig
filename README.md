@@ -1,6 +1,6 @@
 # ContractBotConfig
 
-面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成，并以 OpenContracts 作为合同存储、解析和检索系统。
+面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成，并以 OpenContracts 作为合同存储、解析和检索系统，以 Docassemble 作为合同文书生成执行引擎。
 
 ## 当前能力
 
@@ -10,7 +10,7 @@
 4. 使用 OpenContracts 公开 MCP 执行查重、正文读取和语义检索；
 5. 使用 WorkerKey 调用官方导入 API 写入合同；
 6. 对重复、阻断、处理中、完成、人工核查和失败状态执行确定性会话控制；
-7. 基于合同库、批准模板和用户信息生成 DOCX 文书。
+7. 基于合同库、批准模板和用户信息，通过 Docassemble allowlist interview 生成 DOCX 文书。
 
 ## 系统架构
 
@@ -24,15 +24,21 @@ flowchart LR
     Handoff[Contract Handoff Policy]
     Operator[OpenContracts Operator]
     MCP[OpenContracts Public MCP]
-    Gateway[Upload Gateway]
+    UploadGateway[OpenContracts Upload Gateway]
     API[Official Import API]
     OC[OpenContracts]
+    Builder[Docassemble Builder]
+    DAGateway[Docassemble Gateway]
+    DA[Docassemble]
     Guard[WeCom Result Guard]
 
     User --> WeCom --> Convert --> Router --> Master
     Master --> Handoff --> Operator
     Operator --> MCP --> OC
-    Operator --> Gateway --> API --> OC
+    Operator --> UploadGateway --> API --> OC
+    Master --> Handoff --> Builder
+    Builder --> MCP
+    Builder --> DAGateway --> DA
     Master --> Guard --> WeCom
 ```
 
@@ -75,6 +81,89 @@ Authorization: WorkerKey <token>
 ```
 
 写入目标由 WorkerKey 绑定。Gateway 不配置 Corpus ID，也不保存 MCP 读取凭证。
+
+## Docassemble 集成
+
+AstrBot 与 Docassemble 共用 Docker `legal-network` 时，Gateway 默认访问：
+
+```text
+http://docassemble
+```
+
+Docassemble Gateway 只暴露两个 LLM Tool：
+
+```text
+docassemble_gateway_status
+docassemble_generate_document
+```
+
+生成链路：
+
+```text
+Docassemble Builder
+→ docassemble_gateway_status
+→ 选择 allowlist interview
+→ docassemble_generate_document
+→ GET /api/session/new
+→ POST /api/session
+→ interview json_response(contractbot_document)
+→ GET /api/file/<file_number>?extension=docx
+→ Gateway 校验并保存 DOCX
+```
+
+`api_key` 只保存在 Docassemble Gateway 插件配置中，不进入 Persona、Skill、LLM 上下文、日志或用户回复。MVP 暂允许使用管理员 API Key；独立服务账户由安全 Issue #7 跟踪。
+
+### Interview 返回契约
+
+ContractBot 使用的 API-first interview 完成时必须返回：
+
+```json
+{
+  "contractbot_document": {
+    "status": "complete",
+    "file_number": 123,
+    "filename": "contract.docx",
+    "extension": "docx"
+  }
+}
+```
+
+`file_number` 必须来自 Docassemble 生成文件的 `DAFile.number`。Gateway 不接受模型自行生成的本地文件冒充 Docassemble 输出。
+
+仓库提供：
+
+```text
+docs/docassemble/contractbot_api_smoke.yml
+```
+
+该文件只用于验证 API → DOCX → `/api/file` 链路，不是生产合同模板。生产环境应使用真实 Docassemble package/interview，优先采用 `docx template file` 装配批准模板。
+
+### Builder WebUI 绑定
+
+`contract_docassemble_builder` 应绑定：
+
+```text
+Skill:
+- contract-docassemble
+
+Tools:
+- list_documents
+- get_document_text
+- search_corpus
+- docassemble_gateway_status
+- docassemble_generate_document
+```
+
+不得向 Builder 绑定用于文书生成替代路径的能力：
+
+```text
+astrbot_execute_shell
+astrbot_execute_python
+通用 HTTP
+通用文件写入/编辑工具
+```
+
+Builder 可以通过 OpenContracts 只读工具取得参考来源，但最终 DOCX 只能由 `docassemble_generate_document` 生成。
 
 ## 合同身份
 
@@ -137,7 +226,7 @@ YYYYMMDD
 
 ### BLOCKED 恢复
 
-Router 0.5.2 在 `BLOCKED` 后进入：
+Router 0.5.4 在 `BLOCKED` 后进入：
 
 ```text
 awaiting_blocked_resolution
@@ -161,12 +250,15 @@ Result Guard 0.3.4 即使遇到模型漏写显式 BLOCKED 标记，也会根据�
 
 ```text
 astrbot_plugin_contract_doc_preconverter 0.1.3
-astrbot_plugin_contract_file_router 0.5.2
+astrbot_plugin_contract_file_router 0.5.4
 astrbot_plugin_contract_handoff_policy 0.4.5
+astrbot_plugin_docassemble_gateway 0.1.0
 astrbot_plugin_opencontracts_gateway 0.6.1
 astrbot_plugin_wecom_final_result_guard 0.3.4
+contract-docassemble 1.15
 contract-orchestrator 1.15.3
 contract-result-verification 1.16.3
+contract_docassemble_builder 1.15
 contract_master_orchestrator 1.17
 ```
 
@@ -188,11 +280,27 @@ http://gotenberg:3000/forms/libreoffice/convert
 
 导入 `personas/` 中最新版本 JSON。Tools 和 Skills 在 AstrBot WebUI 中单独绑定。
 
-### Gateway
+### OpenContracts Gateway
 
 ```text
 auth_token = <OpenContracts WorkerKey>
 import_path = /api/imports/documents/
+```
+
+### Docassemble Gateway
+
+```text
+base_url = http://docassemble
+api_key = <Docassemble API Key>
+allowed_interviews = [<完整 interview filename>]
+default_interview = <完整 interview filename>
+result_descriptor_key = contractbot_document
+```
+
+示例配置位于：
+
+```text
+config/config_docassemble_gateway.example.json
 ```
 
 ## 工具边界
@@ -203,6 +311,12 @@ import_path = /api/imports/documents/
 - Operator 只使用公开 MCP Tools、`opencontracts_gateway_status` 和 `opencontracts_upload_document`；
 - Master 和 Operator 不使用 Shell、Python、通用 HTTP、配置文件读取或直接 MCP JSON-RPC 绕过标准流程；
 - 任一 `[CONTRACT_UPLOAD:*]` 状态出现后，Master 停止当前轮次工具调用。
+
+文书生成期间：
+
+- Builder 可使用 OpenContracts 只读工具取得来源；
+- 最终生成只允许 `docassemble_gateway_status` 和 `docassemble_generate_document`；
+- Builder 不使用 Shell、Python、`python-docx`、通用 HTTP、本地脚本或文件写入/编辑作为生成后备方案。
 
 ## 构建发布包
 
