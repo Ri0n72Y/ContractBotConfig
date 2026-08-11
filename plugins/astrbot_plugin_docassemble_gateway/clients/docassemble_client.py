@@ -32,9 +32,10 @@ class DocassembleClient:
             follow_redirects=False,
         )
 
-    @staticmethod
-    def _safe_error(response: httpx.Response) -> str:
+    def _safe_error(self, response: httpx.Response) -> str:
         text = (response.text or "").strip()
+        if self.settings.api_key:
+            text = text.replace(self.settings.api_key, "[REDACTED]")
         text = re.sub(
             r"(?i)(x-api-key|authorization|api[_ -]?key)\s*[:=]\s*\S+",
             r"\1: [REDACTED]",
@@ -134,6 +135,12 @@ class DocassembleClient:
                 response = await client.get(
                     f"/api/file/{file_number}",
                     params={"extension": "docx"},
+                    headers={
+                        "Accept": (
+                            "application/vnd.openxmlformats-officedocument."
+                            "wordprocessingml.document, application/octet-stream"
+                        )
+                    },
                 )
         except httpx.TimeoutException:
             return None, "下载 Docassemble DOCX 超时。"
