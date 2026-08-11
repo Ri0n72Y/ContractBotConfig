@@ -13,6 +13,7 @@ import httpx
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 
 
@@ -54,7 +55,10 @@ class GatewaySettings:
                 )
             ).expanduser().resolve(),
             timeout_seconds=max(5, int(config.get("timeout_seconds", 90))),
-            max_file_bytes=max(1024, int(config.get("max_file_bytes", 30 * 1024 * 1024))),
+            max_file_bytes=max(
+                1024,
+                int(config.get("max_file_bytes", 30 * 1024 * 1024)),
+            ),
             verify_tls=bool(config.get("verify_tls", True)),
             cleanup_sessions=bool(config.get("cleanup_sessions", True)),
         )
@@ -66,7 +70,10 @@ class GatewaySettings:
             return "Docassemble API Key 未配置。"
         if not self.allowed_interviews:
             return "allowed_interviews 为空；MVP 必须显式允许可执行 interview。"
-        if self.default_interview and self.default_interview not in self.allowed_interviews:
+        if (
+            self.default_interview
+            and self.default_interview not in self.allowed_interviews
+        ):
             return "default_interview 不在 allowed_interviews 中。"
         return None
 
@@ -101,7 +108,10 @@ class DocassembleClient:
         )
         return text[:1200] or f"HTTP {response.status_code}"
 
-    async def inspect_interview(self, interview: str) -> tuple[bool, str | None]:
+    async def inspect_interview(
+        self,
+        interview: str,
+    ) -> tuple[bool, str | None]:
         try:
             async with self._client() as client:
                 response = await client.get(
@@ -122,7 +132,10 @@ class DocassembleClient:
             return False, "Docassemble /api/interview_data 返回结构异常。"
         return True, None
 
-    async def start_session(self, interview: str) -> tuple[dict[str, Any] | None, str | None]:
+    async def start_session(
+        self,
+        interview: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         try:
             async with self._client() as client:
                 response = await client.get(
@@ -163,7 +176,10 @@ class DocassembleClient:
         except httpx.TimeoutException:
             return None, "Docassemble 生成请求超时；禁止自动重试。"
         except httpx.RequestError as exc:
-            return None, f"Docassemble 生成请求失败；禁止自动重试：{str(exc)[:500]}"
+            return (
+                None,
+                f"Docassemble 生成请求失败；禁止自动重试：{str(exc)[:500]}",
+            )
         if response.status_code != 200:
             return None, self._safe_error(response)
         try:
@@ -174,7 +190,10 @@ class DocassembleClient:
             return None, "Docassemble /api/session 返回结构异常。"
         return body, None
 
-    async def download_docx(self, file_number: int) -> tuple[bytes | None, str | None]:
+    async def download_docx(
+        self,
+        file_number: int,
+    ) -> tuple[bytes | None, str | None]:
         try:
             async with self._client() as client:
                 response = await client.get(
@@ -194,7 +213,12 @@ class DocassembleClient:
             return None, "Docassemble 返回内容不是有效 DOCX/ZIP 文件。"
         return data, None
 
-    async def delete_session(self, interview: str, session: str, secret: str) -> None:
+    async def delete_session(
+        self,
+        interview: str,
+        session: str,
+        secret: str,
+    ) -> None:
         del secret
         params: dict[str, str] = {"i": interview, "session": session}
         try:
@@ -207,6 +231,14 @@ class DocassembleClient:
 class DocassembleGateway(Star):
     """Allowlisted Docassemble API gateway for deterministic DOCX assembly."""
 
+    BUILDER_ALLOWED_TOOLS = {
+        "list_documents",
+        "get_document_text",
+        "search_corpus",
+        "docassemble_gateway_status",
+        "docassemble_generate_document",
+    }
+
     def __init__(
         self,
         context: Context,
@@ -217,27 +249,88 @@ class DocassembleGateway(Star):
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
         self.client = DocassembleClient(self.settings)
         self._audit_lock = asyncio.Lock()
-        self._audit_path = self.settings.output_dir.parent / "generation_audit.jsonl"
+        self._audit_path = (
+            self.settings.output_dir.parent / "generation_audit.jsonl"
+        )
 
     async def initialize(self) -> None:
         logger.info(
-            "Docassemble gateway 0.1.0 initialized: base_url=%s allowed_interviews=%d",
+            "Docassemble gateway 0.1.0 initialized: base_url=%s "
+            "allowed_interviews=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
         )
 
     @staticmethod
+    def _resolve_provider_request(
+        hook_args: tuple[Any, ...],
+        hook_kwargs: dict[str, Any],
+    ) -> ProviderRequest | None:
+        candidate = hook_kwargs.get("req") or hook_kwargs.get("request")
+        if isinstance(candidate, ProviderRequest):
+            return candidate
+        for value in hook_args:
+            if isinstance(value, ProviderRequest):
+                return value
+            if hasattr(value, "func_tool") and hasattr(value, "prompt"):
+                return value
+        return None
+
+    @filter.on_llm_request(priority=1200)
+    async def restrict_builder_tools(
+        self,
+        event: AstrMessageEvent,
+        *hook_args: Any,
+        **hook_kwargs: Any,
+    ) -> None:
+        del event
+        req = self._resolve_provider_request(hook_args, hook_kwargs)
+        if req is None:
+            return
+        tool_set = getattr(req, "func_tool", None)
+        tools = getattr(tool_set, "tools", None)
+        if not isinstance(tools, list):
+            return
+        before = [str(getattr(tool, "name", "")) for tool in tools]
+        if "docassemble_generate_document" not in before:
+            return
+        tool_set.tools = [
+            tool
+            for tool in tools
+            if str(getattr(tool, "name", ""))
+            in self.BUILDER_ALLOWED_TOOLS
+        ]
+        after = [
+            str(getattr(tool, "name", "")) for tool in tool_set.tools
+        ]
+        if after != before:
+            logger.info(
+                "Docassemble gateway: restricted Builder tools, "
+                "before=%s after=%s",
+                before,
+                after,
+            )
+
+    @staticmethod
     def _json(**payload: Any) -> str:
-        return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
 
     @staticmethod
     def _safe_filename(value: str) -> str:
         raw = Path(str(value or "contract.docx")).name
-        raw = re.sub(r"[<>:\"/\\|?*\x00-\x1f\x7f]+", "_", raw).strip(" .")
+        raw = re.sub(
+            r"[<>:\"/\\|?*\x00-\x1f\x7f]+",
+            "_",
+            raw,
+        ).strip(" .")
         if not raw.lower().endswith(".docx"):
             raw += ".docx"
-        encoded = raw.encode("utf-8")
-        if len(encoded) <= 180:
+        if len(raw.encode("utf-8")) <= 180:
             return raw
         stem = Path(raw).stem
         suffix = ".docx"
@@ -249,15 +342,26 @@ class DocassembleGateway(Star):
             out += char
         return f"{out or 'contract'}{suffix}"
 
-    def _resolve_interview(self, requested: str) -> tuple[str | None, str | None]:
-        interview = str(requested or self.settings.default_interview).strip()
+    def _resolve_interview(
+        self,
+        requested: str,
+    ) -> tuple[str | None, str | None]:
+        interview = str(
+            requested or self.settings.default_interview
+        ).strip()
         if not interview:
             return None, "未指定 Docassemble interview，且 default_interview 为空。"
         if interview not in self.settings.allowed_interviews:
-            return None, "请求的 Docassemble interview 不在 allowed_interviews 中。"
+            return (
+                None,
+                "请求的 Docassemble interview 不在 allowed_interviews 中。",
+            )
         return interview, None
 
-    def _descriptor(self, response: dict[str, Any]) -> dict[str, Any] | None:
+    def _descriptor(
+        self,
+        response: dict[str, Any],
+    ) -> dict[str, Any] | None:
         value: Any = response
         for part in self.settings.result_descriptor_key.split("."):
             if not isinstance(value, dict):
@@ -266,14 +370,18 @@ class DocassembleGateway(Star):
         return value if isinstance(value, dict) else None
 
     async def _audit(self, payload: dict[str, Any]) -> None:
-        record = {
-            "timestamp": int(time.time()),
-            **payload,
-        }
+        record = {"timestamp": int(time.time()), **payload}
         async with self._audit_lock:
             self._audit_path.parent.mkdir(parents=True, exist_ok=True)
             with self._audit_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                handle.write(
+                    json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    + "\n"
+                )
 
     @filter.llm_tool(name="docassemble_gateway_status")
     async def docassemble_gateway_status(
@@ -284,7 +392,8 @@ class DocassembleGateway(Star):
         """检查 Docassemble Gateway 配置和 allowlist interview 可用性。
 
         Args:
-            refresh_interviews(boolean): 为 true 时逐个调用 /api/interview_data 核对 allowlist。
+            refresh_interviews(boolean): 为 true 时逐个调用
+                /api/interview_data 核对 allowlist。
         """
         del event
         error = self.settings.validation_error()
@@ -301,11 +410,15 @@ class DocassembleGateway(Star):
             validated: list[str] = []
             invalid: dict[str, str] = {}
             for interview in self.settings.allowed_interviews:
-                ok, inspect_error = await self.client.inspect_interview(interview)
+                ok, inspect_error = await self.client.inspect_interview(
+                    interview
+                )
                 if ok:
                     validated.append(interview)
                 else:
-                    invalid[interview] = inspect_error or "interview validation failed"
+                    invalid[interview] = (
+                        inspect_error or "interview validation failed"
+                    )
             payload["validated_interviews"] = validated
             payload["invalid_interviews"] = invalid
         return self._json(**payload)
@@ -356,7 +469,11 @@ class DocassembleGateway(Star):
         session_data, start_error = await self.client.start_session(target)
         if start_error or session_data is None:
             await self._audit(
-                {"status": "failed", "stage": "session_start", "interview": target}
+                {
+                    "status": "failed",
+                    "stage": "session_start",
+                    "interview": target,
+                }
             )
             return self._json(
                 success=False,
@@ -377,7 +494,11 @@ class DocassembleGateway(Star):
             )
             if generation_error or response is None:
                 await self._audit(
-                    {"status": "failed", "stage": "generation", "interview": target}
+                    {
+                        "status": "failed",
+                        "stage": "generation",
+                        "interview": target,
+                    }
                 )
                 return self._json(
                     success=False,
@@ -387,7 +508,9 @@ class DocassembleGateway(Star):
                     retry_safe=False,
                 )
 
-            question_type = str(response.get("questionType") or "").strip()
+            question_type = str(
+                response.get("questionType") or ""
+            ).strip()
             if question_type == "undefined_variable":
                 missing = str(response.get("variable") or "").strip()
                 await self._audit(
@@ -409,7 +532,11 @@ class DocassembleGateway(Star):
             descriptor = self._descriptor(response)
             if descriptor is None:
                 await self._audit(
-                    {"status": "blocked", "stage": "result_contract", "interview": target}
+                    {
+                        "status": "blocked",
+                        "stage": "result_contract",
+                        "interview": target,
+                    }
                 )
                 return self._json(
                     success=False,
@@ -429,20 +556,30 @@ class DocassembleGateway(Star):
                 file_number = int(file_number)
             except (TypeError, ValueError):
                 file_number = 0
-            extension = str(descriptor.get("extension") or "docx").lower().lstrip(".")
+            extension = str(
+                descriptor.get("extension") or "docx"
+            ).lower().lstrip(".")
             if file_number <= 0 or extension != "docx":
                 return self._json(
                     success=False,
                     status="failed",
                     failure_stage="result_contract",
-                    error="Docassemble 文件描述缺少有效 DOCX file_number。",
+                    error=(
+                        "Docassemble 文件描述缺少有效 DOCX file_number。"
+                    ),
                     retry_safe=True,
                 )
 
-            data, download_error = await self.client.download_docx(file_number)
+            data, download_error = await self.client.download_docx(
+                file_number
+            )
             if download_error or data is None:
                 await self._audit(
-                    {"status": "failed", "stage": "download", "interview": target}
+                    {
+                        "status": "failed",
+                        "stage": "download",
+                        "interview": target,
+                    }
                 )
                 return self._json(
                     success=False,
@@ -452,9 +589,14 @@ class DocassembleGateway(Star):
                     retry_safe=True,
                 )
 
-            requested_name = output_filename or str(descriptor.get("filename") or "contract.docx")
+            requested_name = output_filename or str(
+                descriptor.get("filename") or "contract.docx"
+            )
             safe_name = self._safe_filename(requested_name)
-            destination = self.settings.output_dir / f"{uuid.uuid4().hex[:12]}_{safe_name}"
+            destination = (
+                self.settings.output_dir
+                / f"{uuid.uuid4().hex[:12]}_{safe_name}"
+            )
             destination.write_bytes(data)
             await self._audit(
                 {
@@ -478,4 +620,8 @@ class DocassembleGateway(Star):
             )
         finally:
             if self.settings.cleanup_sessions and session:
-                await self.client.delete_session(target, session, secret)
+                await self.client.delete_session(
+                    target,
+                    session,
+                    secret,
+                )
