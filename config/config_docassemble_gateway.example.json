@@ -1,0 +1,14 @@
+{
+  "base_url": "http://docassemble",
+  "api_key": "REPLACE_WITH_DOCASSEMBLE_API_KEY",
+  "allowed_interviews": [
+    "docassemble.contractbot:data/questions/technical_service_contract.yml"
+  ],
+  "default_interview": "docassemble.contractbot:data/questions/technical_service_contract.yml",
+  "result_descriptor_key": "contractbot_document",
+  "output_dir": "data/plugins_data/astrbot_plugin_docassemble_gateway/output",
+  "timeout_seconds": 90,
+  "max_file_bytes": 31457280,
+  "verify_tls": true,
+  "cleanup_sessions": true
+}
