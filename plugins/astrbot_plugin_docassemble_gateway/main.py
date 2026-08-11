@@ -195,9 +195,8 @@ class DocassembleClient:
         return data, None
 
     async def delete_session(self, interview: str, session: str, secret: str) -> None:
+        del secret
         params: dict[str, str] = {"i": interview, "session": session}
-        if secret:
-            params["secret"] = secret
         try:
             async with self._client() as client:
                 await client.delete("/api/session", params=params)
