@@ -101,23 +101,26 @@ class DocassembleClient:
         )
         return text[:1200] or f"HTTP {response.status_code}"
 
-    async def list_interviews(self) -> tuple[list[dict[str, Any]] | None, str | None]:
+    async def inspect_interview(self, interview: str) -> tuple[bool, str | None]:
         try:
             async with self._client() as client:
-                response = await client.get("/api/list")
+                response = await client.get(
+                    "/api/interview_data",
+                    params={"i": interview},
+                )
         except httpx.TimeoutException:
-            return None, "连接 Docassemble /api/list 超时。"
+            return False, "连接 Docassemble /api/interview_data 超时。"
         except httpx.RequestError as exc:
-            return None, f"连接 Docassemble 失败：{str(exc)[:500]}"
+            return False, f"连接 Docassemble 失败：{str(exc)[:500]}"
         if response.status_code != 200:
-            return None, self._safe_error(response)
+            return False, self._safe_error(response)
         try:
             body = response.json()
         except ValueError:
-            return None, "Docassemble /api/list 未返回 JSON。"
-        if not isinstance(body, list):
-            return None, "Docassemble /api/list 返回结构异常。"
-        return [item for item in body if isinstance(item, dict)], None
+            return False, "Docassemble /api/interview_data 未返回 JSON。"
+        if not isinstance(body, dict) or "names" not in body:
+            return False, "Docassemble /api/interview_data 返回结构异常。"
+        return True, None
 
     async def start_session(self, interview: str) -> tuple[dict[str, Any] | None, str | None]:
         try:
@@ -151,7 +154,6 @@ class DocassembleClient:
             "i": interview,
             "session": session,
             "variables": variables,
-            "raw": 0,
         }
         if secret:
             payload["secret"] = secret
@@ -283,7 +285,7 @@ class DocassembleGateway(Star):
         """检查 Docassemble Gateway 配置和 allowlist interview 可用性。
 
         Args:
-            refresh_interviews(boolean): 为 true 时调用 Docassemble /api/list 核对 allowlist。
+            refresh_interviews(boolean): 为 true 时逐个调用 /api/interview_data 核对 allowlist。
         """
         del event
         error = self.settings.validation_error()
@@ -297,24 +299,16 @@ class DocassembleGateway(Star):
             "api_key_configured": bool(self.settings.api_key),
         }
         if refresh_interviews and error is None:
-            interviews, list_error = await self.client.list_interviews()
-            payload["discovery_error"] = list_error
-            if interviews is not None:
-                advertised = {
-                    str(item.get("filename") or "")
-                    for item in interviews
-                    if item.get("filename")
-                }
-                payload["advertised_allowed_interviews"] = [
-                    interview
-                    for interview in self.settings.allowed_interviews
-                    if interview in advertised
-                ]
-                payload["missing_allowed_interviews"] = [
-                    interview
-                    for interview in self.settings.allowed_interviews
-                    if interview not in advertised
-                ]
+            validated: list[str] = []
+            invalid: dict[str, str] = {}
+            for interview in self.settings.allowed_interviews:
+                ok, inspect_error = await self.client.inspect_interview(interview)
+                if ok:
+                    validated.append(interview)
+                else:
+                    invalid[interview] = inspect_error or "interview validation failed"
+            payload["validated_interviews"] = validated
+            payload["invalid_interviews"] = invalid
         return self._json(**payload)
 
     @filter.llm_tool(name="docassemble_generate_document")
