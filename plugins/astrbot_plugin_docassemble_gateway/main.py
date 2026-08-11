@@ -231,6 +231,7 @@ class DocassembleClient:
 class DocassembleGateway(Star):
     """Allowlisted Docassemble API gateway for deterministic DOCX assembly."""
 
+    BUILDER_PROMPT_MARKER = "<contract_docassemble_builder_policy>"
     BUILDER_ALLOWED_TOOLS = {
         "list_documents",
         "get_document_text",
@@ -287,12 +288,19 @@ class DocassembleGateway(Star):
         req = self._resolve_provider_request(hook_args, hook_kwargs)
         if req is None:
             return
+        system_prompt = str(getattr(req, "system_prompt", "") or "")
+        if self.BUILDER_PROMPT_MARKER not in system_prompt:
+            return
         tool_set = getattr(req, "func_tool", None)
         tools = getattr(tool_set, "tools", None)
         if not isinstance(tools, list):
             return
         before = [str(getattr(tool, "name", "")) for tool in tools]
         if "docassemble_generate_document" not in before:
+            logger.error(
+                "Docassemble gateway: Builder request is missing "
+                "docassemble_generate_document; refusing to modify unrelated tools."
+            )
             return
         tool_set.tools = [
             tool
