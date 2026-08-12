@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 import astrbot.api.message_components as Comp
 
@@ -19,6 +19,13 @@ UPLOAD_MARKERS = {
     "processing": "[CONTRACT_UPLOAD:PROCESSING]",
     "complete": "[CONTRACT_UPLOAD:COMPLETE]",
     "failed": "[CONTRACT_UPLOAD:FAILED]",
+}
+
+READ_MARKERS = {
+    "ready": "[CONTRACT_READ:READY]",
+    "partial": "[CONTRACT_READ:PARTIAL]",
+    "pending": "[CONTRACT_READ:PENDING]",
+    "failed": "[CONTRACT_READ:FAILED]",
 }
 
 BLOCKED_MISSING_DATE_TEXT = (
@@ -39,7 +46,7 @@ BLOCKED_MISSING_IDENTITY_TEXT = (
 
 
 class WecomFinalResultGuard(Star):
-    """Collapse output into one WeCom-safe customer result."""
+    """Normalize contract results and split long WeCom text responses."""
 
     def __init__(
         self,
@@ -48,7 +55,16 @@ class WecomFinalResultGuard(Star):
     ):
         super().__init__(context, config)
         config = config or {}
-        self.max_text_bytes = int(config.get("max_text_bytes", 1800))
+        self.max_text_bytes = max(512, int(config.get("max_text_bytes", 1800)))
+        self.enable_text_segmentation = bool(
+            config.get("enable_text_segmentation", True)
+        )
+        self.max_text_segments = max(
+            2, int(config.get("max_text_segments", 12))
+        )
+        self.segment_title = str(
+            config.get("segment_title", "合同分析")
+        ).strip() or "合同分析"
         self.max_non_text_components = int(
             config.get("max_non_text_components", 1)
         )
@@ -116,7 +132,7 @@ class WecomFinalResultGuard(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "WeCom final result guard 0.3.4 initialized: instance_id=%s",
+            "WeCom final result guard 0.3.5 initialized: instance_id=%s",
             id(self),
         )
 
@@ -126,6 +142,10 @@ class WecomFinalResultGuard(Star):
             return event.get_platform_name() == "wecom"
         except Exception:
             return False
+
+    @staticmethod
+    def _utf8_size(text: str) -> int:
+        return len((text or "").encode("utf-8"))
 
     @staticmethod
     def _truncate_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
@@ -140,6 +160,61 @@ class WecomFinalResultGuard(Star):
             chars.append(char)
             size += char_size
         return "".join(chars), truncated
+
+    @classmethod
+    def _hard_split_utf8(cls, text: str, max_bytes: int) -> list[str]:
+        remaining = (text or "").strip()
+        chunks: list[str] = []
+        while remaining:
+            chunk, truncated = cls._truncate_utf8(remaining, max_bytes)
+            if not chunk:
+                chunk = remaining[0]
+            chunks.append(chunk.strip())
+            if not truncated or len(chunk) >= len(remaining):
+                break
+            remaining = remaining[len(chunk) :].lstrip()
+        return [chunk for chunk in chunks if chunk]
+
+    @classmethod
+    def _split_utf8(cls, text: str, max_bytes: int) -> list[str]:
+        value = (text or "").strip()
+        if not value:
+            return []
+        if cls._utf8_size(value) <= max_bytes:
+            return [value]
+        paragraphs = [part.strip() for part in re.split(r"\n{2,}", value) if part.strip()]
+        chunks: list[str] = []
+        current = ""
+        for paragraph in paragraphs:
+            candidate = paragraph if not current else f"{current}\n\n{paragraph}"
+            if cls._utf8_size(candidate) <= max_bytes:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            if cls._utf8_size(paragraph) <= max_bytes:
+                current = paragraph
+                continue
+            lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+            line_buffer = ""
+            for line in lines or [paragraph]:
+                line_candidate = line if not line_buffer else f"{line_buffer}\n{line}"
+                if cls._utf8_size(line_candidate) <= max_bytes:
+                    line_buffer = line_candidate
+                    continue
+                if line_buffer:
+                    chunks.append(line_buffer)
+                    line_buffer = ""
+                if cls._utf8_size(line) <= max_bytes:
+                    line_buffer = line
+                else:
+                    chunks.extend(cls._hard_split_utf8(line, max_bytes))
+            if line_buffer:
+                current = line_buffer
+        if current:
+            chunks.append(current)
+        return [chunk for chunk in chunks if chunk]
 
     @staticmethod
     def _upload_operation(event: AstrMessageEvent) -> bool:
@@ -157,7 +232,6 @@ class WecomFinalResultGuard(Star):
         for status, marker in UPLOAD_MARKERS.items():
             if marker in value:
                 return status
-
         manual_review_signals = (
             '"status": "manual_review_required"',
             '"manual_review_required": true',
@@ -169,12 +243,8 @@ class WecomFinalResultGuard(Star):
             "需要人工核查",
             "请勿重复上传",
         )
-        if any(
-            signal in lowered or signal in value
-            for signal in manual_review_signals
-        ):
+        if any(signal in lowered or signal in value for signal in manual_review_signals):
             return "manual_review"
-
         duplicate_signals = (
             "confirmation_required",
             "duplicate_confirmation_required",
@@ -184,12 +254,8 @@ class WecomFinalResultGuard(Star):
             "这份合同已经上传过",
             "这份合同已经存在",
         )
-        if any(
-            signal in lowered or signal in value
-            for signal in duplicate_signals
-        ):
+        if any(signal in lowered or signal in value for signal in duplicate_signals):
             return "duplicate"
-
         blocked_read_signals = (
             '"status": "unknown"',
             "mcp_document_discovery",
@@ -198,16 +264,10 @@ class WecomFinalResultGuard(Star):
             "opencontracts mcp",
             "无法确认合同系统",
         )
-        if any(
-            signal in lowered or signal in value
-            for signal in blocked_read_signals
-        ):
+        if any(signal in lowered or signal in value for signal in blocked_read_signals):
             return "blocked"
-
-        # 模型偶尔会漏掉显式标记，但明确要求补充合同身份字段；此时仍保留任务。
         if cls._blocked_reason(value) != "system":
             return "blocked"
-
         accepted_count = lowered.count("accepted") + value.count("成功接收")
         processing_signals = (
             "processing",
@@ -218,18 +278,15 @@ class WecomFinalResultGuard(Star):
             "检索仍在处理",
         )
         if accepted_count >= 1 and any(
-            signal in lowered or signal in value
-            for signal in processing_signals
+            signal in lowered or signal in value for signal in processing_signals
         ):
             return "processing"
-
         if (
             ("处理完成" in value or "检索验证完成" in value)
             and "processing" not in lowered
             and "尚未完成" not in value
         ):
             return "complete"
-
         failed_signals = (
             '"status": "failed"',
             "上传失败",
@@ -237,12 +294,8 @@ class WecomFinalResultGuard(Star):
             "request_validation",
             "import_endpoint_missing",
         )
-        if any(
-            signal in lowered or signal in value
-            for signal in failed_signals
-        ):
+        if any(signal in lowered or signal in value for signal in failed_signals):
             return "failed"
-
         blocked_signals = (
             '"status": "blocked"',
             "not_started",
@@ -251,18 +304,12 @@ class WecomFinalResultGuard(Star):
             "上传被阻止",
             "document_identity",
         )
-        if any(
-            signal in lowered or signal in value
-            for signal in blocked_signals
-        ):
+        if any(signal in lowered or signal in value for signal in blocked_signals):
             return "blocked"
         return None
 
     @staticmethod
-    def _term_missing(
-        text: str,
-        terms: tuple[str, ...],
-    ) -> bool:
+    def _term_missing(text: str, terms: tuple[str, ...]) -> bool:
         lowered = (text or "").lower()
         missing = (
             "无法提取",
@@ -297,22 +344,11 @@ class WecomFinalResultGuard(Star):
     def _blocked_reason(cls, text: str) -> str:
         date_missing = cls._term_missing(
             text,
-            (
-                "合同日期",
-                "签订日期",
-                "签署日期",
-                "生效日期",
-                "contract_date",
-            ),
+            ("合同日期", "签订日期", "签署日期", "生效日期", "contract_date"),
         )
         title_missing = cls._term_missing(
             text,
-            (
-                "合同正式标题",
-                "正式标题",
-                "合同标题",
-                "contract_title",
-            ),
+            ("合同正式标题", "正式标题", "合同标题", "contract_title"),
         )
         if date_missing and title_missing:
             return "missing_identity"
@@ -342,6 +378,21 @@ class WecomFinalResultGuard(Star):
             return self.upload_blocked_text
         return self.upload_failed_text
 
+    @staticmethod
+    def _read_status(text: str) -> str | None:
+        value = text or ""
+        for status, marker in READ_MARKERS.items():
+            if marker in value:
+                return status
+        return None
+
+    @staticmethod
+    def _strip_read_markers(text: str) -> str:
+        value = text or ""
+        for marker in READ_MARKERS.values():
+            value = value.replace(marker, "")
+        return value.strip()
+
     def _consume_cancelled_task(self, task_id: str | None) -> bool:
         if not task_id or not self.cancelled_tasks_path.exists():
             return False
@@ -367,10 +418,55 @@ class WecomFinalResultGuard(Star):
             temporary.replace(self.cancelled_tasks_path)
             return found
         except Exception as exc:
-            logger.warning(
-                "Cancelled contract task registry read failed: %s", exc
-            )
+            logger.warning("Cancelled contract task registry read failed: %s", exc)
             return False
+
+    def _segment_prefix(self, index: int, total: int) -> str:
+        return f"{self.segment_title}（{index}/{total}）\n\n"
+
+    async def _send_segmented_text(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+    ) -> str:
+        if not self.enable_text_segmentation:
+            truncated, _ = self._truncate_utf8(text, self.max_text_bytes)
+            return truncated + "\n\n（结果超过单条消息限制，请缩小分析范围后重试。）"
+        payload_limit = max(256, self.max_text_bytes - 96)
+        segments = self._split_utf8(text, payload_limit)
+        if len(segments) <= 1:
+            return segments[0] if segments else ""
+        limited = False
+        if len(segments) > self.max_text_segments:
+            segments = segments[: self.max_text_segments]
+            limited = True
+            tail = "\n\n（结果已达到消息分段上限；未发送部分请缩小分析范围后重新查询。）"
+            allowed = max(64, payload_limit - self._utf8_size(tail))
+            segments[-1], _ = self._truncate_utf8(segments[-1], allowed)
+            segments[-1] += tail
+        total = len(segments)
+        sent = 0
+        for index, segment in enumerate(segments[:-1], start=1):
+            message = self._segment_prefix(index, total) + segment
+            try:
+                await event.send(MessageChain([Comp.Plain(message)]))
+                sent += 1
+            except Exception as exc:
+                logger.exception(
+                    "WeCom final result guard: segment send failed index=%s: %s",
+                    index,
+                    exc,
+                )
+                fallback = segment + "\n\n（后续分段发送失败，请稍后缩小范围重试。）"
+                fallback, _ = self._truncate_utf8(fallback, self.max_text_bytes)
+                return fallback
+        logger.info(
+            "WeCom final result guard: sent %d intermediate segments, total=%d limited=%s.",
+            sent,
+            total,
+            limited,
+        )
+        return self._segment_prefix(total, total) + segments[-1]
 
     @filter.on_decorating_result(priority=-999)
     async def normalize_result(
@@ -381,12 +477,10 @@ class WecomFinalResultGuard(Star):
     ):
         if self is None or not self._is_wecom(event):
             return
-
         result = event.get_result()
         chain = getattr(result, "chain", None) if result else None
         if not isinstance(chain, list):
             return
-
         task_id = event.get_extra("contract_pending_task_id")
         if self._consume_cancelled_task(str(task_id or "")):
             result.chain = []
@@ -395,31 +489,21 @@ class WecomFinalResultGuard(Star):
                 task_id,
             )
             return
-
         plains = [
             component.text.strip()
             for component in chain
-            if (
-                isinstance(component, Comp.Plain)
-                and component.text
-                and component.text.strip()
-            )
+            if isinstance(component, Comp.Plain)
+            and component.text
+            and component.text.strip()
         ]
-        non_text = [
-            component
-            for component in chain
-            if not isinstance(component, Comp.Plain)
-        ]
-
+        non_text = [component for component in chain if not isinstance(component, Comp.Plain)]
         if not plains:
             if self._upload_operation(event):
                 result.chain = [Comp.Plain(self.upload_failed_text)]
                 logger.error(
-                    "WeCom final result guard: upload operation returned no text; "
-                    "inserted deterministic failure response."
+                    "WeCom final result guard: upload operation returned no text; inserted deterministic failure response."
                 )
             return
-
         raw_final_text = plains[-1]
         if self.customer_facing_upload_results and self._upload_operation(event):
             upload_status = self._classify_upload_result(raw_final_text)
@@ -439,31 +523,25 @@ class WecomFinalResultGuard(Star):
                     raw_final_text,
                 )
                 logger.info(
-                    "WeCom final result guard: normalized contract upload "
-                    "result for customer, status=%s blocked_reason=%s.",
+                    "WeCom final result guard: normalized contract upload result for customer, status=%s blocked_reason=%s.",
                     upload_status,
                     blocked_reason,
                 )
-
-        final_text, truncated = self._truncate_utf8(
-            raw_final_text, self.max_text_bytes
-        )
-        if truncated:
-            suffix = "\n\n（结果过长，已截断；详细结果应作为附件交付。）"
-            allowed = max(
-                1,
-                self.max_text_bytes - len(suffix.encode("utf-8")),
+        read_status = self._read_status(raw_final_text)
+        if read_status is not None:
+            event.set_extra("contract_read_status", read_status)
+            raw_final_text = self._strip_read_markers(raw_final_text)
+            logger.info(
+                "WeCom final result guard: observed contract read terminal status=%s.",
+                read_status,
             )
-            final_text, _ = self._truncate_utf8(raw_final_text, allowed)
-            final_text += suffix
-
+        final_text = await self._send_segmented_text(event, raw_final_text)
         result.chain = [
             Comp.Plain(final_text),
             *non_text[: self.max_non_text_components],
         ]
         if len(plains) > 1:
             logger.info(
-                "WeCom final result guard: removed %d intermediate Plain "
-                "components.",
+                "WeCom final result guard: removed %d intermediate Plain components.",
                 len(plains) - 1,
             )
