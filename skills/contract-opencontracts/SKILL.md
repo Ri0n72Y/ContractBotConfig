@@ -1,6 +1,6 @@
 ---
 name: contract-opencontracts
-description: 使用 OpenContracts 公开 MCP 执行目标 Corpus 的合同操作，并通过 WorkerKey 导入网关完成规范化文件上传和版本写入。
+description: 使用 OpenContracts 公开 MCP 执行目标 Corpus 的合同读取、分析和上传，并通过 WorkerKey 导入网关完成规范化文件写入。
 ---
 
 # OpenContracts 操作
@@ -10,7 +10,42 @@ OpenContracts Operator 使用两个能力面：
 - OpenContracts 公开 MCP `/mcp/`：按明确的 `corpus_slug` 执行文档发现、正文读取和语义检索；
 - OpenContracts Gateway：确定性合同身份规范化，以及使用 WorkerKey 向其绑定 Corpus 执行官方文档导入。
 
-只使用 AstrBot 已配置并注入的 MCP Tools。不得自行拼接 MCP 地址，不得调用 Shell、Python、通用 HTTP 或读取配置文件绕过标准工具链。
+只使用 AstrBot 已配置并注入的 MCP Tools。不得自行拼接 MCP 地址，不得调用 Shell、Grep、Python、通用 HTTP、读取配置文件、本地文件搜索或历史会话正文绕过标准工具链。
+
+## 合同库读取、对比和总体分析
+
+只读任务使用：
+
+```text
+list_documents
+get_document_text
+search_corpus
+```
+
+执行顺序：
+
+1. 调用 `list_documents` 确认目标文档和真实 `document_slug`；不得把日期、标题片段或猜测直接当作远端 slug。
+2. 对每份目标文档从 `char_offset=0` 调用 `get_document_text`，`max_chars=10000`。
+3. 返回 `next_offset` 时使用该值继续读取，直到 `next_offset=null`。offset 不前进或重复时返回失败。
+4. `page_count=0`、`total_chars=0`、`text=""` 或首段正文为空时，返回 `PENDING`，不得继续尝试不存在的后续分片。
+5. `search_corpus` 只用于正文读取后的补充检索或交叉核验；空检索、空标注不能替代正文读取。
+6. 多文档仅部分可读时，只分析已读取文档并明确未覆盖范围。
+
+首行状态：
+
+```text
+[CONTRACT_READ:READY]
+[CONTRACT_READ:PARTIAL]
+[CONTRACT_READ:PENDING]
+[CONTRACT_READ:FAILED]
+```
+
+- `READY`：所有目标正文完整读取；
+- `PARTIAL`：仅部分目标正文完整读取；
+- `PENDING`：文档存在，但 OpenContracts 尚未产出可读取正文；
+- `FAILED`：目标缺失、MCP 失败、结果不可核验或分片异常。
+
+任一 `CONTRACT_READ` 状态均为当前轮次终态。不得使用 Shell、Grep、本地文件、历史上下文或模型记忆补齐正文。收到 `must_not_execute=true` 时直接返回 `CONTRACT_READ:FAILED`，不得执行工具。
 
 ## 目标 Corpus
 
@@ -29,11 +64,11 @@ branch_task.corpus_slug
 
 三者应一致。上传流程直接把该值作为 `list_documents`、`get_document_text` 和 `search_corpus` 的 `corpus_slug`。
 
-目标 Corpus slug 缺失时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，不得调用 `list_public_corpuses` 猜测目标，也不得改用不存在的 corpus-scoped MCP 地址。
+只读规范化上下文使用 `targets.opencontracts` 和 `read_contract.corpus_slug`。目标缺失时返回 `CONTRACT_READ:FAILED`；上传任务则返回 `[CONTRACT_UPLOAD:BLOCKED]`。不得调用 `list_public_corpuses` 猜测目标，也不得改用不存在的 corpus-scoped MCP 地址。
 
 ## 合同身份契约
 
-任务必须包含：
+上传任务必须包含：
 
 ```text
 contract_identity.contract_date = 合同日期
@@ -78,7 +113,7 @@ get_document_text
 search_corpus
 ```
 
-其他分析场景可以按需使用：
+其他非上传场景可以按需使用：
 
 ```text
 list_public_corpuses
@@ -89,7 +124,7 @@ get_thread_messages
 create_thread_message
 ```
 
-`list_public_corpuses` 不参与上传目标选择。`create_thread_message` 需要经过认证的 MCP 用户上下文。
+`list_public_corpuses` 不参与上传目标选择。`create_thread_message` 需要经过认证的 MCP 用户上下文。正文读取为空时不得调用其他能力猜测正文内容。
 
 ## 上传流程
 
@@ -114,20 +149,23 @@ create_thread_message
 
 ## 禁止绕过
 
-以下工具或行为不得用于合同上传：
+以下工具或行为不得用于合同读取、分析或上传：
 
 ```text
 opencontracts_check_duplicate
 get_corpus_info
 Shell
+Grep
 Python
 通用 HTTP
 读取 Gateway 配置文件
 直接调用 MCP JSON-RPC
 探测其他 MCP URL
+本地文件搜索
+历史会话正文回填
 ```
 
-标准工具缺失或返回失败时，直接输出 `[CONTRACT_UPLOAD:BLOCKED]`。不要尝试修复运行环境。
+标准工具缺失或返回失败时，上传任务输出 `[CONTRACT_UPLOAD:BLOCKED]`；只读任务输出 `[CONTRACT_READ:FAILED]`。不要尝试修复运行环境。
 
 ## 写入结果
 
@@ -138,4 +176,4 @@ Python
 - `status=manual_review_required`：可能已写入或已经发生未确认版本写入，禁止自动重试；
 - `status=failed`：已确认没有提交的正式请求失败。
 
-本地 receipt 为追加式上传审计。它不能作为远端合同不存在的依据。
+本地 receipt 为追加式上传审计。它不能作为远端合同不存在或正文内容的依据。

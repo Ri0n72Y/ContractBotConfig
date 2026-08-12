@@ -10,5 +10,20 @@
     "description": "同一合同任务中每个子代理最多调用次数",
     "type": "int",
     "default": 1
+  },
+  "long_task_ack_enabled": {
+    "description": "合同库读取或总体分析委派前主动发送处理中提示",
+    "type": "bool",
+    "default": true
+  },
+  "long_task_ack_text": {
+    "description": "合同库长任务的即时客户提示",
+    "type": "string",
+    "default": "正在读取合同库中的相关合同并进行分析，内容较多，需要一些处理时间。完成后会继续在当前会话发送结果。"
+  },
+  "restrict_database_master_tools": {
+    "description": "合同库读取任务只向主人格暴露 OpenContracts Operator 委派工具",
+    "type": "bool",
+    "default": true
   }
 }

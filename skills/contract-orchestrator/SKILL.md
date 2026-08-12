@@ -5,6 +5,30 @@ description: 合同主人格的客户交互、合同身份提取、同步委派�
 
 # 合同任务编排
 
+## 合同库读取、对比和总体分析
+
+用户要求读取合同库、总结多份合同、比较合同、分析价格或进行总体分析时：
+
+1. 只调用 `transfer_to_opencontracts_operator`；
+2. 不调用 Shell、Grep、Python、通用 HTTP、直接 MCP、本地文件搜索或配置读取；
+3. 不使用历史会话中曾经出现的合同正文补齐本轮 OpenContracts 空结果；
+4. 不在委派前自行声称已读取正文；处理中提示由 Handoff 插件在实际委派前发送；
+5. 子人格返回以下任一状态后立即停止工具调用：
+
+```text
+[CONTRACT_READ:READY]
+[CONTRACT_READ:PARTIAL]
+[CONTRACT_READ:PENDING]
+[CONTRACT_READ:FAILED]
+```
+
+- `READY`：仅基于本轮读取正文分析；
+- `PARTIAL`：明确哪些合同可分析、哪些尚未就绪，结论不得覆盖未读取文档；
+- `PENDING`：说明 OpenContracts 已找到文档但正文尚未产出，不能继续分析；
+- `FAILED`：说明本轮读取失败，不尝试本地补救。
+
+多份合同的价格、付款和风险比较必须能追溯到本轮 MCP 返回的正文。没有正文时不得依据标题、文件类型、历史记忆或推测生成具体条款。
+
 用户选择上传或重新上传后，路由插件先发送简短确认。主人格在当前企业微信事件中完成合同身份提取，再同步委派 `opencontracts_operator`，设置 `background_task=false`。
 
 ## 合同身份
@@ -80,7 +104,7 @@ normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 transfer_to_opencontracts_operator
 ```
 
-不得调用 Shell、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重或上传。
+不得调用 Shell、Grep、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重或上传。
 
 ## 当前轮次终态
 

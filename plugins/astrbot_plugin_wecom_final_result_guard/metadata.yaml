@@ -1,7 +1,7 @@
 name: astrbot_plugin_wecom_final_result_guard
 display_name: 企业微信最终结果保护
-desc: 将上传结果转换为企业微信客户回复，并在 BLOCKED 时保留当前暂存任务。
-version: 0.3.4
+desc: 归一上传与读取结果，并将长合同分析按多条企业微信文本发送。
+version: 0.3.5
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
