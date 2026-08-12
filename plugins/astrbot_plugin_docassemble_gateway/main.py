@@ -24,6 +24,8 @@ class DocassembleGateway(Star):
         "search_corpus",
         "docassemble_gateway_status",
         "docassemble_generate_document",
+        "contract_download_delivery_status",
+        "publish_contract_download",
     }
     MASTER_GENERATION_TOOL = "transfer_to_docassemble_builder"
     MASTER_GENERATION_PATTERNS = (
@@ -53,7 +55,7 @@ class DocassembleGateway(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Docassemble gateway 0.1.0 initialized: base_url=%s "
+            "Docassemble gateway 0.1.1 initialized: base_url=%s "
             "allowed_interviews=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
@@ -150,10 +152,16 @@ class DocassembleGateway(Star):
                     before,
                     after,
                 )
-            if "docassemble_generate_document" not in after:
+            required = {
+                "docassemble_generate_document",
+                "publish_contract_download",
+            }
+            missing = sorted(required - set(after))
+            if missing:
                 logger.error(
                     "Docassemble gateway: marked Builder request is missing "
-                    "docassemble_generate_document; fallback tools remain removed."
+                    "required tools=%s; fallback tools remain removed.",
+                    missing,
                 )
             return
 

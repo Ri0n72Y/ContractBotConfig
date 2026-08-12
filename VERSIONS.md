@@ -3,9 +3,10 @@
 ## 插件
 
 - astrbot_plugin_contract_doc_preconverter: 0.1.3
+- astrbot_plugin_contract_download_delivery: 0.1.0
 - astrbot_plugin_contract_file_router: 0.5.4
 - astrbot_plugin_contract_handoff_policy: 0.4.6
-- astrbot_plugin_docassemble_gateway: 0.1.0
+- astrbot_plugin_docassemble_gateway: 0.1.1
 - astrbot_plugin_opencontracts_gateway: 0.6.1
 - astrbot_plugin_wecom_final_result_guard: 0.3.5
 
@@ -13,20 +14,20 @@
 
 - contract-direct-analysis: 1.14
 - contract-opencontracts: 1.16.3
-- contract-docassemble: 1.15
+- contract-docassemble: 1.16
 - contract-result-verification: 1.16.4
 - contract-orchestrator: 1.15.4
 - contract-conversation-control: 1.15
 
 ## 人格
 
-- contract_docassemble_builder: 1.15
-- contract_master_orchestrator: 1.18
+- contract_docassemble_builder: 1.16
+- contract_master_orchestrator: 1.19
 - contract_opencontracts_operator: 1.17
 
 ## 当前状态
 
-Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力面，并为合同文书生成增加 Docassemble API Gateway：
+Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力面，并为合同文书生成增加 Docassemble API Gateway 和临时 HTTPS 下载交付：
 
 - AstrBot 配置 OpenContracts 公开 `/mcp/`，Operator 使用任务上下文中的 `targets.opencontracts` 作为目标 `corpus_slug`；
 - 公开 MCP 的 `list_documents`、`get_document_text` 和 `search_corpus` 提供合同发现、正文读取和语义检索；
@@ -42,10 +43,14 @@ Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力
 - Master 和 Operator 在合同库读取、分析和上传任务中禁止 Shell、Grep、Python、通用 HTTP、配置文件读取、直接 MCP JSON-RPC 和本地文件回退；
 - 传输异常、服务端 5xx、成功响应结构异常和未确认版本写入进入人工核查，禁止自动重试；
 - OpenContracts Gateway receipt 为追加式上传审计；
-- Docassemble Gateway 0.1.0 使用 `http://docassemble`、API Key 和 allowlist interview 调用官方 session/file API；
-- Docassemble Builder 1.15 只允许通过 Gateway 完成最终 DOCX 生成，不得使用 Shell、Python、`python-docx`、通用 HTTP 或本地脚本替代；
+- Docassemble Gateway 0.1.1 使用 `http://docassemble`、API Key 和 allowlist interview 调用官方 session/file API，并允许 Builder 在生成完成后调用受控下载交付工具；
+- Docassemble Builder 1.16 只允许通过 Gateway 完成最终 DOCX 生成，再通过 Contract Download Delivery 0.1.0 发布临时 HTTPS 下载链接；
+- Contract Download Delivery 只接受 `allowed_source_dirs` 下的有效 DOCX，复制到 `data/public_downloads/<48-hex-token>/`，默认 30 分钟过期并以非递归安全清理器删除；
+- 企业微信最终交付使用 `https://download.ri0n72y.top/contracts/<token>/<filename>`，Master 不向客户展示本地 `output_path`；
 - ContractBot 使用的 API-first Docassemble interview 完成时必须返回 `contractbot_document.file_number`，Gateway 再通过 `/api/file/<file_number>` 取回并校验 DOCX。
 
 Docassemble MVP 暂可使用管理员 API Key；独立服务账户作为安全债务在 Issue #7 跟踪。
 
-Docassemble API 直连 smoke 已验证：`docassemble.playground1:contractbot_api_smoke.yml` 可创建 session、生成并下载有效 DOCX；AstrBot Master → Builder → Gateway 的端到端 smoke 仍需在 WebUI 绑定后完成。
+Docassemble API 直连 smoke 已验证：`docassemble.playground1:contractbot_api_smoke.yml` 可创建 session、生成并下载有效 DOCX。
+
+临时下载基础设施已验证：AstrBot `/AstrBot/data` 为宿主机 bind mount；`download.ri0n72y.top` 通过 Cloudflare Tunnel 将 `^/contracts/.*` 转发到宿主机 `127.0.0.1:6198`，本地与公网下载 SHA-256 一致。正式 Master → Builder → Docassemble Gateway → Download Delivery 端到端 smoke 仍需在 WebUI 绑定新插件后完成。
