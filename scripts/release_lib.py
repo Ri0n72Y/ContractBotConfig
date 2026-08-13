@@ -185,14 +185,18 @@ def render_persona_markdown(
     tools: list[str],
     skills: list[str],
 ) -> str:
+    tool_lines = ["tools:", *[f"  - {name}" for name in tools]] if tools else ["tools: []"]
+    skill_lines = (
+        ["skills:", *[f"  - {name}" for name in skills]]
+        if skills
+        else ["skills: []"]
+    )
     lines = [
         "---",
         f"persona_id: {persona_id}",
         f'version: "{version}"',
-        "tools:",
-        *[f"  - {name}" for name in tools],
-        "skills:",
-        *[f"  - {name}" for name in skills],
+        *tool_lines,
+        *skill_lines,
         "---",
         "",
         f"# {persona_id}",
