@@ -1,6 +1,6 @@
 # ContractBotConfig
 
-面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成；OpenContracts 负责合同存储、解析和检索，Docassemble 负责文书生成，独立 Download Delivery 负责把生成的 DOCX 以短时 HTTPS 链接交付给用户。
+面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成；OpenContracts 负责合同存储、解析和检索，Docassemble 负责文书生成，Contract Generation Flow 负责生成确认与阶段提示，独立 Download Delivery 负责把生成的 DOCX 以短时 HTTPS 链接交付给用户。
 
 ## 当前能力
 
@@ -10,8 +10,9 @@
 4. 使用 OpenContracts 公开 MCP 执行查重、正文读取和语义检索；
 5. 使用 WorkerKey 调用官方导入 API 写入合同；
 6. 对重复、阻断、处理中、完成、人工核查和失败状态执行确定性会话控制；
-7. 基于合同库、批准模板和用户信息，通过 Docassemble allowlist interview 生成真实 DOCX；
-8. 将 Docassemble Gateway 输出的 DOCX 发布为带高熵 token 和 TTL 的临时 HTTPS 下载链接，供企业微信用户在浏览器下载。
+7. 文书生成先向用户发送即时回执、整理信息并等待明确确认，再进入正式生成；
+8. 正式生成前实时读取合同库参考正文，并通过 Docassemble allowlist interview 生成真实 DOCX；
+9. 将 Docassemble Gateway 输出的 DOCX 发布为带高熵 token 和 TTL 的临时 HTTPS 下载链接，供企业微信用户在浏览器下载。
 
 ## 系统架构
 
@@ -23,6 +24,7 @@ flowchart LR
     Router[Contract File Router]
     Master[Contract Master Persona]
     Handoff[Contract Handoff Policy]
+    GenFlow[Contract Generation Flow]
     Operator[OpenContracts Operator]
     MCP[OpenContracts Public MCP]
     UploadGateway[OpenContracts Upload Gateway]
@@ -41,7 +43,7 @@ flowchart LR
     Master --> Handoff --> Operator
     Operator --> MCP --> OC
     Operator --> UploadGateway --> API --> OC
-    Master --> Handoff --> Builder
+    Master --> GenFlow --> Builder
     Builder --> MCP
     Builder --> DAGateway --> DA
     DAGateway --> Builder
@@ -65,14 +67,7 @@ get_document_text
 search_corpus
 ```
 
-目标 Corpus slug 由 Router 放入：
-
-```text
-targets.opencontracts
-branch_tasks.opencontracts_operator.corpus_slug
-```
-
-上传流程不使用 `list_public_corpuses` 猜测目标，也不调用不存在的 `get_corpus_info` 或旧的 `opencontracts_check_duplicate`。
+目标 Corpus slug 由任务上下文提供。上传流程不使用 `list_public_corpuses` 猜测目标，也不调用旧的 `opencontracts_check_duplicate`。
 
 写入使用官方端点：
 
@@ -83,6 +78,40 @@ Authorization: WorkerKey <token>
 
 写入目标由 WorkerKey 绑定。Gateway 不配置 Corpus ID，也不保存 MCP 读取凭证。
 
+## 文书生成确认流程
+
+新的合同生成请求不再直接进入 Builder。目标流程：
+
+```text
+用户提出生成请求
+→ Generation Flow 立即发送“已收到”
+→ Master 整理已知信息 / 缺失信息
+→ 发送确认清单
+→ 等待用户修改或回复“确认生成”
+→ 用户确认
+→ 提示开始读取合同库
+→ Builder 实时读取 OpenContracts 参考合同
+→ Docassemble 生成 DOCX
+→ Download Delivery 发布临时 HTTPS 链接
+→ Master 向用户交付下载链接
+```
+
+确认门由运行时插件确定性控制。首次待确认委派会清空 Builder ToolSet，不能依赖模型自行遵守 `must_not_execute`。
+
+正式生成时 Builder 必须同时具备完整 7 个工具：
+
+```text
+list_documents
+get_document_text
+search_corpus
+docassemble_gateway_status
+docassemble_generate_document
+contract_download_delivery_status
+publish_contract_download
+```
+
+缺少任一工具时正式生成直接 BLOCKED。正式客户合同还必须在本轮触发 `list_documents` 和 `get_document_text` 后才能进入 `docassemble_generate_document`。
+
 ## Docassemble 与临时下载交付
 
 AstrBot 与 Docassemble 共用 Docker `legal-network` 时，Docassemble Gateway 默认访问：
@@ -91,7 +120,7 @@ AstrBot 与 Docassemble 共用 Docker `legal-network` 时，Docassemble Gateway 
 http://docassemble
 ```
 
-生成和交付涉及四个受控 LLM Tool：
+生成和交付工具：
 
 ```text
 docassemble_gateway_status
@@ -100,15 +129,14 @@ contract_download_delivery_status
 publish_contract_download
 ```
 
-其中前两个由 Docassemble Gateway 提供，后两个由 Contract Download Delivery 提供。
-
 完整链路：
 
 ```text
 Docassemble Builder
+→ list_documents / get_document_text
 → docassemble_gateway_status
 → contract_download_delivery_status
-→ 选择 allowlist interview
+→ 选择正式 allowlist interview
 → docassemble_generate_document
 → GET /api/session/new
 → POST /api/session
@@ -140,20 +168,28 @@ ContractBot 使用的 API-first interview 完成时必须返回：
 
 `file_number` 必须来自 Docassemble 生成文件的 `DAFile.number`。Gateway 不接受模型自行生成的本地文件冒充 Docassemble 输出。
 
-仓库提供 `docs/docassemble/contractbot_api_smoke.yml` 作为 API → DOCX → `/api/file` 链路 smoke，不是生产合同模板。生产环境应使用真实 Docassemble package/interview，优先采用 `docx template file` 装配批准模板。
+仓库中的：
+
+```text
+docs/docassemble/contractbot_api_smoke.yml
+```
+
+只用于 API → DOCX → `/api/file` 链路 smoke。正式客户合同禁止使用文件名包含 `smoke` 的 interview，Gateway 会确定性阻断。
+
+仓库同时提供最小非 smoke 生成 interview 样例：
+
+```text
+docs/docassemble/contractbot_document_generation.yml
+```
+
+生产环境仍应优先使用经批准的真实 Docassemble package/interview 和模板。
 
 ### 临时下载安全边界
 
-Delivery Plugin 默认只允许发布：
+Delivery Plugin 默认只允许发布 Docassemble Gateway 的输出目录，并复制到：
 
 ```text
-data/plugins_data/astrbot_plugin_docassemble_gateway/output
-```
-
-发布目录固定为：
-
-```text
-data/public_downloads
+data/public_downloads/<48-hex-token>/<filename>.docx
 ```
 
 主要约束：
@@ -162,10 +198,10 @@ data/public_downloads
 - 拒绝符号链接和非 DOCX；
 - 校验 DOCX ZIP 必需结构和最大文件大小；
 - 发布后重新计算 SHA-256，必须与源文件一致；
-- token 使用 `secrets.token_hex(24)`，形成 48 位随机十六进制目录名；
+- token 使用 `secrets.token_hex(24)`；
 - 默认 TTL 1800 秒；
 - 长期审计不保存 token 和下载 URL；
-- 清理器不使用递归删除，只处理 `public_root` 直属且名称严格匹配 token 规则的目录；遇到异常子目录时拒绝删除。
+- 清理器不使用递归删除，只处理 `public_root` 直属且名称严格匹配 token 规则的目录。
 
 ### Builder WebUI 绑定
 
@@ -185,15 +221,7 @@ Tools:
 - publish_contract_download
 ```
 
-不得向 Builder 绑定用于生成或交付替代路径的能力：
-
-```text
-astrbot_execute_shell
-astrbot_execute_python
-python-docx
-通用 HTTP
-通用文件写入/编辑工具
-```
+不得向 Builder 绑定用于生成或交付替代路径的 Shell、Python、`python-docx`、通用 HTTP 或通用文件写入/编辑能力。
 
 只有 `docassemble_generate_document` 成功取得真实 DOCX，并且 `publish_contract_download` 成功返回 HTTPS `download_url`，Builder 才能输出 `[CONTRACT_DOCASSEMBLE:READY]`。Master 只向客户展示下载链接、文件名和有效期，不展示本地 `output_path`。
 
@@ -222,7 +250,7 @@ docs/deployment/contract-download-delivery.md
 
 下载服务端口只绑定 `127.0.0.1:6198`，公网入口只通过 Cloudflare Tunnel。
 
-## 合同身份
+## 合同身份与上传状态
 
 远端身份格式：
 
@@ -231,9 +259,7 @@ document_title = YYYY-MM-DD 合同标题
 normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 ```
 
-日期优先使用正文明确合同日期、签署日期或生效日期；正文日期字段为空时，可使用 Router 从原始文件名确定性提取的唯一日期。无法可靠取得身份字段时停止上传，不猜测。
-
-## 上传状态和文件生命周期
+上传状态：
 
 ```text
 [CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]
@@ -243,15 +269,6 @@ normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 [CONTRACT_UPLOAD:MANUAL_REVIEW]
 [CONTRACT_UPLOAD:FAILED]
 ```
-
-| 状态 | 写入含义 | 暂存处理 |
-|---|---|---|
-| `DUPLICATE_CONFIRMATION_REQUIRED` | 发现已有合同，等待客户决定 | 保留 |
-| `BLOCKED` | 尚未写入，身份、配置、MCP、文件或权限条件不足 | 保留 |
-| `PROCESSING` | 写入已接收，正文或检索未完成 | 流程结束 |
-| `COMPLETE` | 正文可读且已进入检索 | 流程结束 |
-| `MANUAL_REVIEW` | 可能已经写入，最终状态未知 | 流程结束，禁止重复上传 |
-| `FAILED` | 已确认没有发生提交的正式失败 | 流程结束 |
 
 Router 在 `BLOCKED` 后保留暂存文件和 pending 状态；客户补充缺失信息或系统修复后回复“继续”时复用原文件，回复“结束”或“取消”时才清理。
 
@@ -263,15 +280,16 @@ Router 在 `BLOCKED` 后保留暂存文件和 pending 状态；客户补充缺�
 astrbot_plugin_contract_doc_preconverter 0.1.3
 astrbot_plugin_contract_download_delivery 0.1.0
 astrbot_plugin_contract_file_router 0.5.4
+astrbot_plugin_contract_generation_flow 0.1.1
 astrbot_plugin_contract_handoff_policy 0.4.6
-astrbot_plugin_docassemble_gateway 0.1.1
+astrbot_plugin_docassemble_gateway 0.1.2
 astrbot_plugin_opencontracts_gateway 0.6.1
 astrbot_plugin_wecom_final_result_guard 0.3.5
-contract-docassemble 1.16
-contract-orchestrator 1.15.4
+contract-docassemble 1.17
+contract-orchestrator 1.16
 contract-result-verification 1.16.4
 contract_docassemble_builder 1.16
-contract_master_orchestrator 1.19
+contract_master_orchestrator 1.20
 contract_opencontracts_operator 1.17
 ```
 
@@ -279,15 +297,40 @@ contract_opencontracts_operator 1.17
 
 ### Plugins
 
-在 AstrBot WebUI 中安装构建后的插件 ZIP。DOC Preconverter 默认访问：
+在 AstrBot WebUI 中安装构建后的插件 ZIP。
+
+本轮生成链路重点组件：
 
 ```text
-http://gotenberg:3000/forms/libreoffice/convert
+astrbot_plugin_contract_generation_flow
+astrbot_plugin_docassemble_gateway
+astrbot_plugin_contract_download_delivery
 ```
 
-### Skills / Personas
+### Skills
 
-导入最新 Skill 和 Persona，并在 AstrBot WebUI 中单独绑定 Tools 和 Skills。Persona JSON 本身不自动携带 Tool/Skill 绑定。
+导入 `dist/skills/` 中构建后的 Skill ZIP，并在对应 Persona 中手动绑定。
+
+### Personas
+
+Persona 不再生成或导入 ZIP。构建后 `dist/personas/` 为每个人格输出一份 Markdown。管理员在 AstrBot WebUI 中手动创建或更新 Persona：
+
+1. 按 Markdown 文件头的 `persona_id` 和 `version` 确认目标人格；
+2. 把 `System Prompt` 代码块完整复制到 Persona；
+3. 按文件头 `tools` 列表手动绑定 Tools；
+4. 按文件头 `skills` 列表手动绑定 Skills。
+
+绑定源数据维护在：
+
+```text
+personas/bindings.json
+```
+
+详细规则见：
+
+```text
+docs/deployment/persona-manual-config.md
+```
 
 ### OpenContracts Gateway
 
@@ -301,12 +344,12 @@ import_path = /api/imports/documents/
 ```text
 base_url = http://docassemble
 api_key = <Docassemble API Key>
-allowed_interviews = [<完整 interview filename>]
-default_interview = <完整 interview filename>
+allowed_interviews = [<完整正式 interview filename>]
+default_interview = <完整正式 interview filename>
 result_descriptor_key = contractbot_document
 ```
 
-示例：`config/config_docassemble_gateway.example.json`
+正式环境不要把 smoke interview 设置为默认生产 interview。
 
 ### Contract Download Delivery
 
@@ -319,7 +362,66 @@ cleanup_interval_seconds = 60
 max_file_bytes = 31457280
 ```
 
-示例：`config/config_contract_download_delivery.example.json`
+## Persona 手动绑定
+
+### contract_master_orchestrator
+
+Tools：
+
+```text
+transfer_to_opencontracts_operator
+transfer_to_docassemble_builder
+```
+
+Skills：
+
+```text
+contract-orchestrator
+contract-direct-analysis
+contract-conversation-control
+contract-result-verification
+```
+
+### contract_opencontracts_operator
+
+Tools：
+
+```text
+list_documents
+get_document_text
+search_corpus
+opencontracts_gateway_status
+opencontracts_upload_document
+```
+
+Skills：
+
+```text
+contract-opencontracts
+contract-result-verification
+```
+
+### contract_docassemble_builder
+
+Tools：
+
+```text
+list_documents
+get_document_text
+search_corpus
+docassemble_gateway_status
+docassemble_generate_document
+contract_download_delivery_status
+publish_contract_download
+```
+
+Skills：
+
+```text
+contract-docassemble
+```
+
+下载交付工具只绑定给 Builder，不绑定给 Master。
 
 ## 工具边界
 
@@ -327,14 +429,15 @@ max_file_bytes = 31457280
 
 - Master 只读取当前合同并调用 `transfer_to_opencontracts_operator`；
 - Operator 只使用公开 MCP Tools、`opencontracts_gateway_status` 和 `opencontracts_upload_document`；
-- Master 和 Operator 不使用 Shell、Python、通用 HTTP、配置文件读取或直接 MCP JSON-RPC 绕过标准流程；
-- 任一 `[CONTRACT_UPLOAD:*]` 状态出现后，Master 停止当前轮次工具调用。
+- Master 和 Operator 不使用 Shell、Python、通用 HTTP、配置文件读取或直接 MCP JSON-RPC 绕过标准流程。
 
 文书生成期间：
 
-- Builder 可使用 OpenContracts 只读工具取得来源；
+- Master 只负责确认和 `transfer_to_docassemble_builder`；
+- Builder 使用 OpenContracts 只读工具取得本轮参考正文；
 - 最终 DOCX 只允许由 Docassemble Gateway 生成；
 - 临时公网链接只允许由 Contract Download Delivery 发布；
+- `contract_download_delivery_status` 和 `publish_contract_download` 只绑定给 `contract_docassemble_builder`；
 - Builder 不使用 Shell、Python、`python-docx`、通用 HTTP、本地脚本或任意文件写入/编辑作为后备方案。
 
 ## 构建发布包
@@ -348,18 +451,29 @@ python3 scripts/build_release.py --clean
 
 ```text
 dist/
-├── plugins/
-├── skills/
-├── personas/
+├── plugins/     # 插件 ZIP
+├── skills/      # Skill ZIP
+├── personas/    # 每个人格一份手动配置 Markdown
 └── MANIFEST.json
 ```
+
+Persona 示例：
+
+```text
+dist/personas/
+├── contract_master_orchestrator-1.20.md
+├── contract_opencontracts_operator-1.17.md
+└── contract_docassemble_builder-1.16.md
+```
+
+仓库中的 `personas/persona_*_v*.json` 继续作为版本化 Prompt 源文件，不直接作为部署产物。
 
 ## 工程结构
 
 ```text
 config/       示例配置
 docs/         架构、审计和部署说明
-personas/     Persona JSON
+personas/     Persona JSON 源文件与 bindings.json 手动绑定清单
 plugins/      AstrBot 插件
 scripts/      发布工具
 skills/       AstrBot Skills
