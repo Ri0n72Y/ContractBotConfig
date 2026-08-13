@@ -109,7 +109,7 @@ class DocassembleClient:
         try:
             async with self._client() as client:
                 response = await client.post("/api/session", json=payload)
-        except httpx.TimeoutException as exc:
+        except httpx.TimeoutException:
             return None, "Docassemble 生成请求超时；禁止自动重试。"
         except httpx.RequestError as exc:
             return (
