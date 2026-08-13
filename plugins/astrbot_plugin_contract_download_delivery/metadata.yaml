@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_download_delivery
 display_name: 合同临时下载交付
-desc: 将 Docassemble Gateway 生成且位于白名单目录中的 DOCX 复制到临时公网目录，生成高熵 HTTPS 下载链接并按 TTL 安全清理。
-version: 0.1.0
+desc: 将本轮 Docassemble Gateway 生成且位于白名单目录中的 DOCX 复制到临时公网目录；正式生成会校验本轮 output_path/output_filename 绑定，并按 TTL 安全清理。
+version: 0.1.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"

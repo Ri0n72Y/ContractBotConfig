@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -30,7 +31,7 @@ class ContractDownloadDelivery(Star):
         result = await asyncio.to_thread(self.publications.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract download delivery 0.1.0 initialized: configured=%s "
+            "Contract download delivery 0.1.1 initialized: configured=%s "
             "ttl_seconds=%d cleanup_removed=%d",
             self.settings.validation_error() is None,
             self.settings.ttl_seconds,
@@ -64,6 +65,52 @@ class ContractDownloadDelivery(Star):
             default=str,
         )
 
+    @staticmethod
+    def _canonical_path(value: str) -> Path | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return Path(text).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    @classmethod
+    def _matches_current_generation_output(
+        cls,
+        event: AstrMessageEvent,
+        source_path: str,
+        filename: str,
+    ) -> bool:
+        if not event.get_extra(
+            "contract_generation_gateway_output_verified", False
+        ):
+            return False
+
+        expected = event.get_extra(
+            "contract_generation_gateway_output",
+            {},
+        )
+        if not isinstance(expected, dict):
+            return False
+
+        expected_path = cls._canonical_path(
+            str(expected.get("output_path") or "")
+        )
+        actual_path = cls._canonical_path(source_path)
+        expected_filename = str(
+            expected.get("output_filename") or ""
+        ).strip()
+        actual_filename = str(filename or "").strip()
+
+        return bool(
+            expected_path is not None
+            and actual_path is not None
+            and actual_path == expected_path
+            and expected_filename
+            and actual_filename == expected_filename
+        )
+
     @filter.llm_tool(name="contract_download_delivery_status")
     async def contract_download_delivery_status(
         self,
@@ -92,16 +139,59 @@ class ContractDownloadDelivery(Star):
         source_path: str,
         filename: str = "",
     ) -> str:
-        """将已生成且位于白名单目录中的 DOCX 发布为临时 HTTPS 下载链接。
+        """将本轮已生成且位于白名单目录中的 DOCX 发布为临时 HTTPS 链接。
 
         Args:
-            source_path(string): Docassemble Gateway 返回的 output_path。
-            filename(string): 可选客户下载文件名；为空时使用源文件名。
+            source_path(string): Docassemble Gateway 本轮返回的 output_path。
+            filename(string): 必须使用同一次 Gateway 返回的 output_filename。
         """
-        del event
+        formal_generation = bool(
+            event.get_extra("contract_docassemble_generation_task", False)
+        )
+        if formal_generation:
+            if not event.get_extra(
+                "contract_generation_confirmation_approved", False
+            ):
+                return self._json(
+                    success=False,
+                    status="blocked",
+                    failure_stage="generation_confirmation",
+                    error="正式合同下载发布要求本轮生成已取得用户明确确认。",
+                    retry_safe=True,
+                )
+
+            if not self._matches_current_generation_output(
+                event,
+                source_path,
+                filename,
+            ):
+                return self._json(
+                    success=False,
+                    status="blocked",
+                    failure_stage="generation_output_binding",
+                    error=(
+                        "正式合同下载发布只能使用本轮 Docassemble Gateway "
+                        "刚成功生成的 output_path 和 output_filename。"
+                    ),
+                    retry_safe=True,
+                )
+
         result = await asyncio.to_thread(
             self.publications.publish,
             source_path=source_path,
             filename=filename,
         )
+
+        if formal_generation:
+            event.set_extra(
+                "contract_generation_download_publication_verified",
+                bool(
+                    result.get("success") is True
+                    and str(result.get("status") or "").lower() == "ready"
+                    and str(result.get("download_url") or "").startswith(
+                        "https://"
+                    )
+                ),
+            )
+
         return self._json(**result)
