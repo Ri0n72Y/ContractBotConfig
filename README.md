@@ -1,6 +1,6 @@
 # ContractBotConfig
 
-面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成；OpenContracts 负责合同存储、解析和检索，Docassemble 负责文书生成，Contract Generation Flow 负责生成确认与阶段提示，独立 Download Delivery 负责把生成的 DOCX 以短时 HTTPS 链接交付给用户。
+面向企业合同工作的 AstrBot 配置与扩展工程。系统通过企业微信接收合同文件，由主人格协调上传、问答、风险分析和文书生成；OpenContracts 负责合同存储、解析和检索，Docassemble 负责文书生成，Contract Generation Flow 负责生成确认、参考来源核验与阶段提示，独立 Download Delivery 负责把生成的 DOCX 以短时 HTTPS 链接交付给用户。
 
 ## 当前能力
 
@@ -11,7 +11,7 @@
 5. 使用 WorkerKey 调用官方导入 API 写入合同；
 6. 对重复、阻断、处理中、完成、人工核查和失败状态执行确定性会话控制；
 7. 文书生成先向用户发送即时回执、整理信息并等待明确确认，再进入正式生成；
-8. 正式生成前实时读取合同库参考正文，并通过 Docassemble allowlist interview 生成真实 DOCX；
+8. 正式生成前实时读取合同库参考正文，并对 `list_documents` / `get_document_text` 的真实返回结果执行运行时核验，再通过 Docassemble allowlist interview 生成真实 DOCX；
 9. 将 Docassemble Gateway 输出的 DOCX 发布为带高熵 token 和 TTL 的临时 HTTPS 下载链接，供企业微信用户在浏览器下载。
 
 ## 系统架构
@@ -91,6 +91,7 @@ Authorization: WorkerKey <token>
 → 用户确认
 → 提示开始读取合同库
 → Builder 实时读取 OpenContracts 参考合同
+→ Generation Flow 核验真实工具结果
 → Docassemble 生成 DOCX
 → Download Delivery 发布临时 HTTPS 链接
 → Master 向用户交付下载链接
@@ -110,7 +111,28 @@ contract_download_delivery_status
 publish_contract_download
 ```
 
-缺少任一工具时正式生成直接 BLOCKED。正式客户合同还必须在本轮触发 `list_documents` 和 `get_document_text` 后才能进入 `docassemble_generate_document`。
+缺少任一工具时正式生成直接 BLOCKED。
+
+正式客户合同不再以“调用过 `list_documents` / `get_document_text`”作为生成条件。Generation Flow 使用 AstrBot `on_llm_tool_respond` 检查实际结果：
+
+```text
+list_documents:
+- 无 error
+- total_count > 0
+- documents 非空
+- 至少一个 slug 非空
+
+get_document_text:
+- document_slug 必须来自本轮已核验的 list_documents
+- 返回 document_slug 与请求一致
+- char_offset = 0
+- total_chars > 0
+- text 非空
+```
+
+只有以上两段都通过，Docassemble Gateway 才允许正式生成。空合同库、OpenContracts error、`total_chars=0`、`text=""` 或读取未列出的 slug 都不能解锁生成。
+
+Generation Flow 的待确认方案默认保留 1800 秒，并每 60 秒主动清理过期状态。
 
 ## Docassemble 与临时下载交付
 
@@ -134,6 +156,7 @@ publish_contract_download
 ```text
 Docassemble Builder
 → list_documents / get_document_text
+→ Generation Flow 验证参考合同结果
 → docassemble_gateway_status
 → contract_download_delivery_status
 → 选择正式 allowlist interview
@@ -142,7 +165,7 @@ Docassemble Builder
 → POST /api/session
 → interview json_response(contractbot_document)
 → GET /api/file/<file_number>?extension=docx
-→ Gateway 校验并保存 DOCX
+→ Gateway 校验并短期保存 DOCX
 → publish_contract_download(output_path, output_filename)
 → data/public_downloads/<48-hex-token>/<filename>.docx
 → https://download.ri0n72y.top/contracts/<token>/<filename>
@@ -150,6 +173,15 @@ Docassemble Builder
 ```
 
 `api_key` 只保存在 Docassemble Gateway 插件配置中，不进入 Persona、Skill、LLM 上下文、日志或用户回复。MVP 暂允许使用管理员 API Key；独立服务账户由安全 Issue #7 跟踪。
+
+Gateway 的 `output_dir` 是短期生成源目录，不是长期合同归档。默认：
+
+```text
+output_retention_seconds = 86400
+output_cleanup_interval_seconds = 300
+```
+
+清理器只删除 `output_dir` 直属、文件名符合 Gateway 自身 `12位十六进制前缀_*.docx` 规则的过期普通文件，不递归删除未知目录或未知文件。
 
 ### Interview 返回契约
 
@@ -203,6 +235,13 @@ data/public_downloads/<48-hex-token>/<filename>.docx
 - 长期审计不保存 token 和下载 URL；
 - 清理器不使用递归删除，只处理 `public_root` 直属且名称严格匹配 token 规则的目录。
 
+Gateway 原始生成文件和公网副本使用不同生命周期：
+
+```text
+Gateway output_dir        默认 24 小时
+public_downloads          默认 30 分钟
+```
+
 ### Builder WebUI 绑定
 
 `contract_docassemble_builder` 应绑定：
@@ -223,7 +262,7 @@ Tools:
 
 不得向 Builder 绑定用于生成或交付替代路径的 Shell、Python、`python-docx`、通用 HTTP 或通用文件写入/编辑能力。
 
-只有 `docassemble_generate_document` 成功取得真实 DOCX，并且 `publish_contract_download` 成功返回 HTTPS `download_url`，Builder 才能输出 `[CONTRACT_DOCASSEMBLE:READY]`。Master 只向客户展示下载链接、文件名和有效期，不展示本地 `output_path`。
+只有 OpenContracts 参考正文通过运行时核验、`docassemble_generate_document` 成功取得真实 DOCX，并且 `publish_contract_download` 成功返回 HTTPS `download_url`，Builder 才能输出 `[CONTRACT_DOCASSEMBLE:READY]`。Master 只向客户展示下载链接、文件名和有效期，不展示本地 `output_path`。
 
 ## 下载基础设施
 
@@ -280,9 +319,9 @@ Router 在 `BLOCKED` 后保留暂存文件和 pending 状态；客户补充缺�
 astrbot_plugin_contract_doc_preconverter 0.1.3
 astrbot_plugin_contract_download_delivery 0.1.0
 astrbot_plugin_contract_file_router 0.5.4
-astrbot_plugin_contract_generation_flow 0.1.1
+astrbot_plugin_contract_generation_flow 0.1.2
 astrbot_plugin_contract_handoff_policy 0.4.6
-astrbot_plugin_docassemble_gateway 0.1.2
+astrbot_plugin_docassemble_gateway 0.1.3
 astrbot_plugin_opencontracts_gateway 0.6.1
 astrbot_plugin_wecom_final_result_guard 0.3.5
 contract-docassemble 1.17
@@ -339,6 +378,13 @@ auth_token = <OpenContracts WorkerKey>
 import_path = /api/imports/documents/
 ```
 
+### Contract Generation Flow
+
+```text
+confirmation_ttl_seconds = 1800
+cleanup_interval_seconds = 60
+```
+
 ### Docassemble Gateway
 
 ```text
@@ -347,6 +393,8 @@ api_key = <Docassemble API Key>
 allowed_interviews = [<完整正式 interview filename>]
 default_interview = <完整正式 interview filename>
 result_descriptor_key = contractbot_document
+output_retention_seconds = 86400
+output_cleanup_interval_seconds = 300
 ```
 
 正式环境不要把 smoke interview 设置为默认生产 interview。
@@ -435,6 +483,7 @@ contract-docassemble
 
 - Master 只负责确认和 `transfer_to_docassemble_builder`；
 - Builder 使用 OpenContracts 只读工具取得本轮参考正文；
+- Generation Flow 对 OpenContracts 真实工具结果进行核验，Gateway 只认 verified 状态；
 - 最终 DOCX 只允许由 Docassemble Gateway 生成；
 - 临时公网链接只允许由 Contract Download Delivery 发布；
 - `contract_download_delivery_status` 和 `publish_contract_download` 只绑定给 `contract_docassemble_builder`；
