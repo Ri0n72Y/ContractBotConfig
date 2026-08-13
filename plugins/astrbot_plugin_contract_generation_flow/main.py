@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import re
 import time
 from pathlib import Path
 from typing import Any
+
+from mcp.types import TextContent
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -20,13 +24,11 @@ except Exception:
 
 BUILDER_PROMPT_MARKER = "<contract_docassemble_builder_policy>"
 GENERATION_TOOL = "transfer_to_docassemble_builder"
+# search_corpus is useful but optional. Status tools are diagnostics, not runtime prerequisites.
 REQUIRED_BUILDER_TOOLS = {
     "list_documents",
     "get_document_text",
-    "search_corpus",
-    "docassemble_gateway_status",
     "docassemble_generate_document",
-    "contract_download_delivery_status",
     "publish_contract_download",
 }
 CONFIRM_ALIASES = {
@@ -50,7 +52,7 @@ CANCEL_ALIASES = {
 
 
 class ContractGenerationFlow(Star):
-    """Deterministic confirmation and progress UX for contract generation."""
+    """Confirmation, progress UX and one terminal delivery-consistency guard."""
 
     def __init__(
         self,
@@ -59,9 +61,11 @@ class ContractGenerationFlow(Star):
     ) -> None:
         super().__init__(context, config)
         config = config or {}
-        self.config = config
         self.confirmation_ttl_seconds = int(
             config.get("confirmation_ttl_seconds", 1800)
+        )
+        self.cleanup_interval_seconds = max(
+            15, int(config.get("cleanup_interval_seconds", 60))
         )
         self.ack_enabled = bool(config.get("generation_ack_enabled", True))
         self.ack_text = str(
@@ -80,7 +84,7 @@ class ContractGenerationFlow(Star):
         self.document_stage_text = str(
             config.get(
                 "document_stage_text",
-                "参考合同读取已进入生成阶段，正在通过 Docassemble 生成 DOCX。",
+                "参考合同正文已核验，正在通过 Docassemble 生成 DOCX。",
             )
         ).strip()
         self.delivery_stage_text = str(
@@ -110,13 +114,37 @@ class ContractGenerationFlow(Star):
         ).expanduser().resolve()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.pending = self._load_state()
+        self._cleanup_task: asyncio.Task | None = None
         self._cleanup_pending()
 
     async def initialize(self) -> None:
+        self._cleanup_pending()
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract generation flow 0.1.1 initialized: pending=%d",
+            "Contract generation flow 0.1.3 initialized: pending=%d "
+            "cleanup_interval_seconds=%d",
             len(self.pending),
+            self.cleanup_interval_seconds,
         )
+
+    async def terminate(self) -> None:
+        task = self._cleanup_task
+        self._cleanup_task = None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _cleanup_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.cleanup_interval_seconds)
+            try:
+                self._cleanup_pending()
+            except Exception as exc:
+                logger.warning(
+                    "Generation confirmation periodic cleanup failed: %s",
+                    type(exc).__name__,
+                )
 
     @staticmethod
     def _session_key(event: AstrMessageEvent) -> str:
@@ -159,6 +187,58 @@ class ContractGenerationFlow(Star):
                     tool_args = candidate
                     break
         return tool, tool_args
+
+    @staticmethod
+    def _resolve_tool_response(
+        hook_args: tuple[Any, ...],
+        hook_kwargs: dict[str, Any],
+    ) -> tuple[Any | None, Any | None]:
+        tool = hook_kwargs.get("tool")
+        tool_result = hook_kwargs.get("tool_result")
+        if tool is None:
+            for candidate in hook_args:
+                if hasattr(candidate, "name") and not isinstance(candidate, dict):
+                    tool = candidate
+                    break
+        if tool_result is None:
+            for candidate in hook_args:
+                if candidate is tool or isinstance(candidate, dict):
+                    continue
+                if hasattr(candidate, "content") or isinstance(candidate, str):
+                    tool_result = candidate
+                    break
+        return tool, tool_result
+
+    @staticmethod
+    def _tool_result_text(tool_result: Any) -> str:
+        if tool_result is None:
+            return ""
+        if isinstance(tool_result, str):
+            return tool_result
+        content = getattr(tool_result, "content", None)
+        if not isinstance(content, list):
+            return ""
+        return "\n".join(
+            str(
+                item.get("text")
+                if isinstance(item, dict)
+                else getattr(item, "text", "")
+            )
+            for item in content
+            if (
+                item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+            )
+        ).strip()
+
+    @staticmethod
+    def _replace_tool_result_text(tool_result: Any, text: str) -> bool:
+        if tool_result is None or not hasattr(tool_result, "content"):
+            return False
+        try:
+            tool_result.content = [TextContent(type="text", text=text)]
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _parse_input(value: Any) -> dict[str, Any]:
@@ -329,15 +409,14 @@ class ContractGenerationFlow(Star):
                     self._append_temp_instruction(
                         req,
                         "<contract_generation_tool_guard>\n"
-                        "Builder 的 WebUI 工具绑定不完整，禁止开始任何合同生成。"
+                        "Builder 的核心工具绑定不完整，禁止开始合同生成。"
                         f"缺少工具：{json.dumps(missing, ensure_ascii=False)}。"
                         "立即返回 [CONTRACT_DOCASSEMBLE:BLOCKED]，"
-                        "reason=builder_tool_binding_incomplete，并列出 missing_tools。"
-                        "不得调用 Docassemble、Shell、Python、HTTP 或本地文件工具补救。\n"
+                        "reason=builder_tool_binding_incomplete，并列出 missing_tools。\n"
                         "</contract_generation_tool_guard>",
                     )
                     logger.error(
-                        "Contract generation flow: Builder tools incomplete: %s",
+                        "Contract generation flow: Builder core tools incomplete: %s",
                         missing,
                     )
                     return
@@ -345,11 +424,12 @@ class ContractGenerationFlow(Star):
             self._append_temp_instruction(
                 req,
                 "<contract_generation_runtime_guard>\n"
-                "正式客户合同生成不得使用文件名包含 smoke 的 Docassemble interview；"
-                "Gateway 会再次确定性拒绝。"
-                "必须先实时使用 list_documents/get_document_text 读取本轮合同库参考正文，"
-                "不能把主人格转述或历史会话内容当作已核验来源。"
-                "只有 publish_contract_download 返回有效 HTTPS download_url 后才能返回 "
+                "正式客户合同必须先实时读取 OpenContracts 参考正文。"
+                "Docassemble Gateway 是唯一来源核验者，并会按 corpus_slug + document_slug "
+                "记录本轮已核验来源。"
+                "正常生成直接使用配置好的 default_interview；只有任务明确提供经批准的 "
+                "interview 时才显式传入。"
+                "只有 publish_contract_download 真正成功后才能返回 "
                 "[CONTRACT_DOCASSEMBLE:READY]。\n"
                 "</contract_generation_runtime_guard>",
             )
@@ -464,6 +544,8 @@ class ContractGenerationFlow(Star):
                 )
                 return
 
+            # One reset at the start of an approved generation is enough.
+            event.set_extra("contract_generation_download_publication_verified", False)
             await self._send_once(
                 event,
                 "contract_generation_start_sent",
@@ -478,24 +560,11 @@ class ContractGenerationFlow(Star):
         ):
             return
 
-        if tool_name == "list_documents":
-            event.set_extra("contract_generation_reference_list_requested", True)
-            return
-
-        if tool_name == "get_document_text":
-            event.set_extra("contract_generation_reference_text_requested", True)
-            return
-
         if tool_name == "docassemble_generate_document":
             if (
-                event.get_extra(
-                    "contract_generation_reference_list_requested", False
-                )
-                and event.get_extra(
-                    "contract_generation_reference_text_requested", False
-                )
+                event.get_extra("contract_gateway_reference_list_verified", False)
+                and event.get_extra("contract_gateway_reference_text_verified", False)
             ):
-                event.set_extra("contract_generation_docassemble_requested", True)
                 await self._send_once(
                     event,
                     "contract_generation_document_stage_sent",
@@ -504,9 +573,45 @@ class ContractGenerationFlow(Star):
             return
 
         if tool_name == "publish_contract_download":
-            if event.get_extra("contract_generation_docassemble_requested", False):
+            if event.get_extra("contract_generation_gateway_output_verified", False):
                 await self._send_once(
                     event,
                     "contract_generation_delivery_stage_sent",
                     self.delivery_stage_text,
                 )
+
+    @filter.on_llm_tool_respond(priority=900)
+    async def enforce_terminal_delivery_consistency(
+        self,
+        event: AstrMessageEvent,
+        *hook_args: Any,
+        **hook_kwargs: Any,
+    ) -> None:
+        """Reject only a false READY claim; do not add another generation flow."""
+        tool, tool_result = self._resolve_tool_response(hook_args, hook_kwargs)
+        if tool is None or str(getattr(tool, "name", "")) != GENERATION_TOOL:
+            return
+
+        builder_text = self._tool_result_text(tool_result)
+        if "[CONTRACT_DOCASSEMBLE:READY]" not in builder_text:
+            return
+        if event.get_extra(
+            "contract_generation_download_publication_verified", False
+        ):
+            return
+
+        replacement = (
+            "[CONTRACT_DOCASSEMBLE:FAILED]\n"
+            "reason=delivery_not_verified\n"
+            "message=Builder 声称生成完成，但本轮临时 HTTPS 发布没有成功记录；"
+            "不得向客户报告 READY。"
+        )
+        if self._replace_tool_result_text(tool_result, replacement):
+            logger.error(
+                "Contract generation flow: replaced unverified Builder READY result."
+            )
+        else:
+            logger.error(
+                "Contract generation flow: detected unverified Builder READY result "
+                "but could not replace tool result."
+            )

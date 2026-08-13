@@ -15,9 +15,9 @@
     "default": "信息已确认，我现在开始读取合同库中的参考合同并生成文档。"
   },
   "document_stage_text": {
-    "description": "本轮已触发参考合同读取后、Builder 调用 Docassemble 前发送的提示",
+    "description": "list_documents 与 get_document_text 结果已通过运行时核验后、Builder 调用 Docassemble 前发送的提示",
     "type": "string",
-    "default": "参考合同读取已进入生成阶段，正在通过 Docassemble 生成 DOCX。"
+    "default": "参考合同正文已核验，正在通过 Docassemble 生成 DOCX。"
   },
   "delivery_stage_text": {
     "description": "Builder 发布临时下载链接前发送的提示",
@@ -39,8 +39,13 @@
     "type": "int",
     "default": 1800
   },
+  "cleanup_interval_seconds": {
+    "description": "后台主动清理过期待确认方案的扫描间隔（秒）",
+    "type": "int",
+    "default": 60
+  },
   "state_path": {
-    "description": "生成确认状态文件；只短时保存待确认方案",
+    "description": "生成确认状态文件；仅短时保存待确认方案，并按 TTL 主动清理",
     "type": "string",
     "default": "data/plugins_data/astrbot_plugin_contract_generation_flow/pending_generation.json"
   }

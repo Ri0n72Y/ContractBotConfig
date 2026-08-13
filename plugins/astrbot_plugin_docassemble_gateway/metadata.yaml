@@ -1,9 +1,9 @@
 name: astrbot_plugin_docassemble_gateway
 display_name: Docassemble 文书生成网关
-desc: 通过 allowlist interview 和 Docassemble API 生成 DOCX，并将 Builder 工具边界扩展到受控的临时下载交付插件；正式生成会拒绝 smoke interview 和未先读取参考合同的请求。
-version: 0.1.2
+desc: 通过 allowlist interview 和 Docassemble API 生成 DOCX；正式生成要求用户确认、同一 Corpus 的已核验参考正文，并把下载交付绑定到本轮 Gateway 输出。
+version: 0.1.4
 author: local
 repo: ""
-astrbot_version: ">=4.23.1,<5"
+astrbot_version: ">=4.23.2,<5"
 support_platforms:
   - wecom

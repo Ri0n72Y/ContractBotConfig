@@ -10,5 +10,7 @@
   "timeout_seconds": 90,
   "max_file_bytes": 31457280,
   "verify_tls": true,
-  "cleanup_sessions": true
+  "cleanup_sessions": true,
+  "output_retention_seconds": 86400,
+  "output_cleanup_interval_seconds": 300
 }

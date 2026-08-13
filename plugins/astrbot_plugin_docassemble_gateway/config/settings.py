@@ -17,6 +17,8 @@ class GatewaySettings:
     max_file_bytes: int
     verify_tls: bool
     cleanup_sessions: bool
+    output_retention_seconds: int
+    output_cleanup_interval_seconds: int
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "GatewaySettings":
@@ -49,6 +51,14 @@ class GatewaySettings:
             ),
             verify_tls=bool(config.get("verify_tls", True)),
             cleanup_sessions=bool(config.get("cleanup_sessions", True)),
+            output_retention_seconds=max(
+                300,
+                int(config.get("output_retention_seconds", 86400)),
+            ),
+            output_cleanup_interval_seconds=max(
+                30,
+                int(config.get("output_cleanup_interval_seconds", 300)),
+            ),
         )
 
     def validation_error(self) -> str | None:

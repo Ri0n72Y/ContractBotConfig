@@ -90,22 +90,17 @@ cleanup_interval_seconds = 60
 max_file_bytes = 31457280
 ```
 
-为 `contract_docassemble_builder` 绑定：
-
-```text
-contract_download_delivery_status
-publish_contract_download
-```
-
-同时保留：
+`contract_docassemble_builder` 正常绑定 5 个运行工具：
 
 ```text
 list_documents
 get_document_text
 search_corpus
-docassemble_gateway_status
 docassemble_generate_document
+publish_contract_download
 ```
+
+`docassemble_gateway_status` 与 `contract_download_delivery_status` 仍由插件提供，但仅作为管理员排障工具，不绑定给 Builder，也不作为每次生成的 preflight。
 
 不得绑定 Shell、Python、python-docx、通用 HTTP 或任意文件写入工具作为后备生成/交付路径。
 
