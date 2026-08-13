@@ -1,39 +1,14 @@
 {
   "contract_master_orchestrator": {
-    "tools": [
-      "transfer_to_opencontracts_operator",
-      "transfer_to_docassemble_builder"
-    ],
-    "skills": [
-      "contract-orchestrator",
-      "contract-direct-analysis",
-      "contract-conversation-control",
-      "contract-result-verification"
-    ]
+    "tools": ["transfer_to_opencontracts_operator", "transfer_to_docassemble_builder"],
+    "skills": ["contract-direct-analysis", "contract-conversation-control", "contract-result-verification"]
   },
   "contract_opencontracts_operator": {
-    "tools": [
-      "list_documents",
-      "get_document_text",
-      "search_corpus",
-      "opencontracts_gateway_status",
-      "opencontracts_upload_document"
-    ],
-    "skills": [
-      "contract-opencontracts",
-      "contract-result-verification"
-    ]
+    "tools": ["list_documents", "get_document_text", "search_corpus", "opencontracts_gateway_status", "opencontracts_upload_document"],
+    "skills": ["contract-opencontracts", "contract-result-verification"]
   },
   "contract_docassemble_builder": {
-    "tools": [
-      "list_documents",
-      "get_document_text",
-      "search_corpus",
-      "docassemble_generate_document",
-      "publish_contract_download"
-    ],
-    "skills": [
-      "contract-docassemble"
-    ]
+    "tools": ["list_documents", "get_document_text", "search_corpus", "docassemble_generate_document", "publish_contract_download"],
+    "skills": []
   }
 }
