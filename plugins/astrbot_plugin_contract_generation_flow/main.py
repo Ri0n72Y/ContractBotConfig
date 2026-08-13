@@ -297,7 +297,13 @@ class ContractGenerationFlow(Star):
 
         if BUILDER_PROMPT_MARKER in system_prompt:
             prompt_text = str(getattr(req, "prompt", "") or "")
-            if (
+            confirmation_gate = (
+                event.get_extra("contract_generation_confirmation_gate_active", False)
+                and not event.get_extra(
+                    "contract_generation_confirmation_approved", False
+                )
+            )
+            if confirmation_gate or (
                 "generation_confirmation_required" in prompt_text
                 and "must_not_execute" in prompt_text
             ):
@@ -429,6 +435,10 @@ class ContractGenerationFlow(Star):
             )
             if not approved:
                 self._store_pending(event, original_input, parsed)
+                event.set_extra("contract_generation_pending", True)
+                event.set_extra(
+                    "contract_generation_confirmation_gate_active", True
+                )
                 confirmation_message = str(
                     parsed.get("confirmation_message")
                     or self.confirmation_fallback_text
