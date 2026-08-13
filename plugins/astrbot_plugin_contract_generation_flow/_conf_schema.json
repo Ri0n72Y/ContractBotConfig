@@ -15,9 +15,9 @@
     "default": "信息已确认，我现在开始读取合同库中的参考合同并生成文档。"
   },
   "document_stage_text": {
-    "description": "Builder 调用 Docassemble 生成 DOCX 前发送的提示",
+    "description": "本轮已触发参考合同读取后、Builder 调用 Docassemble 前发送的提示",
     "type": "string",
-    "default": "参考合同已核对，正在通过 Docassemble 生成 DOCX。"
+    "default": "参考合同读取已进入生成阶段，正在通过 Docassemble 生成 DOCX。"
   },
   "delivery_stage_text": {
     "description": "Builder 发布临时下载链接前发送的提示",
@@ -28,6 +28,11 @@
     "description": "主人格未提供结构化 confirmation_message 时的兜底确认提示",
     "type": "string",
     "default": "我已经整理了本次合同生成需求，但正式生成前需要你确认。如需补充或修改，请直接回复；如果按当前信息生成，请回复“确认生成”。"
+  },
+  "generation_cancel_text": {
+    "description": "待确认阶段用户取消生成时的确定性回复",
+    "type": "string",
+    "default": "已取消本次合同生成。"
   },
   "confirmation_ttl_seconds": {
     "description": "待确认生成方案的保留时间（秒）",
