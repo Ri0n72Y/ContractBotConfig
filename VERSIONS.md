@@ -3,9 +3,9 @@
 ## 插件
 
 - astrbot_plugin_contract_doc_preconverter: 0.1.3
-- astrbot_plugin_contract_download_delivery: 0.1.1
+- astrbot_plugin_contract_download_delivery: 0.1.2
 - astrbot_plugin_contract_file_router: 0.5.4
-- astrbot_plugin_contract_generation_flow: 0.1.2
+- astrbot_plugin_contract_generation_flow: 0.1.3
 - astrbot_plugin_contract_handoff_policy: 0.4.6
 - astrbot_plugin_docassemble_gateway: 0.1.4
 - astrbot_plugin_opencontracts_gateway: 0.6.1
@@ -15,54 +15,15 @@
 
 - contract-direct-analysis: 1.14
 - contract-opencontracts: 1.16.3
-- contract-docassemble: 1.17
+- contract-docassemble: 1.18
 - contract-result-verification: 1.16.4
 - contract-orchestrator: 1.16
 - contract-conversation-control: 1.15
 
 ## 人格
 
-- contract_docassemble_builder: 1.16
+- contract_docassemble_builder: 1.17
 - contract_master_orchestrator: 1.20
 - contract_opencontracts_operator: 1.17
 
-## 当前状态
-
-Phase 2-A 使用 OpenContracts 公开 MCP 与 WorkerKey 文件导入两个能力面，并为合同文书生成增加 Docassemble API Gateway、生成确认流程和临时 HTTPS 下载交付：
-
-- AstrBot 配置 OpenContracts 公开 `/mcp/`，Operator 使用任务上下文中的 `targets.opencontracts` 作为目标 `corpus_slug`；
-- 公开 MCP 的 `list_documents`、`get_document_text` 和 `search_corpus` 提供合同发现、正文读取和语义检索；
-- OpenContracts 上传网关使用 WorkerKey 向其绑定 Corpus 调用官方 `/api/imports/documents/` 写入端点；
-- `.doc` 文件在进入 Contract File Router 前由 DOC Preconverter 0.1.3 通过 Gotenberg/LibreOffice 转换为 PDF；
-- Router 0.5.4 维护上传、阻断恢复和暂存文件生命周期；
-- Handoff 0.4.6 将合同库读取任务与上传任务分离：合同库读取时 Master ToolSet 只保留 `transfer_to_opencontracts_operator`，并在实际委派前发送处理中提示；
-- Contract Generation Flow 0.1.2 为文书生成提供即时回执、生成前用户确认门、取消处理、开始生成/Docassemble/下载发布阶段提示、Builder 7 工具完整性护栏，以及 OpenContracts 工具结果核验；
-- 新的生成请求先由 Master 形成生成方案和缺失项确认清单，用户明确“确认生成”后才允许真正委派 Builder；确认前的首次委派被转换为 `must_not_execute=true`，Builder ToolSet 同时被运行时清空；
-- Generation Flow 的待确认方案默认保留 1800 秒，并每 60 秒主动清理过期状态，不再依赖下一条用户消息触发惰性清理；
-- Builder 正式生成必须同时具备 `list_documents`、`get_document_text`、`search_corpus`、两个 Docassemble Gateway 工具和两个 Contract Download Delivery 工具；缺少任一工具时直接 BLOCKED；
-- Generation Flow 继续在 `on_llm_tool_respond` 阶段检查 OpenContracts 返回是否存在文档和非空正文，用于流程提示与 Builder 约束；
-- Docassemble Gateway 0.1.4 不再信任“工具被调用过”或仅 `document_slug` 匹配：正式生成会独立把 `list_documents` 与 `get_document_text` 绑定到同一个 `corpus_slug + document_slug`，并要求从 offset 0 取得 `total_chars > 0` 且正文非空；
-- Docassemble Gateway 0.1.4 对正式生成执行 fail-closed：只要事件已被 Gateway 识别为合同生成任务，但缺少 `contract_generation_confirmation_approved=true`，就直接返回 BLOCKED，不会在 Generation Flow 未加载或确认状态缺失时继续生成；
-- 正式客户生成禁止使用文件名包含 `smoke` 的 Docassemble interview；Gateway 会同时检查显式 interview 和 default_interview，仓库提供 `docs/docassemble/contractbot_document_generation.yml` 作为最小非 smoke 生成 interview 样例；
-- Docassemble Gateway 0.1.4 只有在本轮真实生成返回 `success=true + status=ready + output_path + output_filename` 后，才记录本轮可交付输出；下一次生成尝试会先清空上一份本轮输出绑定；
-- Contract Download Delivery 0.1.1 对正式生成任务只接受事件中记录的同一次 Gateway `output_path + output_filename`；历史 output_dir 中其他合法 DOCX 即使仍在 allowlist 内也不能冒充本轮输出发布；
-- 合同库读取建立 `READY / PARTIAL / PENDING / FAILED` 状态契约；`total_chars=0`、`page_count=0` 或正文为空视为 PENDING，不再使用本地工具或历史上下文补齐；
-- Result Guard 0.3.5 将长合同分析按 UTF-8 字节和自然段拆分为多条企业微信消息，不再显示没有实际附件的虚假提示；
-- 合同远端身份统一为 `YYYY-MM-DD 合同标题`，远端文件名统一为 `YYYY-MM-DD_合同标题.原扩展名`；
-- OpenContracts Gateway 不要求或报告配置 Corpus ID，也不保存 MCP 读取凭证；
-- Router 直接生成公开 MCP 上传任务契约，Handoff 继续执行兼容校验并阻止旧契约进入 Operator；
-- Master 和 Operator 在合同库读取、分析和上传任务中禁止 Shell、Grep、Python、通用 HTTP、配置文件读取、直接 MCP JSON-RPC 和本地文件回退；
-- 传输异常、服务端 5xx、成功响应结构异常和未确认版本写入进入人工核查，禁止自动重试；
-- OpenContracts Gateway receipt 为追加式上传审计；
-- Docassemble Gateway 0.1.4 使用 `http://docassemble`、API Key 和 allowlist interview 调用官方 session/file API，并允许 Builder 在生成完成后调用受控下载交付工具；
-- Docassemble Gateway 本地 `output_dir` 默认只保留 Gateway 自身生成的 DOCX 86400 秒，每 300 秒安全扫描一次；清理器只删除直属、符合 `12位十六进制前缀_*.docx` 规则的过期普通文件，不递归处理未知内容；
-- Docassemble Builder 1.16 只允许通过 Gateway 完成最终 DOCX 生成，再通过 Contract Download Delivery 0.1.1 发布临时 HTTPS 下载链接；
-- Contract Download Delivery 只接受 `allowed_source_dirs` 下的有效 DOCX，复制到 `data/public_downloads/<48-hex-token>/`，默认 30 分钟过期并以非递归安全清理器删除；
-- 企业微信最终交付使用 `https://download.ri0n72y.top/contracts/<token>/<filename>`，Master 不向客户展示本地 `output_path`；
-- ContractBot 使用的 API-first Docassemble interview 完成时必须返回 `contractbot_document.file_number`，Gateway 再通过 `/api/file/<file_number>` 取回并校验 DOCX。
-
-Docassemble MVP 暂可使用管理员 API Key；独立服务账户作为安全债务在 Issue #7 跟踪。
-
-Docassemble API 直连 smoke 已验证：`docassemble.playground1:contractbot_api_smoke.yml` 可创建 session、生成并下载有效 DOCX；该 interview 仅用于 smoke，不得用于普通客户合同。
-
-临时下载基础设施已验证：AstrBot `/AstrBot/data` 为宿主机 bind mount；`download.ri0n72y.top` 通过 Cloudflare Tunnel 将 `^/contracts/.*` 转发到宿主机 `127.0.0.1:6198`，本地与公网下载 SHA-256 一致。正式 Master → Generation Flow → Builder → OpenContracts → Docassemble Gateway → Download Delivery 端到端验收仍需在 WebUI 更新组件与工具绑定后完成。
+生成链路的详细配置和验收规则统一维护在 `docs/docassemble/README.md`。Builder 的手动工具绑定以 `personas/bindings.json` 为准。
