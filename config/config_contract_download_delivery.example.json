@@ -1,0 +1,11 @@
+{
+  "public_root": "data/public_downloads",
+  "public_base_url": "https://download.ri0n72y.top/contracts",
+  "allowed_source_dirs": [
+    "data/plugins_data/astrbot_plugin_docassemble_gateway/output"
+  ],
+  "ttl_seconds": 1800,
+  "cleanup_interval_seconds": 60,
+  "max_file_bytes": 31457280,
+  "audit_path": "data/plugins_data/astrbot_plugin_contract_download_delivery/publication_audit.jsonl"
+}
