@@ -1,0 +1,25 @@
+---
+metadata:
+  title: ContractBot production document generation
+  short title: ContractBot document generation
+---
+attachment:
+  variable name: contractbot_output
+  name: ${ document_title }
+  filename: contractbot_generated_contract
+  content: |
+    ${ document_body }
+  valid formats:
+    - docx
+---
+mandatory: True
+code: |
+  contractbot_output
+  json_response({
+    "contractbot_document": {
+      "status": "complete",
+      "file_number": contractbot_output.docx.number,
+      "filename": "contractbot_generated_contract.docx",
+      "extension": "docx"
+    }
+  })
