@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_generation_flow
-display_name: 合同生成确认与进度控制
-desc: 为合同文书生成提供即时回执、一次用户确认门、基于 Gateway 状态的阶段进度提示和 Builder 核心工具绑定护栏。
-version: 0.1.3
+display_name: 合同生成执行与进度控制
+desc: 控制合同生成执行、单次进度提示和 Builder 核心工具绑定。
+version: 0.2.0
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"
