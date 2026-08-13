@@ -29,9 +29,7 @@
       "list_documents",
       "get_document_text",
       "search_corpus",
-      "docassemble_gateway_status",
       "docassemble_generate_document",
-      "contract_download_delivery_status",
       "publish_contract_download"
     ],
     "skills": [
