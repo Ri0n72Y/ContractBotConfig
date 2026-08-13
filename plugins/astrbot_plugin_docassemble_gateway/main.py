@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import re
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -22,29 +21,12 @@ class DocassembleGateway(Star):
     """AstrBot adapter for allowlisted Docassemble document generation."""
 
     BUILDER_PROMPT_MARKER = "<contract_docassemble_builder_policy>"
+    REFERENCE_CORPUS_SLUG = "contracts"
     BUILDER_ALLOWED_TOOLS = {
         "list_documents",
         "get_document_text",
-        "search_corpus",
-        "docassemble_gateway_status",
         "docassemble_generate_document",
-        "contract_download_delivery_status",
         "publish_contract_download",
-    }
-    MASTER_GENERATION_TOOL = "transfer_to_docassemble_builder"
-    MASTER_GENERATION_PATTERNS = (
-        r"(?:帮我|请|我要|我想|需要|麻烦|替我|为我|给我).{0,16}"
-        r"(?:生成|起草|拟定|拟一|制作|创建|做一份|出一份).{0,16}"
-        r"(?:合同|协议|文书|docx|word)",
-        r"^\s*(?:生成|起草|拟定|拟一|制作|创建|做一份|出一份).{0,20}"
-        r"(?:合同|协议|文书|docx|word)",
-    )
-    GENERATION_OPERATIONS = {
-        "contract_generation",
-        "contract_document_generation",
-        "docassemble_generation",
-        "generate_contract",
-        "generate_contract_document",
     }
 
     def __init__(
@@ -64,12 +46,13 @@ class DocassembleGateway(Star):
         cleanup = await asyncio.to_thread(self.retention.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Docassemble gateway 0.1.4 initialized: base_url=%s "
+            "Docassemble gateway 0.2.0 initialized: base_url=%s "
             "allowed_interviews=%d output_retention_seconds=%d "
-            "cleanup_removed=%d",
+            "reference_corpus=%s cleanup_removed=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
             self.settings.output_retention_seconds,
+            self.REFERENCE_CORPUS_SLUG,
             cleanup.get("removed", 0),
         )
 
@@ -106,44 +89,6 @@ class DocassembleGateway(Star):
                 return value
         return None
 
-    @classmethod
-    def _looks_like_generation_request(
-        cls,
-        event: AstrMessageEvent,
-        req: ProviderRequest,
-    ) -> bool:
-        if cls._formal_generation(event):
-            return True
-
-        context = event.get_extra("contract_task_context")
-        if isinstance(context, dict):
-            operation = str(context.get("operation") or "").strip().lower()
-            if operation in cls.GENERATION_OPERATIONS:
-                return True
-            agents = context.get("recommended_subagents")
-            if isinstance(agents, list) and "docassemble_builder" in {
-                str(value).strip() for value in agents
-            }:
-                return True
-            if str(context.get("recommended_subagent") or "").strip() == (
-                "docassemble_builder"
-            ):
-                return True
-
-        text = " ".join(
-            value
-            for value in (
-                str(getattr(event, "message_str", "") or ""),
-                str(getattr(req, "prompt", "") or ""),
-            )
-            if value
-        )
-        compact = re.sub(r"\s+", " ", text).strip()
-        return any(
-            re.search(pattern, compact, re.IGNORECASE)
-            for pattern in cls.MASTER_GENERATION_PATTERNS
-        )
-
     @staticmethod
     def _tool_names(tools: list[Any]) -> list[str]:
         return [str(getattr(tool, "name", "")) for tool in tools]
@@ -153,16 +98,26 @@ class DocassembleGateway(Star):
         return GenerationIntegrityService.formal_generation(event)
 
     @filter.on_llm_request(priority=1200)
-    async def restrict_generation_tools(
+    async def restrict_builder_tools(
         self,
         event: AstrMessageEvent,
         *hook_args: Any,
         **hook_kwargs: Any,
     ) -> None:
-        """Enforce Master->Builder->Gateway generation boundaries."""
+        """Keep the Builder on the four-tool generation path."""
         req = self._resolve_provider_request(hook_args, hook_kwargs)
         if req is None:
             return
+
+        system_prompt = str(getattr(req, "system_prompt", "") or "")
+        if self.BUILDER_PROMPT_MARKER not in system_prompt:
+            return
+
+        event.set_extra("contract_docassemble_generation_task", True)
+        event.set_extra(
+            "contract_generation_reference_corpus_slug",
+            self.REFERENCE_CORPUS_SLUG,
+        )
 
         tool_set = getattr(req, "func_tool", None)
         tools = getattr(tool_set, "tools", None)
@@ -170,51 +125,15 @@ class DocassembleGateway(Star):
             return
 
         before = self._tool_names(tools)
-        system_prompt = str(getattr(req, "system_prompt", "") or "")
-        if self.BUILDER_PROMPT_MARKER in system_prompt:
-            tool_set.tools = [
-                tool
-                for tool in tools
-                if str(getattr(tool, "name", ""))
-                in self.BUILDER_ALLOWED_TOOLS
-            ]
-            after = self._tool_names(tool_set.tools)
-            if after != before:
-                logger.info(
-                    "Docassemble gateway: restricted Builder tools, "
-                    "before=%s after=%s",
-                    before,
-                    after,
-                )
-            required = {
-                "docassemble_generate_document",
-                "publish_contract_download",
-            }
-            missing = sorted(required - set(after))
-            if missing:
-                logger.error(
-                    "Docassemble gateway: marked Builder request is missing "
-                    "required tools=%s; fallback tools remain removed.",
-                    missing,
-                )
-            return
-
-        if self.MASTER_GENERATION_TOOL not in before:
-            return
-        if not self._looks_like_generation_request(event, req):
-            return
-
-        event.set_extra("contract_docassemble_generation_task", True)
         tool_set.tools = [
             tool
             for tool in tools
-            if str(getattr(tool, "name", "")) == self.MASTER_GENERATION_TOOL
+            if str(getattr(tool, "name", "")) in self.BUILDER_ALLOWED_TOOLS
         ]
         after = self._tool_names(tool_set.tools)
         if after != before:
             logger.info(
-                "Docassemble gateway: restricted Master generation tools, "
-                "before=%s after=%s",
+                "Docassemble gateway: restricted Builder tools, before=%s after=%s",
                 before,
                 after,
             )
@@ -241,12 +160,7 @@ class DocassembleGateway(Star):
 
     @staticmethod
     def _json(**payload: Any) -> str:
-        return json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-            default=str,
-        )
+        return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     @filter.llm_tool(name="docassemble_gateway_status")
     async def docassemble_gateway_status(
@@ -254,7 +168,7 @@ class DocassembleGateway(Star):
         event: AstrMessageEvent,
         refresh_interviews: bool = False,
     ) -> str:
-        """检查 Gateway 配置和 allowlist interview 可用性。
+        """管理员排障：检查 Gateway 配置和 allowlist interview 可用性。
 
         Args:
             refresh_interviews(boolean): 为 true 时逐个调用
@@ -268,26 +182,21 @@ class DocassembleGateway(Star):
             "base_url": self.settings.base_url,
             "default_interview": self.settings.default_interview,
             "allowed_interviews": list(self.settings.allowed_interviews),
+            "reference_corpus_slug": self.REFERENCE_CORPUS_SLUG,
             "result_descriptor_key": self.settings.result_descriptor_key,
             "api_key_configured": bool(self.settings.api_key),
             "output_retention_seconds": self.settings.output_retention_seconds,
-            "output_cleanup_interval_seconds": (
-                self.settings.output_cleanup_interval_seconds
-            ),
+            "output_cleanup_interval_seconds": self.settings.output_cleanup_interval_seconds,
         }
         if refresh_interviews and error is None:
             validated: list[str] = []
             invalid: dict[str, str] = {}
             for interview in self.settings.allowed_interviews:
-                ok, inspect_error = await self.client.inspect_interview(
-                    interview
-                )
+                ok, inspect_error = await self.client.inspect_interview(interview)
                 if ok:
                     validated.append(interview)
                 else:
-                    invalid[interview] = (
-                        inspect_error or "interview validation failed"
-                    )
+                    invalid[interview] = inspect_error or "interview validation failed"
             payload["validated_interviews"] = validated
             payload["invalid_interviews"] = invalid
         return self._json(**payload)
@@ -304,45 +213,24 @@ class DocassembleGateway(Star):
 
         Args:
             variables(object): 一次性注入 interview 的完整变量对象。
-            interview(string): allowlist 中的完整 interview filename；
-                为空时使用 default_interview。
+            interview(string): allowlist 中的完整 interview filename；为空时使用 default_interview。
             output_filename(string): 可选本地交付文件名，只接受文件名。
         """
         formal_generation = self._formal_generation(event)
         if formal_generation:
             self.integrity.clear_generation_output(event)
-
-            if not event.get_extra(
-                "contract_generation_confirmation_approved", False
-            ):
-                return self._json(
-                    success=False,
-                    status="blocked",
-                    failure_stage="generation_confirmation",
-                    error=(
-                        "正式合同生成必须先通过 Contract Generation Flow "
-                        "取得用户明确确认；确认状态缺失时禁止生成。"
-                    ),
-                    retry_safe=True,
-                )
-
             if not (
-                event.get_extra(
-                    "contract_gateway_reference_list_verified", False
-                )
-                and event.get_extra(
-                    "contract_gateway_reference_text_verified", False
-                )
+                event.get_extra("contract_gateway_reference_list_verified", False)
+                and event.get_extra("contract_gateway_reference_text_verified", False)
             ):
                 return self._json(
                     success=False,
                     status="blocked",
                     failure_stage="reference_contract_read",
                     error=(
-                        "正式合同生成前必须在本轮对同一 corpus_slug 下，"
-                        "先通过 list_documents 成功取得至少一份参考合同，"
-                        "再通过 get_document_text 对其中 document_slug "
-                        "从 offset 0 成功读取非空正文。"
+                        "正式合同生成前必须在本轮固定合同库中先通过 list_documents "
+                        "取得真实参考合同，再通过 get_document_text 从 offset 0 "
+                        "成功读取其中一份非空正文。"
                     ),
                     retry_safe=True,
                 )
@@ -365,8 +253,6 @@ class DocassembleGateway(Star):
             interview=interview,
             output_filename=output_filename,
         )
-
         if formal_generation:
             self.integrity.record_generation_output(event, result)
-
         return self._json(**result)
