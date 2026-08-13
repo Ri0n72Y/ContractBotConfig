@@ -33,7 +33,7 @@ publish_contract_download
 ```text
 contract_generation_flow      0.2.0
 contract_handoff_policy        0.5.0
-docassemble_gateway            0.1.4
+docassemble_gateway            0.2.0
 contract_download_delivery     0.1.3
 contract-docassemble           1.19
 contract-orchestrator          1.17
