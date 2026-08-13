@@ -40,29 +40,24 @@ Builder：
 Tools:
 list_documents
 get_document_text
-search_corpus
 docassemble_generate_document
 publish_contract_download
 
 Skills: 无
 ```
 
-生成主路径的核心规则已经固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`，避免为读取 Skill 再产生 shell/文件工具轮次。两个 status 工具只用于管理员排障，不绑定给 Builder。
+生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`，避免为读取 Skill 再产生 shell/文件工具轮次。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
 
 ## 合同库读取策略
 
-当前生成库固定使用：
-
-```text
-corpus_slug = contracts
-```
+当前生成库固定使用 `corpus_slug=contracts`。
 
 Builder 默认：
 
 1. `list_documents` 一次取得真实列表；
 2. 选择一份最相关的主参考，不默认扫描整个 Corpus；
 3. `get_document_text(char_offset=0, max_chars=30000)`，有 `next_offset` 再继续；
-4. 只有确有必要才读第二份参考或调用 `search_corpus`；
+4. 只有主参考确实不足时才读取第二份相关合同；
 5. 某个候选正文为空可换下一份；所有相关参考都不可读才 BLOCKED。
 
 Gateway 仍负责本轮真实来源核验：必须先有同一 Corpus 的 `list_documents` 成功结果，再有其中真实 `document_slug` 的非空正文结果。历史会话摘要不能替代本轮读取。
@@ -92,12 +87,7 @@ output_retention_seconds = 86400
 output_cleanup_interval_seconds = 300
 ```
 
-`docs/docassemble/contractbot_document_generation.yml` 是当前最小生产生成样例，接收：
-
-```text
-document_title
-document_body
-```
+`docs/docassemble/contractbot_document_generation.yml` 是当前最小生产生成样例，接收 `document_title` 和 `document_body`。
 
 `contractbot_api_smoke.yml` 仅用于 API smoke，不能作为正式 `default_interview`。如果运行环境仍只 allowlist smoke interview，正式生成必然 BLOCKED；不要通过每次请求调用 status 工具绕过这项部署配置。
 
@@ -130,10 +120,10 @@ python -m compileall -q plugins scripts
 python scripts/build_release.py --clean
 ```
 
-建议 E2E 使用包含以下语义的一条请求直接验证：
+建议 E2E 使用一条请求直接验证：
 
 ```text
 根据合同库生成一份合同；相关条款先从数据库找，找不到的留空，按这个生成。
 ```
 
-验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不调用 `list_public_corpuses` 猜库、Builder 不扫描整个 Corpus、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
+验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不调用 `list_public_corpuses` 猜库、不默认扫描整个 Corpus、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
