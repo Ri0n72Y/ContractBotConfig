@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import re
 from typing import Any
@@ -12,6 +14,7 @@ from astrbot.api.star import Context, Star
 from .clients.docassemble_client import DocassembleClient
 from .config.settings import GatewaySettings
 from .services.generation_service import GenerationService
+from .services.output_retention_service import OutputRetentionService
 
 
 class DocassembleGateway(Star):
@@ -52,14 +55,39 @@ class DocassembleGateway(Star):
         self.settings = GatewaySettings.from_config(config or {})
         self.client = DocassembleClient(self.settings)
         self.generation = GenerationService(self.settings, self.client)
+        self.retention = OutputRetentionService(self.settings)
+        self._cleanup_task: asyncio.Task | None = None
 
     async def initialize(self) -> None:
+        cleanup = await asyncio.to_thread(self.retention.cleanup_expired)
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Docassemble gateway 0.1.2 initialized: base_url=%s "
-            "allowed_interviews=%d",
+            "Docassemble gateway 0.1.3 initialized: base_url=%s "
+            "allowed_interviews=%d output_retention_seconds=%d "
+            "cleanup_removed=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
+            self.settings.output_retention_seconds,
+            cleanup.get("removed", 0),
         )
+
+    async def terminate(self) -> None:
+        task = self._cleanup_task
+        self._cleanup_task = None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _cleanup_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.settings.output_cleanup_interval_seconds)
+            cleanup = await asyncio.to_thread(self.retention.cleanup_expired)
+            if cleanup.get("skipped_unsafe"):
+                logger.warning(
+                    "Docassemble output cleanup skipped unsafe files: %d",
+                    cleanup["skipped_unsafe"],
+                )
 
     @staticmethod
     def _resolve_provider_request(
@@ -216,6 +244,10 @@ class DocassembleGateway(Star):
             "allowed_interviews": list(self.settings.allowed_interviews),
             "result_descriptor_key": self.settings.result_descriptor_key,
             "api_key_configured": bool(self.settings.api_key),
+            "output_retention_seconds": self.settings.output_retention_seconds,
+            "output_cleanup_interval_seconds": (
+                self.settings.output_cleanup_interval_seconds
+            ),
         }
         if refresh_interviews and error is None:
             validated: list[str] = []
@@ -253,10 +285,10 @@ class DocassembleGateway(Star):
         if event.get_extra("contract_generation_confirmation_approved", False):
             if not (
                 event.get_extra(
-                    "contract_generation_reference_list_requested", False
+                    "contract_generation_reference_list_verified", False
                 )
                 and event.get_extra(
-                    "contract_generation_reference_text_requested", False
+                    "contract_generation_reference_text_verified", False
                 )
             ):
                 return self._json(
@@ -264,8 +296,9 @@ class DocassembleGateway(Star):
                     status="blocked",
                     failure_stage="reference_contract_read",
                     error=(
-                        "正式合同生成前必须在本轮通过 list_documents 和 "
-                        "get_document_text 读取参考合同。"
+                        "正式合同生成前必须在本轮通过 list_documents 成功取得"
+                        "至少一份参考合同，并通过 get_document_text 对该列表中的"
+                        "document_slug 成功读取非空正文。"
                     ),
                     retry_safe=True,
                 )
