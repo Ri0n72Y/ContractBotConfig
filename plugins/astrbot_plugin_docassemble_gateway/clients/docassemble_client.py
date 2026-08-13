@@ -20,7 +20,7 @@ class DocassembleClient:
         return {
             "X-API-Key": self.settings.api_key,
             "Accept": "application/json",
-            "User-Agent": "AstrBot-Docassemble-Gateway/0.1.0",
+            "User-Agent": "AstrBot-Docassemble-Gateway/0.1.3",
         }
 
     def _client(self) -> httpx.AsyncClient:
@@ -109,7 +109,7 @@ class DocassembleClient:
         try:
             async with self._client() as client:
                 response = await client.post("/api/session", json=payload)
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exc:
             return None, "Docassemble 生成请求超时；禁止自动重试。"
         except httpx.RequestError as exc:
             return (
