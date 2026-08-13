@@ -111,10 +111,6 @@ class ContractGenerationFlow(Star):
             return
 
         event.set_extra("contract_docassemble_generation_task", True)
-        # Gateway 0.1.x uses this legacy event key as its execution authorization.
-        # Direct generation requests are already authorized; no customer confirmation round exists.
-        event.set_extra("contract_generation_confirmation_approved", True)
-
         tool_set = getattr(req, "func_tool", None)
         tools = getattr(tool_set, "tools", None)
         if isinstance(tools, list):
@@ -163,7 +159,6 @@ class ContractGenerationFlow(Star):
         ):
             return
         event.set_extra("contract_docassemble_generation_task", True)
-        event.set_extra("contract_generation_confirmation_approved", True)
         event.set_extra("contract_generation_download_publication_verified", False)
         tool_args["background_task"] = False
         await self._send_progress_once(event)
