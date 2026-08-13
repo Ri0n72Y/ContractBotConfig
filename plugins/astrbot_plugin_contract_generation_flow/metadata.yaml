@@ -4,6 +4,6 @@ desc: 为合同文书生成提供即时回执、用户确认门、阶段进度�
 version: 0.1.2
 author: local
 repo: ""
-astrbot_version: ">=4.23.1,<5"
+astrbot_version: ">=4.23.2,<5"
 support_platforms:
   - wecom
