@@ -1,7 +1,7 @@
 ---
 name: contract-docassemble
 description: >
-  合同文书生成前置核验、Docassemble interview 选择、变量收集、DOCX 生成验证和临时 HTTPS 下载交付规则。
+  合同文书生成前置核验、合同库实时来源读取、Docassemble interview 选择、变量收集、DOCX 生成验证和临时 HTTPS 下载交付规则。
 ---
 
 # 合同文书生成
@@ -10,38 +10,67 @@ description: >
 
 Docassemble 是合同文书生成的唯一执行引擎。不得使用 Shell、Python、通用 HTTP、本地脚本、`python-docx`、临时文件编辑或其他方式替代 Docassemble 生成 DOCX。
 
-允许的生成与交付工具：
+Builder 正式生成必须同时具备以下 7 个工具：
 
 ```text
+list_documents
+get_document_text
+search_corpus
 docassemble_gateway_status
 docassemble_generate_document
 contract_download_delivery_status
 publish_contract_download
 ```
 
-如需读取合同库中的参考合同，可使用已绑定的 OpenContracts 只读工具，但最终 DOCX 必须由 `docassemble_generate_document` 生成，公网下载链接必须由 `publish_contract_download` 发布。
+如果运行期提示 `builder_tool_binding_incomplete` 或任一上述工具缺失，立即返回 `[CONTRACT_DOCASSEMBLE:BLOCKED]` 和 `missing_tools`，不得开始生成。
+
+## 生成确认门
+
+如果输入包含：
+
+```text
+must_not_execute=true
+error=generation_confirmation_required
+```
+
+说明当前只是主人格的生成前确认阶段。不得调用任何工具；立即返回：
+
+```text
+[CONTRACT_DOCASSEMBLE:BLOCKED]
+reason=generation_confirmation_required
+confirmation_prompt_sent=true
+```
+
+只有 Contract Generation Flow 已确认用户明确同意生成后，才进入下面的正式流程。
 
 ## 前置来源核验
 
-生成合同或合同条款前，必须先确认合同库中存在与目标合同类型相关的现有合同或经批准模板。
+正式生成合同或合同条款前，必须在**本轮**实时读取合同库中的相关合同或经批准模板，不能使用主人格转述、历史会话正文或模型记忆替代。
 
-没有相关合同或模板时停止生成，向主助手返回：
+执行顺序：
 
-> 目前合同库中没有可参考的合同，请先上传合同后再生成。
+1. `list_documents` 在目标 Corpus 中发现候选参考合同；
+2. 对选中的真实 `document_slug` 从 `char_offset=0` 调用 `get_document_text`；
+3. 返回 `next_offset` 时继续读取，直到 `next_offset=null`；
+4. `search_corpus` 可用于补充定位相似条款，但不能替代正文读取；
+5. 只有本轮取得的正文才能作为生成来源。
 
-不得根据一般常识、模型记忆或临时搜索自行编造合同条款。
+没有相关合同/模板、正文尚未产出、正文读取失败或 Builder 没有 OpenContracts 只读工具时停止生成，返回 `[CONTRACT_DOCASSEMBLE:BLOCKED]`，不得用主人格提供的摘要冒充已核验来源。
 
 ## Interview 与交付配置核验
 
 1. 调用 `docassemble_gateway_status(refresh_interviews=true)` 获取 Gateway 配置和允许的 interview。
 2. 调用 `contract_download_delivery_status`，确认 `configured=true`。
 3. 只能选择 `allowed_interviews` 中且实际可用的 interview；不得自行猜测 interview filename。
-4. 没有匹配的 allowlist interview 或临时下载配置不可用时停止生成，不得降级到 Python/Shell。
-5. API Key 由 Gateway 持有，不得要求、读取、输出或记录 API Key。
+4. **正式客户合同不得使用文件名包含 `smoke` 的 interview。** `contractbot_api_smoke.yml` 只用于 API 链路测试；如果 allowlist 中只有 smoke interview，返回 `[CONTRACT_DOCASSEMBLE:BLOCKED]`，要求管理员配置正式生成 interview。
+5. 没有匹配的正式 allowlist interview 或临时下载配置不可用时停止生成，不得降级到 Python/Shell。
+6. API Key 由 Gateway 持有，不得要求、读取、输出或记录 API Key。
 
 ## 信息核验
 
-根据现有合同、批准模板和目标 interview 确定所需变量。主体、金额、日期、履行内容、付款条件、违约责任等关键变量缺失时返回缺失清单，不自行补全。
+以用户已经确认的生成方案、本轮读取的参考合同和正式 interview 所需变量为准。
+
+用户已经明确确认“未补项按占位符保留”时，可以按确认方案保留占位符；不得把模型自行推测的内容当作用户确认值。若发现会改变双方角色、金额、付款责任、工期、验收、违约或争议解决等核心结构的新缺口，而确认方案中未覆盖，应返回 `[CONTRACT_DOCASSEMBLE:BLOCKED]`，由主人格再次向用户确认。
 
 调用 `docassemble_generate_document` 时一次性提供完整变量对象。Gateway 使用一次性 session，不由 LLM 模拟 Docassemble 网页逐题回答。
 
@@ -52,7 +81,7 @@ status=blocked
 failure_stage=missing_variable
 ```
 
-将 `missing_variables` 原样返回主助手，等待用户补充后重新发起一次完整生成。
+将 `missing_variables` 原样返回主助手，不要通过多轮猜字段的方式不断试错。
 
 ## Interview 最终返回契约
 
@@ -112,7 +141,7 @@ expires_at=<ISO-8601>
 
 不要向主助手或客户返回本地 `output_path`。
 
-需要补充变量、未配置 allowlist、interview 不存在或生成/交付配置不满足时，首行返回：
+需要补充变量、Builder 工具绑定不完整、未配置正式 allowlist、只有 smoke interview、interview 不存在、合同库来源不可读或生成/交付配置不满足时，首行返回：
 
 ```text
 [CONTRACT_DOCASSEMBLE:BLOCKED]

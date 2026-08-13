@@ -55,7 +55,7 @@ class DocassembleGateway(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Docassemble gateway 0.1.1 initialized: base_url=%s "
+            "Docassemble gateway 0.1.2 initialized: base_url=%s "
             "allowed_interviews=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
@@ -250,7 +250,39 @@ class DocassembleGateway(Star):
                 为空时使用 default_interview。
             output_filename(string): 可选本地交付文件名，只接受文件名。
         """
-        del event
+        if event.get_extra("contract_generation_confirmation_approved", False):
+            if not (
+                event.get_extra(
+                    "contract_generation_reference_list_requested", False
+                )
+                and event.get_extra(
+                    "contract_generation_reference_text_requested", False
+                )
+            ):
+                return self._json(
+                    success=False,
+                    status="blocked",
+                    failure_stage="reference_contract_read",
+                    error=(
+                        "正式合同生成前必须在本轮通过 list_documents 和 "
+                        "get_document_text 读取参考合同。"
+                    ),
+                    retry_safe=True,
+                )
+
+            selected_interview = str(
+                interview or self.settings.default_interview or ""
+            ).strip()
+            if "smoke" in selected_interview.lower():
+                return self._json(
+                    success=False,
+                    status="blocked",
+                    failure_stage="smoke_interview_forbidden",
+                    error="正式客户合同生成禁止使用 smoke interview。",
+                    interview=selected_interview or None,
+                    retry_safe=True,
+                )
+
         result = await self.generation.generate(
             variables=variables,
             interview=interview,
