@@ -17,17 +17,16 @@
 
 合同草稿生成不要求额外固定确认口令。只读数据库任务才单独委派 OpenContracts Operator；生成任务即使包含“从数据库找字段”也由 Builder 自己读取，避免 Master → Operator → Builder 的重复链路。
 
-Builder 正常绑定：
+Builder 正常只绑定：
 
 ```text
 list_documents
 get_document_text
-search_corpus
 docassemble_generate_document
 publish_contract_download
 ```
 
-`search_corpus` 是可选辅助。两个 status 工具仅用于管理员排障，不作为每次生成的 preflight。Builder 与 Master 的生成主路径不绑定生成 Skill，核心规则直接固化在 Persona，避免额外 Skill 加载工具轮次。
+两个 status 工具仅用于管理员排障。生成 Builder 不绑定额外语义搜索工具，也不绑定生成 Skill；核心规则直接固化在 Persona，避免无业务产出的工具轮次。
 
 当前关键版本：
 
