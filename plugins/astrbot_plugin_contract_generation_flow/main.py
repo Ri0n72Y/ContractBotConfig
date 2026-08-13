@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import re
 import time
@@ -63,6 +65,9 @@ class ContractGenerationFlow(Star):
         self.confirmation_ttl_seconds = int(
             config.get("confirmation_ttl_seconds", 1800)
         )
+        self.cleanup_interval_seconds = max(
+            15, int(config.get("cleanup_interval_seconds", 60))
+        )
         self.ack_enabled = bool(config.get("generation_ack_enabled", True))
         self.ack_text = str(
             config.get(
@@ -80,7 +85,7 @@ class ContractGenerationFlow(Star):
         self.document_stage_text = str(
             config.get(
                 "document_stage_text",
-                "参考合同读取已进入生成阶段，正在通过 Docassemble 生成 DOCX。",
+                "参考合同正文已核验，正在通过 Docassemble 生成 DOCX。",
             )
         ).strip()
         self.delivery_stage_text = str(
@@ -110,13 +115,37 @@ class ContractGenerationFlow(Star):
         ).expanduser().resolve()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.pending = self._load_state()
+        self._cleanup_task: asyncio.Task | None = None
         self._cleanup_pending()
 
     async def initialize(self) -> None:
+        self._cleanup_pending()
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract generation flow 0.1.1 initialized: pending=%d",
+            "Contract generation flow 0.1.2 initialized: pending=%d "
+            "cleanup_interval_seconds=%d",
             len(self.pending),
+            self.cleanup_interval_seconds,
         )
+
+    async def terminate(self) -> None:
+        task = self._cleanup_task
+        self._cleanup_task = None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _cleanup_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.cleanup_interval_seconds)
+            try:
+                self._cleanup_pending()
+            except Exception as exc:
+                logger.warning(
+                    "Generation confirmation periodic cleanup failed: %s",
+                    type(exc).__name__,
+                )
 
     @staticmethod
     def _session_key(event: AstrMessageEvent) -> str:
@@ -161,6 +190,25 @@ class ContractGenerationFlow(Star):
         return tool, tool_args
 
     @staticmethod
+    def _resolve_tool_response(
+        hook_args: tuple[Any, ...],
+        hook_kwargs: dict[str, Any],
+    ) -> tuple[Any | None, dict[str, Any] | None, Any | None]:
+        tool, tool_args = ContractGenerationFlow._resolve_tool_args(
+            hook_args,
+            hook_kwargs,
+        )
+        tool_result = hook_kwargs.get("tool_result")
+        if tool_result is None:
+            for candidate in hook_args:
+                if candidate is tool or candidate is tool_args:
+                    continue
+                if hasattr(candidate, "content") or isinstance(candidate, str):
+                    tool_result = candidate
+                    break
+        return tool, tool_args, tool_result
+
+    @staticmethod
     def _parse_input(value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
             return dict(value)
@@ -171,6 +219,107 @@ class ContractGenerationFlow(Star):
         except (TypeError, ValueError):
             return {"request_text": value.strip()}
         return parsed if isinstance(parsed, dict) else {"request_text": value.strip()}
+
+    @staticmethod
+    def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
+        if tool_result is None:
+            return None
+        if isinstance(tool_result, dict):
+            return dict(tool_result)
+        if bool(
+            getattr(tool_result, "isError", False)
+            or getattr(tool_result, "is_error", False)
+        ):
+            return None
+
+        structured = getattr(tool_result, "structuredContent", None)
+        if structured is None:
+            structured = getattr(tool_result, "structured_content", None)
+        if isinstance(structured, dict):
+            return dict(structured)
+
+        pieces: list[str] = []
+        if isinstance(tool_result, str):
+            pieces.append(tool_result)
+        else:
+            content = getattr(tool_result, "content", None)
+            if isinstance(content, list):
+                for item in content:
+                    text = (
+                        item.get("text")
+                        if isinstance(item, dict)
+                        else getattr(item, "text", None)
+                    )
+                    if text is not None:
+                        pieces.append(str(text))
+
+        for piece in pieces:
+            value = piece.strip()
+            if not value:
+                continue
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
+    def _verified_document_slugs(payload: dict[str, Any]) -> list[str]:
+        if payload.get("error"):
+            return []
+        documents = payload.get("documents")
+        if not isinstance(documents, list):
+            return []
+        try:
+            total_count = int(payload.get("total_count", len(documents)) or 0)
+        except (TypeError, ValueError):
+            return []
+        if total_count <= 0 or not documents:
+            return []
+        slugs: list[str] = []
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            slug = str(
+                document.get("slug") or document.get("document_slug") or ""
+            ).strip()
+            if slug and slug not in slugs:
+                slugs.append(slug)
+        return slugs
+
+    @staticmethod
+    def _verified_document_text(
+        payload: dict[str, Any],
+        tool_args: dict[str, Any] | None,
+        listed_slugs: set[str],
+    ) -> str | None:
+        if payload.get("error") or not isinstance(tool_args, dict):
+            return None
+        requested_slug = str(tool_args.get("document_slug") or "").strip()
+        returned_slug = str(payload.get("document_slug") or "").strip()
+        if (
+            not requested_slug
+            or requested_slug not in listed_slugs
+            or returned_slug != requested_slug
+        ):
+            return None
+        try:
+            requested_offset = int(tool_args.get("char_offset", 0) or 0)
+            returned_offset = int(payload.get("char_offset", 0) or 0)
+            total_chars = int(payload.get("total_chars", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        text = str(payload.get("text") or "")
+        if (
+            requested_offset != 0
+            or returned_offset != requested_offset
+            or total_chars <= 0
+            or not text.strip()
+        ):
+            return None
+        return requested_slug
 
     @staticmethod
     def _append_temp_instruction(req: ProviderRequest, text: str) -> None:
@@ -347,7 +496,9 @@ class ContractGenerationFlow(Star):
                 "<contract_generation_runtime_guard>\n"
                 "正式客户合同生成不得使用文件名包含 smoke 的 Docassemble interview；"
                 "Gateway 会再次确定性拒绝。"
-                "必须先实时使用 list_documents/get_document_text 读取本轮合同库参考正文，"
+                "必须先实时使用 list_documents/get_document_text 读取本轮合同库参考正文；"
+                "运行时只在 list_documents 确实返回文档，且 get_document_text 对其中的 slug "
+                "返回非空正文后才会标记来源已核验。"
                 "不能把主人格转述或历史会话内容当作已核验来源。"
                 "只有 publish_contract_download 返回有效 HTTPS download_url 后才能返回 "
                 "[CONTRACT_DOCASSEMBLE:READY]。\n"
@@ -478,21 +629,13 @@ class ContractGenerationFlow(Star):
         ):
             return
 
-        if tool_name == "list_documents":
-            event.set_extra("contract_generation_reference_list_requested", True)
-            return
-
-        if tool_name == "get_document_text":
-            event.set_extra("contract_generation_reference_text_requested", True)
-            return
-
         if tool_name == "docassemble_generate_document":
             if (
                 event.get_extra(
-                    "contract_generation_reference_list_requested", False
+                    "contract_generation_reference_list_verified", False
                 )
                 and event.get_extra(
-                    "contract_generation_reference_text_requested", False
+                    "contract_generation_reference_text_verified", False
                 )
             ):
                 event.set_extra("contract_generation_docassemble_requested", True)
@@ -510,3 +653,99 @@ class ContractGenerationFlow(Star):
                     "contract_generation_delivery_stage_sent",
                     self.delivery_stage_text,
                 )
+
+    @filter.on_llm_tool_respond(priority=1050)
+    async def verify_reference_tool_results(
+        self,
+        event: AstrMessageEvent,
+        *hook_args: Any,
+        **hook_kwargs: Any,
+    ) -> None:
+        if not event.get_extra(
+            "contract_generation_confirmation_approved", False
+        ):
+            return
+
+        tool, tool_args, tool_result = self._resolve_tool_response(
+            hook_args,
+            hook_kwargs,
+        )
+        if tool is None:
+            return
+        tool_name = str(getattr(tool, "name", ""))
+        if tool_name not in {"list_documents", "get_document_text"}:
+            return
+
+        payload = self._tool_result_payload(tool_result)
+        if payload is None:
+            logger.warning(
+                "Contract generation reference verification failed: "
+                "tool=%s result_unparseable=true",
+                tool_name,
+            )
+            return
+
+        if tool_name == "list_documents":
+            slugs = self._verified_document_slugs(payload)
+            if not slugs:
+                logger.warning(
+                    "Contract generation reference verification failed: "
+                    "list_documents returned no usable documents."
+                )
+                return
+            event.set_extra(
+                "contract_generation_reference_list_verified",
+                True,
+            )
+            event.set_extra(
+                "contract_generation_reference_slugs",
+                slugs,
+            )
+            logger.info(
+                "Contract generation reference list verified: documents=%d",
+                len(slugs),
+            )
+            return
+
+        listed = event.get_extra("contract_generation_reference_slugs", [])
+        listed_slugs = {
+            str(value).strip()
+            for value in listed
+            if str(value).strip()
+        } if isinstance(listed, list) else set()
+        verified_slug = self._verified_document_text(
+            payload,
+            tool_args,
+            listed_slugs,
+        )
+        if not verified_slug:
+            logger.warning(
+                "Contract generation reference verification failed: "
+                "get_document_text did not return a non-empty first chunk "
+                "for a document from the verified list."
+            )
+            return
+
+        verified = event.get_extra(
+            "contract_generation_reference_text_slugs",
+            [],
+        )
+        verified_slugs = [
+            str(value).strip()
+            for value in verified
+            if str(value).strip()
+        ] if isinstance(verified, list) else []
+        if verified_slug not in verified_slugs:
+            verified_slugs.append(verified_slug)
+        event.set_extra(
+            "contract_generation_reference_text_slugs",
+            verified_slugs,
+        )
+        event.set_extra(
+            "contract_generation_reference_text_verified",
+            True,
+        )
+        logger.info(
+            "Contract generation reference text verified: documents=%d",
+            len(verified_slugs),
+        )
