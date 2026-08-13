@@ -80,7 +80,7 @@ class ContractGenerationFlow(Star):
         self.document_stage_text = str(
             config.get(
                 "document_stage_text",
-                "参考合同已核对，正在通过 Docassemble 生成 DOCX。",
+                "参考合同读取已进入生成阶段，正在通过 Docassemble 生成 DOCX。",
             )
         ).strip()
         self.delivery_stage_text = str(
@@ -95,6 +95,9 @@ class ContractGenerationFlow(Star):
                 "我已经整理了本次合同生成需求，但正式生成前需要你确认。"
                 "如需补充或修改，请直接回复；如果按当前信息生成，请回复“确认生成”。",
             )
+        ).strip()
+        self.cancel_text = str(
+            config.get("generation_cancel_text", "已取消本次合同生成。")
         ).strip()
         self.state_path = Path(
             str(
@@ -111,7 +114,7 @@ class ContractGenerationFlow(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract generation flow 0.1.0 initialized: pending=%d",
+            "Contract generation flow 0.1.1 initialized: pending=%d",
             len(self.pending),
         )
 
@@ -265,6 +268,12 @@ class ContractGenerationFlow(Star):
         if normalized in CANCEL_ALIASES:
             self._clear_pending(event)
             event.set_extra("contract_generation_confirmation_cancelled", True)
+            event.stop_event()
+            await self._send_once(
+                event,
+                "contract_generation_cancel_sent",
+                self.cancel_text,
+            )
             return
         event.set_extra("contract_docassemble_generation_task", True)
         event.set_extra("contract_generation_pending", True)
@@ -292,11 +301,14 @@ class ContractGenerationFlow(Star):
                 "generation_confirmation_required" in prompt_text
                 and "must_not_execute" in prompt_text
             ):
+                if isinstance(tools, list):
+                    tool_set.tools = []
                 self._append_temp_instruction(
                     req,
                     "<contract_generation_confirmation_guard>\n"
                     "本次只是生成前确认门。input 中 must_not_execute=true。"
-                    "不得调用任何工具；立即返回 [CONTRACT_DOCASSEMBLE:BLOCKED]，"
+                    "工具集已被运行时清空，不得执行任何生成或读取。"
+                    "立即返回 [CONTRACT_DOCASSEMBLE:BLOCKED]，"
                     "reason=generation_confirmation_required，"
                     "confirmation_prompt_sent=true。\n"
                     "</contract_generation_confirmation_guard>",
@@ -327,7 +339,8 @@ class ContractGenerationFlow(Star):
             self._append_temp_instruction(
                 req,
                 "<contract_generation_runtime_guard>\n"
-                "正式客户合同生成不得使用文件名包含 smoke 的 Docassemble interview。"
+                "正式客户合同生成不得使用文件名包含 smoke 的 Docassemble interview；"
+                "Gateway 会再次确定性拒绝。"
                 "必须先实时使用 list_documents/get_document_text 读取本轮合同库参考正文，"
                 "不能把主人格转述或历史会话内容当作已核验来源。"
                 "只有 publish_contract_download 返回有效 HTTPS download_url 后才能返回 "
@@ -455,15 +468,35 @@ class ContractGenerationFlow(Star):
         ):
             return
 
+        if tool_name == "list_documents":
+            event.set_extra("contract_generation_reference_list_requested", True)
+            return
+
+        if tool_name == "get_document_text":
+            event.set_extra("contract_generation_reference_text_requested", True)
+            return
+
         if tool_name == "docassemble_generate_document":
-            await self._send_once(
-                event,
-                "contract_generation_document_stage_sent",
-                self.document_stage_text,
-            )
-        elif tool_name == "publish_contract_download":
-            await self._send_once(
-                event,
-                "contract_generation_delivery_stage_sent",
-                self.delivery_stage_text,
-            )
+            if (
+                event.get_extra(
+                    "contract_generation_reference_list_requested", False
+                )
+                and event.get_extra(
+                    "contract_generation_reference_text_requested", False
+                )
+            ):
+                event.set_extra("contract_generation_docassemble_requested", True)
+                await self._send_once(
+                    event,
+                    "contract_generation_document_stage_sent",
+                    self.document_stage_text,
+                )
+            return
+
+        if tool_name == "publish_contract_download":
+            if event.get_extra("contract_generation_docassemble_requested", False):
+                await self._send_once(
+                    event,
+                    "contract_generation_delivery_stage_sent",
+                    self.delivery_stage_text,
+                )
