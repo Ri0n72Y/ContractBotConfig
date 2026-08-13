@@ -8,7 +8,7 @@
     "skills": ["contract-opencontracts", "contract-result-verification"]
   },
   "contract_docassemble_builder": {
-    "tools": ["list_documents", "get_document_text", "search_corpus", "docassemble_generate_document", "publish_contract_download"],
+    "tools": ["list_documents", "get_document_text", "docassemble_generate_document", "publish_contract_download"],
     "skills": []
   }
 }
