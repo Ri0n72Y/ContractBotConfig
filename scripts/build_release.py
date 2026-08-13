@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build installable ZIP packages for ContractBot AstrBot components."""
+"""Build ContractBot plugin/Skill packages and manual Persona Markdown files."""
 
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ def project_root() -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Package ContractBot plugins, Skills and Personas."
+        description=(
+            "Package ContractBot plugins and Skills, and export Personas as "
+            "manual Markdown configuration files."
+        )
     )
     parser.add_argument(
         "--output",
