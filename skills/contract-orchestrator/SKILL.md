@@ -1,6 +1,6 @@
 ---
 name: contract-orchestrator
-description: 合同主人格的客户交互、合同身份提取、同步委派和可恢复上传控制。
+description: 合同主人格的客户交互、合同身份提取、同步委派、生成确认和可恢复上传控制。
 ---
 
 # 合同任务编排
@@ -28,6 +28,67 @@ description: 合同主人格的客户交互、合同身份提取、同步委派�
 - `FAILED`：说明本轮读取失败，不尝试本地补救。
 
 多份合同的价格、付款和风险比较必须能追溯到本轮 MCP 返回的正文。没有正文时不得依据标题、文件类型、历史记忆或推测生成具体条款。
+
+## 合同文书生成：先确认，后执行
+
+新的合同生成请求不得直接进入 Builder 正式生成。Contract Generation Flow 会先发送即时“已收到”提示；主人格随后整理生成方案并进入确认门。
+
+首次生成请求必须先整理：
+
+- 合同类型；
+- 双方主体及甲方/乙方、发包方/承包方等角色；
+- 项目或服务内容、规模；
+- 日期、地点；
+- 金额/单价、付款方式；
+- 工期/履行周期；
+- 验收标准；
+- 其他会明显改变合同结构、商业责任或争议解决方式的关键变量。
+
+不确定的内容不得自行补全。可以提出“未补充项按占位符保留”的方案，但必须先由用户确认。
+
+首次调用 `transfer_to_docassemble_builder` 时，`input` 必须使用 JSON，至少包含：
+
+```json
+{
+  "operation": "contract_generation",
+  "generation_request": {
+    "contract_type": "光伏电站工程承包合同",
+    "parties": ["主体A", "主体B"],
+    "project": "项目内容",
+    "sign_date": "YYYY-MM-DD",
+    "use_contract_library": true
+  },
+  "missing_fields": [
+    "双方角色",
+    "合同金额",
+    "付款方式",
+    "工期"
+  ],
+  "confirmation_message": "客户可读的确认清单"
+}
+```
+
+`confirmation_message` 必须：
+
+1. 简短列出用户已经明确的信息；
+2. 列出仍然缺失、需要确认或准备保留占位符的信息；
+3. 不得声称已经实时读取或核验合同库；
+4. 告知用户可以直接回复修改内容；
+5. 告知用户若接受当前方案，可回复“确认生成”。
+
+首次委派会被 Contract Generation Flow 拦截为确认门，Builder 不执行任何工具或生成。
+
+等待确认期间：
+
+- 用户回复“确认”“确认生成”“开始生成”等确认语：Generation Flow 标记确认通过，主人格按其注入的上一版方案正式委派 Builder；
+- 用户补充或修改信息：结合上一版方案更新 JSON，再调用一次 `transfer_to_docassemble_builder`，由 Generation Flow 重新发送确认清单；仍不得生成；
+- 用户取消：停止生成流程。
+
+正式生成开始后，Builder 必须实时读取合同库参考正文。主人格传递的摘要、历史会话内容或旧结果不能冒充本轮 OpenContracts 核验。
+
+Builder 返回 `[CONTRACT_DOCASSEMBLE:READY]` 时，主人格只向客户展示 `filename`、HTTPS `download_url` 和 `expires_at`；不得展示本地 `output_path`。`BLOCKED` 时只说明明确阻断原因；若 `reason=generation_confirmation_required` 且确认提示已由 Generation Flow 发送，不重复整段确认内容。`FAILED` 时不得用 Shell、Python、本地文件或通用 HTTP 补救。
+
+## 合同上传
 
 用户选择上传或重新上传后，路由插件先发送简短确认。主人格在当前企业微信事件中完成合同身份提取，再同步委派 `opencontracts_operator`，设置 `background_task=false`。
 
@@ -104,7 +165,9 @@ normalized_filename = YYYY-MM-DD_合同标题.原扩展名
 transfer_to_opencontracts_operator
 ```
 
-不得调用 Shell、Grep、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重或上传。
+合同文书生成期间，主人格只负责生成方案确认与 `transfer_to_docassemble_builder` 委派，不自行调用 Docassemble、Download Delivery 或 OpenContracts 子人格工具。
+
+不得调用 Shell、Grep、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重、上传或文书生成。
 
 ## 当前轮次终态
 
