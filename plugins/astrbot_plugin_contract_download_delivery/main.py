@@ -31,7 +31,7 @@ class ContractDownloadDelivery(Star):
         result = await asyncio.to_thread(self.publications.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract download delivery 0.1.1 initialized: configured=%s "
+            "Contract download delivery 0.1.2 initialized: configured=%s "
             "ttl_seconds=%d cleanup_removed=%d",
             self.settings.validation_error() is None,
             self.settings.ttl_seconds,
@@ -145,6 +145,9 @@ class ContractDownloadDelivery(Star):
             source_path(string): Docassemble Gateway 本轮返回的 output_path。
             filename(string): 必须使用同一次 Gateway 返回的 output_filename。
         """
+        # One authoritative terminal bit for this publication attempt.
+        event.set_extra("contract_generation_download_publication_verified", False)
+
         formal_generation = bool(
             event.get_extra("contract_docassemble_generation_task", False)
         )
@@ -182,16 +185,12 @@ class ContractDownloadDelivery(Star):
             filename=filename,
         )
 
-        if formal_generation:
-            event.set_extra(
-                "contract_generation_download_publication_verified",
-                bool(
-                    result.get("success") is True
-                    and str(result.get("status") or "").lower() == "ready"
-                    and str(result.get("download_url") or "").startswith(
-                        "https://"
-                    )
-                ),
-            )
-
+        event.set_extra(
+            "contract_generation_download_publication_verified",
+            bool(
+                result.get("success") is True
+                and str(result.get("status") or "").lower() == "ready"
+                and str(result.get("download_url") or "").startswith("https://")
+            ),
+        )
         return self._json(**result)
