@@ -11,14 +11,13 @@ from astrbot.core.agent.tool import FunctionTool
 
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
+BUILDER_PERSONA_ID = "contract_docassemble_builder"
 REQUIRED_BUILDER_TOOLS = (
     "list_documents",
     "get_document_text",
     "docassemble_generate_document",
     "publish_contract_download",
 )
-RUNTIME_POLICY_OPEN = "<contract_generation_runtime_policy>"
-RUNTIME_POLICY_CLOSE = "</contract_generation_runtime_policy>"
 RUNTIME_GUARD_OPEN = "<contract_generation_runtime_guard>"
 RUNTIME_GUARD_CLOSE = "</contract_generation_runtime_guard>"
 
@@ -68,7 +67,7 @@ def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
 
 
 class _ObservedReferenceTool(FunctionTool):
-    """Delegate a Builder MCP read tool while recording real reference evidence."""
+    """Delegate a Builder read tool while recording real reference evidence."""
 
     def __init__(self, wrapped: FunctionTool) -> None:
         super().__init__(
@@ -140,11 +139,7 @@ class _ObservedReferenceTool(FunctionTool):
         document_slug = str(tool_args.get("document_slug") or "").strip()
         listed = event.get_extra("contract_gateway_reference_documents", [])
         listed_slugs = (
-            {
-                str(value).strip()
-                for value in listed
-                if str(value).strip()
-            }
+            {str(value).strip() for value in listed if str(value).strip()}
             if isinstance(listed, list)
             else set()
         )
@@ -186,7 +181,7 @@ class _ObservedReferenceTool(FunctionTool):
 
 
 class ContractGenerationFlow(Star):
-    """Own Builder handoff execution, runtime tools, and one progress message."""
+    """Own Builder handoff runtime state and one generation progress message."""
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context, config)
@@ -228,58 +223,41 @@ class ContractGenerationFlow(Star):
         event.set_extra("contract_gateway_reference_text_documents", [])
         event.set_extra("contract_gateway_reference_text_verified", False)
 
-    @staticmethod
-    def _strip_runtime_block(text: str, opening: str, closing: str) -> str:
-        output = text
-        while opening in output:
-            start = output.find(opening)
-            end = output.find(closing, start + len(opening))
-            if end < 0:
-                output = output[:start]
-                break
-            output = output[:start] + output[end + len(closing) :]
-        return output.strip()
-
-    @classmethod
-    def _set_runtime_instruction(cls, agent: Any, text: str) -> None:
-        instructions = str(getattr(agent, "instructions", "") or "")
-        instructions = cls._strip_runtime_block(
-            instructions,
-            RUNTIME_POLICY_OPEN,
-            RUNTIME_POLICY_CLOSE,
+    def _refresh_builder_prompt(self, agent: Any) -> bool:
+        persona = self._context.persona_manager.get_persona_v3_by_id(
+            BUILDER_PERSONA_ID
         )
-        instructions = cls._strip_runtime_block(
-            instructions,
-            RUNTIME_GUARD_OPEN,
-            RUNTIME_GUARD_CLOSE,
-        )
-        agent.instructions = f"{instructions}\n\n{text}" if instructions else text
+        if not persona:
+            return False
+        prompt = str(persona.get("prompt") or "").strip()
+        if not prompt:
+            return False
+        agent.instructions = prompt
+        return True
 
     @staticmethod
-    def _runtime_policy() -> str:
-        return (
-            RUNTIME_POLICY_OPEN
-            + "本段为当前运行时生成规则，覆盖 Persona 中任何过期的生成前置说明。"
-            "只使用 list_documents、get_document_text、"
-            "docassemble_generate_document、publish_contract_download 四个工具。"
-            "不要调用 docassemble_gateway_status、contract_download_delivery_status，"
-            "也不要委派 Operator。合同库数据源由已绑定 MCP 连接决定；"
-            "不要要求、猜测或自行构造 corpus_slug。"
-            "先 list_documents 获取本轮真实文档列表，再从其中选择最相关 document_slug，"
-            "用 get_document_text 从 char_offset=0 读取非空正文。"
-            "用户明确信息优先；参考库仍没有的普通草稿字段保留【待填写】并继续，"
-            "除非用户明确要求字段不完整就停止。"
-            "随后直接形成 document_title 和完整 document_body，调用一次 "
-            "docassemble_generate_document；成功后立即调用一次 publish_contract_download。"
-            "任何 BLOCKED/FAILED/READY 终态后停止工具调用。"
-            + RUNTIME_POLICY_CLOSE
+    def _append_runtime_guard(agent: Any, missing: list[str]) -> None:
+        instructions = str(getattr(agent, "instructions", "") or "").strip()
+        guard = (
+            RUNTIME_GUARD_OPEN
+            + "Builder 运行时核心工具注册不完整。missing_tools="
+            + json.dumps(missing, ensure_ascii=False)
+            + "。不要调用其他工具补救；直接返回 "
+            "[CONTRACT_DOCASSEMBLE:BLOCKED]，"
+            "reason=builder_runtime_tool_unavailable。"
+            + RUNTIME_GUARD_CLOSE
         )
+        agent.instructions = f"{instructions}\n\n{guard}" if instructions else guard
 
-    def _rebuild_handoff_agent(self, tool: Any) -> tuple[list[str], list[str]]:
+    def _rebuild_handoff_agent(
+        self,
+        tool: Any,
+    ) -> tuple[list[str], list[str], bool]:
         agent = getattr(tool, "agent", None)
         if agent is None:
-            return [], list(REQUIRED_BUILDER_TOOLS)
+            return [], list(REQUIRED_BUILDER_TOOLS), False
 
+        prompt_refreshed = self._refresh_builder_prompt(agent)
         registered = self._context.get_llm_tool_manager().get_full_tool_set()
         runtime_tools: list[FunctionTool] = []
         missing: list[str] = []
@@ -294,21 +272,11 @@ class ContractGenerationFlow(Star):
 
         if missing:
             agent.tools = []
-            guard = (
-                RUNTIME_GUARD_OPEN
-                + "Builder 运行时核心工具注册不完整。missing_tools="
-                + json.dumps(missing, ensure_ascii=False)
-                + "。不要调用其他工具补救；直接返回 "
-                "[CONTRACT_DOCASSEMBLE:BLOCKED]，"
-                "reason=builder_runtime_tool_unavailable。"
-                + RUNTIME_GUARD_CLOSE
-            )
-            self._set_runtime_instruction(agent, guard)
-            return [], missing
+            self._append_runtime_guard(agent, missing)
+            return [], missing, prompt_refreshed
 
         agent.tools = runtime_tools
-        self._set_runtime_instruction(agent, self._runtime_policy())
-        return [runtime_tool.name for runtime_tool in runtime_tools], []
+        return [runtime_tool.name for runtime_tool in runtime_tools], [], prompt_refreshed
 
     async def _send_progress_once(self, event: AstrMessageEvent) -> None:
         if (
@@ -343,16 +311,20 @@ class ContractGenerationFlow(Star):
         self._reset_reference_state(event)
         tool_args["background_task"] = False
 
-        runtime_tools, missing = self._rebuild_handoff_agent(tool)
+        runtime_tools, missing, prompt_refreshed = self._rebuild_handoff_agent(tool)
         event.set_extra("contract_generation_builder_runtime_tools", runtime_tools)
         if missing:
             logger.error(
-                "Contract generation flow: Builder runtime tools unavailable: %s",
+                "Contract generation flow: Builder runtime unavailable: "
+                "prompt_refreshed=%s missing_tools=%s",
+                prompt_refreshed,
                 missing,
             )
         else:
             logger.info(
-                "Contract generation flow: rebuilt Builder handoff tools: %s",
+                "Contract generation flow: refreshed Builder handoff: "
+                "prompt_refreshed=%s tools=%s",
+                prompt_refreshed,
                 runtime_tools,
             )
         await self._send_progress_once(event)
