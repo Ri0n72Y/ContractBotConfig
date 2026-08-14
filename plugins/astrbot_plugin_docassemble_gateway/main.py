@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -66,28 +65,8 @@ class DocassembleGateway(Star):
     def _formal_generation(event: AstrMessageEvent) -> bool:
         return GenerationIntegrityService.formal_generation(event)
 
-    @filter.on_llm_tool_respond(priority=1000)
-    async def verify_generation_reference_results(
-        self,
-        event: AstrMessageEvent,
-        *hook_args: Any,
-        **hook_kwargs: Any,
-    ) -> None:
-        tool, tool_args, tool_result = self.integrity.resolve_tool_response(
-            hook_args,
-            hook_kwargs,
-        )
-        if tool is None:
-            return
-        self.integrity.verify_reference_result(
-            event,
-            tool,
-            tool_args,
-            tool_result,
-        )
-
     @staticmethod
-    def _json(**payload: Any) -> str:
+    def _json(**payload: object) -> str:
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     @filter.llm_tool(name="docassemble_gateway_status")
@@ -104,7 +83,7 @@ class DocassembleGateway(Star):
         """
         del event
         error = self.settings.validation_error()
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "configured": error is None,
             "configuration_error": error,
             "base_url": self.settings.base_url,
@@ -155,7 +134,7 @@ class DocassembleGateway(Star):
                     status="blocked",
                     failure_stage="reference_contract_read",
                     error=(
-                        "正式合同生成前必须在本轮 Builder 中先通过 list_documents "
+                        "正式合同生成前必须由本轮 Builder 先通过 list_documents "
                         "取得真实参考文档，再通过 get_document_text 从 offset 0 "
                         "成功读取其中一份非空正文。"
                     ),
