@@ -1,15 +1,16 @@
 # ContractBotConfig
 
-企业合同 AstrBot 配置与扩展工程。Master 统一面向企业微信客户，OpenContracts 负责合同存储与读取，Docassemble 负责最终 DOCX，Generation Flow 只负责生成执行提示与 Builder 核心工具护栏，Download Delivery 负责临时 HTTPS 交付和最终交付一致性。
+企业合同 AstrBot 配置与扩展工程。Master 统一面向企业微信客户，OpenContracts 负责合同存储与读取，Docassemble 负责最终 DOCX，Generation Flow 负责生成执行提示并从 AstrBot 当前 Tool Manager 重建 Builder 的四工具运行时工具集，Download Delivery 负责临时 HTTPS 交付和最终交付一致性。
 
 ## 当前生成链路
 
 ```text
 用户要求生成/起草/按当前方案生成
 → Master 直接委派 Builder
-→ Builder 在 contracts 中选择最相关参考合同并读取正文
+→ Flow 从当前 Tool Manager 重建 Builder 四个运行工具
+→ Builder 用当前绑定的 MCP 数据源列出并读取最相关参考合同
 → 数据库可复用信息优先；仍缺失的普通字段保留【待填写】
-→ Gateway 核验本轮真实参考来源
+→ Gateway 核验本轮 Builder 的真实 document_slug + 非空正文读取
 → Docassemble 生成 DOCX
 → Delivery 发布本轮 Gateway 输出
 → Master 返回 HTTPS 下载链接
@@ -17,7 +18,9 @@
 
 合同草稿生成不要求额外固定确认口令。只读数据库任务才单独委派 OpenContracts Operator；生成任务即使包含“从数据库找字段”也由 Builder 自己读取，避免 Master → Operator → Builder 的重复链路。
 
-Builder 正常只绑定：
+生成链不要求 Persona 或 handoff 指定 `corpus_slug`；合同库数据源由 Builder 当前绑定的 MCP 连接决定。Flow 每次进入 Builder 都从 AstrBot 当前全局 Tool Manager 重新解析四个工具，因此 Persona/agent 配置更新后即使旧 handoff 对象仍带有过期工具列表，也不会继续把 status-only ToolSet 传给生成 LLM。
+
+Builder 正常只使用：
 
 ```text
 list_documents
@@ -31,14 +34,14 @@ publish_contract_download
 当前关键版本：
 
 ```text
-contract_generation_flow      0.2.0
+contract_generation_flow      0.2.1
 contract_handoff_policy        0.5.0
-docassemble_gateway            0.2.0
+docassemble_gateway            0.2.1
 contract_download_delivery     0.2.0
-contract-docassemble           1.19
-contract-orchestrator          1.17
-contract_docassemble_builder   1.18
-contract_master_orchestrator   1.21
+contract-docassemble           1.20
+contract-orchestrator          1.18
+contract_docassemble_builder   1.19
+contract_master_orchestrator   1.22
 ```
 
 版本以 `VERSIONS.md` 为准；生成部署与 E2E 见 `docs/docassemble/README.md`；Persona 手动绑定以 `personas/bindings.json` 为准。
