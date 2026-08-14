@@ -5,8 +5,8 @@
 - astrbot_plugin_contract_doc_preconverter: 0.1.3
 - astrbot_plugin_contract_download_delivery: 0.2.0
 - astrbot_plugin_contract_file_router: 0.5.4
-- astrbot_plugin_contract_generation_flow: 0.2.1
-- astrbot_plugin_contract_handoff_policy: 0.5.0
+- astrbot_plugin_contract_generation_flow: 0.2.2
+- astrbot_plugin_contract_handoff_policy: 0.5.1
 - astrbot_plugin_docassemble_gateway: 0.2.1
 - astrbot_plugin_opencontracts_gateway: 0.6.1
 - astrbot_plugin_wecom_final_result_guard: 0.3.5
@@ -22,7 +22,7 @@
 
 ## 人格
 
-- contract_docassemble_builder: 1.19
+- contract_docassemble_builder: 1.20
 - contract_master_orchestrator: 1.22
 - contract_opencontracts_operator: 1.17
 
