@@ -97,12 +97,12 @@ class ContractGenerationFlow(Star):
         req: ProviderRequest,
     ) -> tuple[list[str], list[str], list[str]]:
         before = self._tool_names(getattr(req, "func_tool", None))
-        manager = self._context.get_llm_tool_manager()
+        registered = self._context.get_llm_tool_manager().get_full_tool_set()
         rebuilt = ToolSet()
         missing: list[str] = []
 
         for name in REQUIRED_BUILDER_TOOLS:
-            tool = manager.get_func(name)
+            tool = registered.get_tool(name)
             if tool is None or not getattr(tool, "active", True):
                 missing.append(name)
                 continue
