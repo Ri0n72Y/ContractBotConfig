@@ -17,8 +17,10 @@ REQUIRED_BUILDER_TOOLS = (
     "docassemble_generate_document",
     "publish_contract_download",
 )
-RUNTIME_POLICY_MARKER = "<contract_generation_runtime_policy>"
-RUNTIME_GUARD_MARKER = "<contract_generation_runtime_guard>"
+RUNTIME_POLICY_OPEN = "<contract_generation_runtime_policy>"
+RUNTIME_POLICY_CLOSE = "</contract_generation_runtime_policy>"
+RUNTIME_GUARD_OPEN = "<contract_generation_runtime_guard>"
+RUNTIME_GUARD_CLOSE = "</contract_generation_runtime_guard>"
 
 
 def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
@@ -137,11 +139,15 @@ class _ObservedReferenceTool(FunctionTool):
             return
         document_slug = str(tool_args.get("document_slug") or "").strip()
         listed = event.get_extra("contract_gateway_reference_documents", [])
-        listed_slugs = {
-            str(value).strip()
-            for value in listed
-            if isinstance(listed, list) and str(value).strip()
-        }
+        listed_slugs = (
+            {
+                str(value).strip()
+                for value in listed
+                if str(value).strip()
+            }
+            if isinstance(listed, list)
+            else set()
+        )
         if not document_slug or document_slug not in listed_slugs:
             return
 
@@ -223,9 +229,36 @@ class ContractGenerationFlow(Star):
         event.set_extra("contract_gateway_reference_text_verified", False)
 
     @staticmethod
+    def _strip_runtime_block(text: str, opening: str, closing: str) -> str:
+        output = text
+        while opening in output:
+            start = output.find(opening)
+            end = output.find(closing, start + len(opening))
+            if end < 0:
+                output = output[:start]
+                break
+            output = output[:start] + output[end + len(closing) :]
+        return output.strip()
+
+    @classmethod
+    def _set_runtime_instruction(cls, agent: Any, text: str) -> None:
+        instructions = str(getattr(agent, "instructions", "") or "")
+        instructions = cls._strip_runtime_block(
+            instructions,
+            RUNTIME_POLICY_OPEN,
+            RUNTIME_POLICY_CLOSE,
+        )
+        instructions = cls._strip_runtime_block(
+            instructions,
+            RUNTIME_GUARD_OPEN,
+            RUNTIME_GUARD_CLOSE,
+        )
+        agent.instructions = f"{instructions}\n\n{text}" if instructions else text
+
+    @staticmethod
     def _runtime_policy() -> str:
         return (
-            RUNTIME_POLICY_MARKER
+            RUNTIME_POLICY_OPEN
             + "本段为当前运行时生成规则，覆盖 Persona 中任何过期的生成前置说明。"
             "只使用 list_documents、get_document_text、"
             "docassemble_generate_document、publish_contract_download 四个工具。"
@@ -239,15 +272,8 @@ class ContractGenerationFlow(Star):
             "随后直接形成 document_title 和完整 document_body，调用一次 "
             "docassemble_generate_document；成功后立即调用一次 publish_contract_download。"
             "任何 BLOCKED/FAILED/READY 终态后停止工具调用。"
-            "</contract_generation_runtime_policy>"
+            + RUNTIME_POLICY_CLOSE
         )
-
-    @staticmethod
-    def _append_instruction_once(agent: Any, text: str, marker: str) -> None:
-        instructions = str(getattr(agent, "instructions", "") or "").strip()
-        if marker in instructions:
-            return
-        agent.instructions = f"{instructions}\n\n{text}" if instructions else text
 
     def _rebuild_handoff_agent(self, tool: Any) -> tuple[list[str], list[str]]:
         agent = getattr(tool, "agent", None)
@@ -269,24 +295,20 @@ class ContractGenerationFlow(Star):
         if missing:
             agent.tools = []
             guard = (
-                RUNTIME_GUARD_MARKER
+                RUNTIME_GUARD_OPEN
                 + "Builder 运行时核心工具注册不完整。missing_tools="
                 + json.dumps(missing, ensure_ascii=False)
                 + "。不要调用其他工具补救；直接返回 "
                 "[CONTRACT_DOCASSEMBLE:BLOCKED]，"
                 "reason=builder_runtime_tool_unavailable。"
-                "</contract_generation_runtime_guard>"
+                + RUNTIME_GUARD_CLOSE
             )
-            self._append_instruction_once(agent, guard, RUNTIME_GUARD_MARKER)
+            self._set_runtime_instruction(agent, guard)
             return [], missing
 
         agent.tools = runtime_tools
-        self._append_instruction_once(
-            agent,
-            self._runtime_policy(),
-            RUNTIME_POLICY_MARKER,
-        )
-        return [tool.name for tool in runtime_tools], []
+        self._set_runtime_instruction(agent, self._runtime_policy())
+        return [runtime_tool.name for runtime_tool in runtime_tools], []
 
     async def _send_progress_once(self, event: AstrMessageEvent) -> None:
         if (
