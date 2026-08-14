@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 
 from .clients.docassemble_client import DocassembleClient
@@ -19,15 +17,6 @@ from .services.output_retention_service import OutputRetentionService
 
 class DocassembleGateway(Star):
     """AstrBot adapter for allowlisted Docassemble document generation."""
-
-    BUILDER_PROMPT_MARKER = "<contract_docassemble_builder_policy>"
-    REFERENCE_CORPUS_SLUG = "contracts"
-    BUILDER_ALLOWED_TOOLS = {
-        "list_documents",
-        "get_document_text",
-        "docassemble_generate_document",
-        "publish_contract_download",
-    }
 
     def __init__(
         self,
@@ -46,13 +35,11 @@ class DocassembleGateway(Star):
         cleanup = await asyncio.to_thread(self.retention.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Docassemble gateway 0.2.0 initialized: base_url=%s "
-            "allowed_interviews=%d output_retention_seconds=%d "
-            "reference_corpus=%s cleanup_removed=%d",
+            "Docassemble gateway 0.2.1 initialized: base_url=%s "
+            "allowed_interviews=%d output_retention_seconds=%d cleanup_removed=%d",
             self.settings.base_url,
             len(self.settings.allowed_interviews),
             self.settings.output_retention_seconds,
-            self.REFERENCE_CORPUS_SLUG,
             cleanup.get("removed", 0),
         )
 
@@ -75,91 +62,11 @@ class DocassembleGateway(Star):
                 )
 
     @staticmethod
-    def _resolve_provider_request(
-        hook_args: tuple[Any, ...],
-        hook_kwargs: dict[str, Any],
-    ) -> ProviderRequest | None:
-        candidate = hook_kwargs.get("req") or hook_kwargs.get("request")
-        if isinstance(candidate, ProviderRequest):
-            return candidate
-        for value in hook_args:
-            if isinstance(value, ProviderRequest):
-                return value
-            if hasattr(value, "func_tool") and hasattr(value, "prompt"):
-                return value
-        return None
-
-    @staticmethod
-    def _tool_names(tools: list[Any]) -> list[str]:
-        return [str(getattr(tool, "name", "")) for tool in tools]
-
-    @staticmethod
     def _formal_generation(event: AstrMessageEvent) -> bool:
         return GenerationIntegrityService.formal_generation(event)
 
-    @filter.on_llm_request(priority=1200)
-    async def restrict_builder_tools(
-        self,
-        event: AstrMessageEvent,
-        *hook_args: Any,
-        **hook_kwargs: Any,
-    ) -> None:
-        """Keep the Builder on the four-tool generation path."""
-        req = self._resolve_provider_request(hook_args, hook_kwargs)
-        if req is None:
-            return
-
-        system_prompt = str(getattr(req, "system_prompt", "") or "")
-        if self.BUILDER_PROMPT_MARKER not in system_prompt:
-            return
-
-        event.set_extra("contract_docassemble_generation_task", True)
-        event.set_extra(
-            "contract_generation_reference_corpus_slug",
-            self.REFERENCE_CORPUS_SLUG,
-        )
-
-        tool_set = getattr(req, "func_tool", None)
-        tools = getattr(tool_set, "tools", None)
-        if not isinstance(tools, list):
-            return
-
-        before = self._tool_names(tools)
-        tool_set.tools = [
-            tool
-            for tool in tools
-            if str(getattr(tool, "name", "")) in self.BUILDER_ALLOWED_TOOLS
-        ]
-        after = self._tool_names(tool_set.tools)
-        if after != before:
-            logger.info(
-                "Docassemble gateway: restricted Builder tools, before=%s after=%s",
-                before,
-                after,
-            )
-
-    @filter.on_llm_tool_respond(priority=1000)
-    async def verify_generation_reference_results(
-        self,
-        event: AstrMessageEvent,
-        *hook_args: Any,
-        **hook_kwargs: Any,
-    ) -> None:
-        tool, tool_args, tool_result = self.integrity.resolve_tool_response(
-            hook_args,
-            hook_kwargs,
-        )
-        if tool is None:
-            return
-        self.integrity.verify_reference_result(
-            event,
-            tool,
-            tool_args,
-            tool_result,
-        )
-
     @staticmethod
-    def _json(**payload: Any) -> str:
+    def _json(**payload: object) -> str:
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     @filter.llm_tool(name="docassemble_gateway_status")
@@ -176,13 +83,12 @@ class DocassembleGateway(Star):
         """
         del event
         error = self.settings.validation_error()
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "configured": error is None,
             "configuration_error": error,
             "base_url": self.settings.base_url,
             "default_interview": self.settings.default_interview,
             "allowed_interviews": list(self.settings.allowed_interviews),
-            "reference_corpus_slug": self.REFERENCE_CORPUS_SLUG,
             "result_descriptor_key": self.settings.result_descriptor_key,
             "api_key_configured": bool(self.settings.api_key),
             "output_retention_seconds": self.settings.output_retention_seconds,
@@ -228,8 +134,8 @@ class DocassembleGateway(Star):
                     status="blocked",
                     failure_stage="reference_contract_read",
                     error=(
-                        "正式合同生成前必须在本轮固定合同库中先通过 list_documents "
-                        "取得真实参考合同，再通过 get_document_text 从 offset 0 "
+                        "正式合同生成前必须由本轮 Builder 先通过 list_documents "
+                        "取得真实参考文档，再通过 get_document_text 从 offset 0 "
                         "成功读取其中一份非空正文。"
                     ),
                     retry_safe=True,

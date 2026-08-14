@@ -22,11 +22,11 @@ publish_contract_download
 
 ## 数据库优先，缺失留空
 
-默认使用合同库 `corpus_slug=contracts`：
+合同库数据源由 Builder 当前绑定的 MCP 连接决定；不要要求、猜测或自行构造 `corpus_slug`，也不要调用 `list_public_corpuses` 猜库。
 
-1. `list_documents` 一次取得文档列表；
-2. 按合同类型、项目和主体选择一份最相关的主参考，不默认扫描整个 Corpus；
-3. 对主参考从 `char_offset=0` 读取正文，`max_chars` 可用 30000；有 `next_offset` 时继续到完整；
+1. `list_documents` 一次取得当前 MCP 数据源中的文档列表；
+2. 按合同类型、项目和主体选择一份最相关的主参考，不默认扫描全部文档；
+3. 对该列表中的真实 `document_slug` 从 `char_offset=0` 读取正文，`max_chars` 可用 30000；有 `next_offset` 时继续到完整；
 4. 只有主参考确实不足时才读取第二份相关合同；
 5. 某一候选正文为空可换下一份；所有相关合同均不可读才 BLOCKED。
 

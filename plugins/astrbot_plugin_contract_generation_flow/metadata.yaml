@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_generation_flow
 display_name: 合同生成执行与进度控制
-desc: 控制合同生成执行、单次进度提示和 Builder 核心工具绑定。
-version: 0.2.0
+desc: 控制合同生成执行与单次进度提示；每次 Builder handoff 前从当前 PersonaManager 刷新 Prompt，并从当前 Tool Manager 重建四工具运行时工具集。
+version: 0.2.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"

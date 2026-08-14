@@ -1,7 +1,7 @@
 name: astrbot_plugin_docassemble_gateway
 display_name: Docassemble 文书生成网关
-desc: 通过 allowlist interview 和 Docassemble API 生成 DOCX；正式生成要求固定合同库中的本轮真实参考正文，并把下载交付绑定到本轮 Gateway 输出。
-version: 0.2.0
+desc: 通过 allowlist interview 和 Docassemble API 生成 DOCX；正式生成只核验本轮 Builder 的真实参考文档读取，并把下载交付绑定到本轮 Gateway 输出。
+version: 0.2.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"
