@@ -20,7 +20,7 @@ class DocassembleClient:
         return {
             "X-API-Key": self.settings.api_key,
             "Accept": "application/json",
-            "User-Agent": "AstrBot-Docassemble-Gateway/0.1.3",
+            "User-Agent": "AstrBot-Docassemble-Gateway/0.2.0",
         }
 
     def _client(self) -> httpx.AsyncClient:

@@ -8,13 +8,11 @@ from astrbot.api.event import AstrMessageEvent
 
 
 class GenerationIntegrityService:
-    """Keep formal generation references and outputs bound to one event."""
+    """Bind one generation event to a real reference document and output."""
 
     @staticmethod
     def formal_generation(event: AstrMessageEvent) -> bool:
-        return bool(
-            event.get_extra("contract_docassemble_generation_task", False)
-        )
+        return bool(event.get_extra("contract_docassemble_generation_task", False))
 
     @staticmethod
     def resolve_tool_response(
@@ -24,7 +22,6 @@ class GenerationIntegrityService:
         tool = hook_kwargs.get("tool")
         tool_args = hook_kwargs.get("tool_args")
         tool_result = hook_kwargs.get("tool_result")
-
         if tool is None:
             for candidate in hook_args:
                 if hasattr(candidate, "name") and not isinstance(candidate, dict):
@@ -76,7 +73,6 @@ class GenerationIntegrityService:
                     )
                     if text is not None:
                         pieces.append(str(text))
-
         for piece in pieces:
             value = piece.strip()
             if not value:
@@ -96,14 +92,12 @@ class GenerationIntegrityService:
     ) -> tuple[str, list[str]] | None:
         if payload.get("error") or not isinstance(tool_args, dict):
             return None
-
         corpus_slug = str(tool_args.get("corpus_slug") or "").strip()
         if not corpus_slug:
             return None
         returned_corpus = str(payload.get("corpus_slug") or "").strip()
         if returned_corpus and returned_corpus != corpus_slug:
             return None
-
         documents = payload.get("documents")
         if not isinstance(documents, list):
             return None
@@ -113,14 +107,11 @@ class GenerationIntegrityService:
             return None
         if total_count <= 0 or not documents:
             return None
-
         slugs: list[str] = []
         for document in documents:
             if not isinstance(document, dict):
                 continue
-            slug = str(
-                document.get("slug") or document.get("document_slug") or ""
-            ).strip()
+            slug = str(document.get("slug") or document.get("document_slug") or "").strip()
             if slug and slug not in slugs:
                 slugs.append(slug)
         return (corpus_slug, slugs) if slugs else None
@@ -133,12 +124,10 @@ class GenerationIntegrityService:
     ) -> tuple[str, str] | None:
         if payload.get("error") or not isinstance(tool_args, dict):
             return None
-
         corpus_slug = str(tool_args.get("corpus_slug") or "").strip()
         document_slug = str(tool_args.get("document_slug") or "").strip()
         if not corpus_slug or not document_slug:
             return None
-
         listed_slugs = {
             str(value).strip()
             for value in listed_documents.get(corpus_slug, [])
@@ -146,14 +135,12 @@ class GenerationIntegrityService:
         }
         if document_slug not in listed_slugs:
             return None
-
         returned_corpus = str(payload.get("corpus_slug") or "").strip()
         if returned_corpus and returned_corpus != corpus_slug:
             return None
         returned_slug = str(payload.get("document_slug") or "").strip()
         if returned_slug != document_slug:
             return None
-
         try:
             requested_offset = int(tool_args.get("char_offset", 0) or 0)
             returned_offset = int(payload.get("char_offset", 0) or 0)
@@ -179,20 +166,32 @@ class GenerationIntegrityService:
     ) -> None:
         if not self.formal_generation(event):
             return
-        if not event.get_extra(
-            "contract_generation_confirmation_approved", False
-        ):
-            return
-
         tool_name = str(getattr(tool, "name", ""))
         if tool_name not in {"list_documents", "get_document_text"}:
+            return
+
+        expected_corpus = str(
+            event.get_extra("contract_generation_reference_corpus_slug", "") or ""
+        ).strip()
+        actual_corpus = (
+            str(tool_args.get("corpus_slug") or "").strip()
+            if isinstance(tool_args, dict)
+            else ""
+        )
+        if expected_corpus and actual_corpus != expected_corpus:
+            logger.warning(
+                "Generation integrity ignored reference result from unexpected corpus: "
+                "expected=%s actual=%s tool=%s",
+                expected_corpus,
+                actual_corpus or "<empty>",
+                tool_name,
+            )
             return
 
         payload = self.tool_result_payload(tool_result)
         if payload is None:
             logger.warning(
-                "Generation integrity verification failed: "
-                "tool=%s result_unparseable=true",
+                "Generation integrity verification failed: tool=%s result_unparseable=true",
                 tool_name,
             )
             return
@@ -206,10 +205,7 @@ class GenerationIntegrityService:
                 )
                 return
             corpus_slug, slugs = verified
-            existing = event.get_extra(
-                "contract_gateway_reference_documents",
-                {},
-            )
+            existing = event.get_extra("contract_gateway_reference_documents", {})
             listings = dict(existing) if isinstance(existing, dict) else {}
             current = {
                 str(value).strip()
@@ -218,41 +214,26 @@ class GenerationIntegrityService:
             }
             current.update(slugs)
             listings[corpus_slug] = sorted(current)
-            event.set_extra(
-                "contract_gateway_reference_documents",
-                listings,
-            )
-            event.set_extra(
-                "contract_gateway_reference_list_verified",
-                True,
-            )
+            event.set_extra("contract_gateway_reference_documents", listings)
+            event.set_extra("contract_gateway_reference_list_verified", True)
             logger.info(
-                "Generation integrity reference list verified: "
-                "corpus=%s documents=%d",
+                "Generation integrity reference list verified: corpus=%s documents=%d",
                 corpus_slug,
                 len(slugs),
             )
             return
 
-        existing = event.get_extra(
-            "contract_gateway_reference_documents",
-            {},
-        )
+        existing = event.get_extra("contract_gateway_reference_documents", {})
         listings = dict(existing) if isinstance(existing, dict) else {}
         pair = self.verified_document_text(payload, tool_args, listings)
         if pair is None:
             logger.warning(
-                "Generation integrity verification failed: "
-                "get_document_text did not match a previously verified "
-                "corpus/document pair with non-empty first-chunk text."
+                "Generation integrity verification failed: get_document_text did not "
+                "match a previously verified corpus/document pair with non-empty first-chunk text."
             )
             return
-
         corpus_slug, document_slug = pair
-        pairs = event.get_extra(
-            "contract_gateway_reference_text_pairs",
-            [],
-        )
+        pairs = event.get_extra("contract_gateway_reference_text_pairs", [])
         verified_pairs = (
             [dict(item) for item in pairs if isinstance(item, dict)]
             if isinstance(pairs, list)
@@ -263,23 +244,11 @@ class GenerationIntegrityService:
             and item.get("document_slug") == document_slug
             for item in verified_pairs
         ):
-            verified_pairs.append(
-                {
-                    "corpus_slug": corpus_slug,
-                    "document_slug": document_slug,
-                }
-            )
-        event.set_extra(
-            "contract_gateway_reference_text_pairs",
-            verified_pairs,
-        )
-        event.set_extra(
-            "contract_gateway_reference_text_verified",
-            True,
-        )
+            verified_pairs.append({"corpus_slug": corpus_slug, "document_slug": document_slug})
+        event.set_extra("contract_gateway_reference_text_pairs", verified_pairs)
+        event.set_extra("contract_gateway_reference_text_verified", True)
         logger.info(
-            "Generation integrity reference text verified: "
-            "corpus=%s document=%s",
+            "Generation integrity reference text verified: corpus=%s document=%s",
             corpus_slug,
             document_slug,
         )
@@ -297,9 +266,7 @@ class GenerationIntegrityService:
     ) -> None:
         cls.clear_generation_output(event)
         output_path = str(result.get("output_path") or "").strip()
-        output_filename = str(
-            result.get("output_filename") or ""
-        ).strip()
+        output_filename = str(result.get("output_filename") or "").strip()
         if not (
             result.get("success") is True
             and str(result.get("status") or "").lower() == "ready"
@@ -307,7 +274,6 @@ class GenerationIntegrityService:
             and output_filename
         ):
             return
-
         event.set_extra(
             "contract_generation_gateway_output",
             {
@@ -317,7 +283,4 @@ class GenerationIntegrityService:
                 "interview": result.get("interview"),
             },
         )
-        event.set_extra(
-            "contract_generation_gateway_output_verified",
-            True,
-        )
+        event.set_extra("contract_generation_gateway_output_verified", True)

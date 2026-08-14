@@ -1,29 +1,17 @@
 {
-  "force_synchronous_platforms": {
-    "description": "必须同步执行子代理的消息平台",
-    "type": "list",
-    "default": [
-      "wecom"
-    ]
-  },
-  "max_calls_per_agent": {
-    "description": "同一合同任务中每个子代理最多调用次数",
-    "type": "int",
-    "default": 1
-  },
   "long_task_ack_enabled": {
-    "description": "合同库读取或总体分析委派前主动发送处理中提示",
+    "description": "独立合同库读取委派前发送一条处理中提示",
     "type": "bool",
     "default": true
   },
   "long_task_ack_text": {
-    "description": "合同库长任务的即时客户提示",
+    "description": "合同库读取的单次处理中提示",
     "type": "string",
-    "default": "正在读取合同库中的相关合同并进行分析，内容较多，需要一些处理时间。完成后会继续在当前会话发送结果。"
+    "default": "正在读取合同库中的相关合同，完成后会继续在当前会话返回结果。"
   },
-  "restrict_database_master_tools": {
-    "description": "合同库读取任务只向主人格暴露 OpenContracts Operator 委派工具",
-    "type": "bool",
-    "default": true
+  "default_opencontracts_corpus_slug": {
+    "description": "没有 Router 任务上下文时使用的默认合同库 Corpus slug；用于只读任务，避免让 Agent 调用 list_public_corpuses 猜库",
+    "type": "string",
+    "default": "contracts"
   }
 }

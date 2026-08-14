@@ -1,195 +1,60 @@
 ---
 name: contract-orchestrator
-description: 合同主人格的客户交互、合同身份提取、同步委派、生成确认和可恢复上传控制。
+description: 合同主人格的任务路由、数据库读取、草稿生成和上传编排规则。
 ---
 
 # 合同任务编排
 
-## 合同库读取、对比和总体分析
+本 Skill 保留为编排规则文档；当前 Master Persona 已内置核心路由规则，正常运行不要求加载本 Skill。
 
-用户要求读取合同库、总结多份合同、比较合同、分析价格或进行总体分析时：
+## 路由原则
 
-1. 只调用 `transfer_to_opencontracts_operator`；
-2. 不调用 Shell、Grep、Python、通用 HTTP、直接 MCP、本地文件搜索或配置读取；
-3. 不使用历史会话中曾经出现的合同正文补齐本轮 OpenContracts 空结果；
-4. 不在委派前自行声称已读取正文；处理中提示由 Handoff 插件在实际委派前发送；
-5. 子人格返回以下任一状态后立即停止工具调用：
+按用户最终目标路由，不按句子中是否出现“合同库/数据库”路由：
+
+- 只读、比较、总结、价格分析、总体分析 → `transfer_to_opencontracts_operator`；
+- 最终目标是生成、起草、制作或修改合同文书 → `transfer_to_docassemble_builder`；
+- 上传/重新上传 → 按 Router 的 `contract_task_context` 委派 `transfer_to_opencontracts_operator`。
+
+生成任务即使包含“从合同库找”“按库里条款”“找不到留空”，仍直接交 Builder。不要先 Operator 检索、再把大段结果复制给 Builder；Builder 自己读取同一合同库。
+
+## 草稿生成
+
+用户明确要求生成、起草、制作、开始生成、按当前方案生成时，直接执行，不要求额外回复固定口令。
+
+Master 不需要先收齐金额、付款、工期、质保、主体工商信息或争议机构。默认策略：
 
 ```text
-[CONTRACT_READ:READY]
-[CONTRACT_READ:PARTIAL]
-[CONTRACT_READ:PENDING]
-[CONTRACT_READ:FAILED]
+corpus_slug = contracts
+draft_policy = database_first_then_placeholder
 ```
 
-- `READY`：仅基于本轮读取正文分析；
-- `PARTIAL`：明确哪些合同可分析、哪些尚未就绪，结论不得覆盖未读取文档；
-- `PENDING`：说明 OpenContracts 已找到文档但正文尚未产出，不能继续分析；
-- `FAILED`：说明本轮读取失败，不尝试本地补救。
+用户明确提供的值优先；其余由 Builder 从合同库查找；仍没有的字段在草稿中保留 `【待填写】`/`【待双方确认】`。只有用户明确要求“字段不完整就不要生成”时才启用严格缺失阻断。
 
-多份合同的价格、付款和风险比较必须能追溯到本轮 MCP 返回的正文。没有正文时不得依据标题、文件类型、历史记忆或推测生成具体条款。
-
-## 合同文书生成：先确认，后执行
-
-新的合同生成请求不得直接进入 Builder 正式生成。Contract Generation Flow 会先发送即时“已收到”提示；主人格随后整理生成方案并进入确认门。
-
-首次生成请求必须先整理：
-
-- 合同类型；
-- 双方主体及甲方/乙方、发包方/承包方等角色；
-- 项目或服务内容、规模；
-- 日期、地点；
-- 金额/单价、付款方式；
-- 工期/履行周期；
-- 验收标准；
-- 其他会明显改变合同结构、商业责任或争议解决方式的关键变量。
-
-不确定的内容不得自行补全。可以提出“未补充项按占位符保留”的方案，但必须先由用户确认。
-
-首次调用 `transfer_to_docassemble_builder` 时，`input` 必须使用 JSON，至少包含：
+Builder handoff 保持简短，不复制历史正文或整份数据库分析结果。推荐结构：
 
 ```json
 {
   "operation": "contract_generation",
-  "generation_request": {
-    "contract_type": "光伏电站工程承包合同",
-    "parties": ["主体A", "主体B"],
-    "project": "项目内容",
-    "sign_date": "YYYY-MM-DD",
-    "use_contract_library": true
-  },
-  "missing_fields": [
-    "双方角色",
-    "合同金额",
-    "付款方式",
-    "工期"
-  ],
-  "confirmation_message": "客户可读的确认清单"
+  "user_request": "用户当前生成目标和已明确约束",
+  "corpus_slug": "contracts",
+  "draft_policy": "database_first_then_placeholder"
 }
 ```
 
-`confirmation_message` 必须：
+Builder 返回 READY 后只展示 filename、HTTPS download_url、expires_at；BLOCKED 只说明真正阻止执行的系统或来源条件，不把允许留空的字段重新要求客户填写；FAILED 不用本地工具补救。
 
-1. 简短列出用户已经明确的信息；
-2. 列出仍然缺失、需要确认或准备保留占位符的信息；
-3. 不得声称已经实时读取或核验合同库；
-4. 告知用户可以直接回复修改内容；
-5. 告知用户若接受当前方案，可回复“确认生成”。
+## 独立合同库读取
 
-首次委派会被 Contract Generation Flow 拦截为确认门，Builder 不执行任何工具或生成。
+独立读取任务只调用 Operator。目标 Corpus 由 Handoff Policy 从任务上下文取得；没有 Router 上下文时使用管理员配置的默认 Corpus，当前为 `contracts`。不得调用 `list_public_corpuses` 猜测目标。
 
-等待确认期间：
+Operator 应先 `list_documents`，再只读取完成任务真正需要的文档，不默认扫描整个 Corpus。正文为空时返回 PENDING；部分可读返回 PARTIAL；全部目标可读返回 READY；工具或目标失败返回 FAILED。
 
-- 用户回复“确认”“确认生成”“开始生成”等确认语：Generation Flow 标记确认通过，主人格按其注入的上一版方案正式委派 Builder；
-- 用户补充或修改信息：结合上一版方案更新 JSON，再调用一次 `transfer_to_docassemble_builder`，由 Generation Flow 重新发送确认清单；仍不得生成；
-- 用户取消：停止生成流程。
+## 上传
 
-正式生成开始后，Builder 必须实时读取合同库参考正文。主人格传递的摘要、历史会话内容或旧结果不能冒充本轮 OpenContracts 核验。
+上传流程继续使用 Router 的 `contract_task_context`。上传前必须取得 `contract_date` 和 `contract_title`；正文日期为空但 `identity_hints.contract_date` 存在时直接采用，不重复询问。Operator 使用 Gateway 规范化身份、公开 MCP 查重、WorkerKey 写入，并在同一目标 Corpus 核验正文与检索状态。
 
-Builder 返回 `[CONTRACT_DOCASSEMBLE:READY]` 时，主人格只向客户展示 `filename`、HTTPS `download_url` 和 `expires_at`；不得展示本地 `output_path`。`BLOCKED` 时只说明明确阻断原因；若 `reason=generation_confirmation_required` 且确认提示已由 Generation Flow 发送，不重复整段确认内容。`FAILED` 时不得用 Shell、Python、本地文件或通用 HTTP 补救。
+出现任一 `[CONTRACT_UPLOAD:*]` 终态后停止当前轮次工具调用。传输异常或提交状态不确定时进入 MANUAL_REVIEW，不自动重试。
 
-## 合同上传
+## 禁止绕过
 
-用户选择上传或重新上传后，路由插件先发送简短确认。主人格在当前企业微信事件中完成合同身份提取，再同步委派 `opencontracts_operator`，设置 `background_task=false`。
-
-## 合同身份
-
-上传前必须取得：
-
-- `contract_date`：统一为 `YYYY-MM-DD`；
-- `contract_title`：使用正文中的正式合同名称，去除文件扩展名、路径和无意义编号前缀。
-
-日期来源按以下顺序处理：
-
-1. 合同首页或标题附近明确标注的合同日期；
-2. 明确签署日期；多方日期不一致时使用最晚签署日期；
-3. 明确生效日期；
-4. 正文日期字段为空时，读取任务上下文 `identity_hints.contract_date`。该字段由 Router 从原始文件名中确定性提取，仅在文件名存在唯一有效日期时提供。
-
-文件名日期支持：
-
-```text
-YYYY-M-D
-YYYY.M.D
-YYYY_M_D
-YYYY年M月D日
-YYYYMMDD
-```
-
-若正文没有可靠日期且 `identity_hints.contract_date` 存在，直接采用该日期，不再向客户提问。文件名存在多个不同日期时 Router 不提供提示，此时才请求客户补充。
-
-客户在上次 `BLOCKED` 后补充的信息位于 `resume.user_input`。应结合当前保留的合同文件继续提取身份，不要求客户重新发送文件。
-
-无法可靠取得任一身份字段时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`，明确说明缺少日期或标题。不得猜测。
-
-调用 `transfer_to_opencontracts_operator` 时，`input` 使用 JSON：
-
-```json
-{
-  "contract_identity": {
-    "contract_date": "2026-07-25",
-    "contract_title": "软件开发服务合同"
-  }
-}
-```
-
-远端身份由 OpenContracts Gateway 确定性规范化：
-
-```text
-document_title = YYYY-MM-DD 合同标题
-normalized_filename = YYYY-MM-DD_合同标题.原扩展名
-```
-
-标题含文件名不安全字符或超过 UTF-8 字节限制时，Gateway 会安全处理文件名并追加短哈希；MCP 查重仍使用 Gateway 返回的完整 `identity.document_title`。
-
-## 上传流程
-
-1. OpenContracts Operator 从任务上下文读取 `targets.opencontracts` 作为公开 MCP 的目标 `corpus_slug`。
-2. Operator 调用 `opencontracts_gateway_status`，传入合同日期、合同标题和原始文件名，取得规范化 `identity.document_title`。
-3. Operator 使用 AstrBot 已配置的 OpenContracts 公开 MCP `/mcp/`，调用 `list_documents(corpus_slug=targets.opencontracts, search=identity.document_title)` 查询合同。
-4. MCP 返回标题完全一致的已有合同，且当前任务没有有效客户确认时，首行输出 `[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]`。
-5. 身份、目标 Corpus slug、MCP、配置、文件、确认或权限条件未满足且尚未写入时，首行输出 `[CONTRACT_UPLOAD:BLOCKED]`。
-6. 新合同或已有有效确认时，使用 WorkerKey 导入网关执行写入。写入目标由 WorkerKey 绑定，不传配置 Corpus ID。
-7. 上传参数传递 Gateway 返回的规范化日期和标题，以及 `source_files[].original_name`。网关生成规范化远端文件名。
-8. 文件已接收但正文或检索尚未核验完成时输出 `[CONTRACT_UPLOAD:PROCESSING]`。
-9. 正文可读并通过同一目标 Corpus 的 MCP 检索核验后输出 `[CONTRACT_UPLOAD:COMPLETE]`。
-10. 传输异常、服务端 5xx、成功响应结构异常或未确认版本写入时输出 `[CONTRACT_UPLOAD:MANUAL_REVIEW]`，明确禁止重复上传。
-11. 已确认没有提交且正式请求失败时输出 `[CONTRACT_UPLOAD:FAILED]`。
-
-## 主人格工具边界
-
-合同上传期间，主人格只执行：
-
-```text
-读取当前合同文件
-transfer_to_opencontracts_operator
-```
-
-合同文书生成期间，主人格只负责生成方案确认与 `transfer_to_docassemble_builder` 委派，不自行调用 Docassemble、Download Delivery 或 OpenContracts 子人格工具。
-
-不得调用 Shell、Grep、Python、通用 HTTP、直接 MCP JSON-RPC、配置文件读取或环境探测来补救子人格失败。不得自行执行 OpenContracts 查重、上传或文书生成。
-
-## 当前轮次终态
-
-以下任一标记出现后，主人格必须立即停止当前轮次的工具调用，并把结果交给最终结果保护插件：
-
-```text
-[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED]
-[CONTRACT_UPLOAD:BLOCKED]
-[CONTRACT_UPLOAD:PROCESSING]
-[CONTRACT_UPLOAD:COMPLETE]
-[CONTRACT_UPLOAD:MANUAL_REVIEW]
-[CONTRACT_UPLOAD:FAILED]
-```
-
-状态生命周期：
-
-- `BLOCKED`：当前轮次停止，但 Router 保留暂存文件和会话。客户补充信息，或管理员修复后客户回复“继续”，使用同一暂存文件再次执行；客户回复“结束”或“取消”才清理。
-- `DUPLICATE_CONFIRMATION_REQUIRED`：保留当前文件，等待“重新上传”或“取消”。
-- `PROCESSING`、`COMPLETE`、`MANUAL_REVIEW`、`FAILED`：当前流程结束，Router 清理普通暂存任务；`MANUAL_REVIEW` 明确禁止重复上传。
-
-## 会话控制
-
-等待操作、阻断恢复或重复确认期间，只接受当前流程定义的输入。用户发送另一份文件时，Router 保留当前任务并提示先发送“结束”。`结束`、`取消`和`重新上传`由 Router 确定性处理。
-
-上传任务委派给 `opencontracts_operator`，最终结果在当前企业微信事件中返回。
+结构化合同任务不使用 Shell、Grep、Python、通用 HTTP、直接 MCP JSON-RPC、本地文件搜索或历史正文绕过专用插件/MCP。这里的目标是减少旁路和重复轮次，而不是增加额外确认步骤。

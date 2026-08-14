@@ -5,36 +5,78 @@
 ## 正常链路
 
 ```text
-用户请求 → Master 确认一次 → Builder 读取 OpenContracts
-→ Gateway 核验 corpus_slug + document_slug
+用户明确要求生成/起草/制作
+→ Master 直接委派 Builder
+→ Builder 在 contracts 中选择最相关参考合同并读取正文
+→ 合同库可复用信息优先，仍缺失的普通字段保留【待填写】
+→ Gateway 核验本轮 corpus_slug + document_slug
 → Docassemble 生成 DOCX
 → Delivery 发布临时 HTTPS 链接
 → Master 回复用户
 ```
 
-职责边界：Generation Flow 负责确认和阶段提示；Docassemble Gateway 是唯一参考来源核验者；Download Delivery 负责文件发布，并在最终回复前保证 READY 与真实 HTTPS 发布结果一致。
+生成草稿不设置额外固定确认口令。用户说“按这个生成”“开始生成”等自然语言执行表达直接进入生成，不要求再回复“确认生成”。生成任务中需要从合同库补字段时由 Builder 自己读取，不先经过 Operator。
 
-## Builder
+Generation Flow 只负责一条生成处理中提示和 Builder 核心工具绑定检查，不保存 pending confirmation，也不维护确认 TTL/别名状态机。
 
-正常绑定 5 个工具：
+## Persona 与工具
+
+Master：
 
 ```text
-list_documents
-get_document_text
-search_corpus
-docassemble_generate_document
-publish_contract_download
+Tools:
+transfer_to_opencontracts_operator
+transfer_to_docassemble_builder
+
+Skills:
+contract-direct-analysis
+contract-conversation-control
+contract-result-verification
 ```
 
-`search_corpus` 是可选检索辅助。`docassemble_gateway_status` 与 `contract_download_delivery_status` 仅用于管理员排障，不绑定给 Builder，也不作为每次生成的 preflight，因此正常链路比旧方案少两个 tool call/LLM 循环。
+Builder：
 
-## 来源核验
+```text
+Tools:
+list_documents
+get_document_text
+docassemble_generate_document
+publish_contract_download
 
-Builder 先 `list_documents(corpus_slug=...)`，再从 `char_offset=0` 读取候选 `document_slug`。Gateway 只接受同一 Corpus、本轮列表中的真实文档且正文非空；空列表、空正文、跨 Corpus 同名 slug、错误响应不能解锁生成。
+Skills: 无
+```
+
+生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`，避免为读取 Skill 再产生 shell/文件工具轮次。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
+
+## 合同库读取策略
+
+当前生成库固定使用 `corpus_slug=contracts`。
+
+Builder 默认：
+
+1. `list_documents` 一次取得真实列表；
+2. 选择一份最相关的主参考，不默认扫描整个 Corpus；
+3. `get_document_text(char_offset=0, max_chars=30000)`，有 `next_offset` 再继续；
+4. 只有主参考确实不足时才读取第二份相关合同；
+5. 某个候选正文为空可换下一份；所有相关参考都不可读才 BLOCKED。
+
+Gateway 仍负责本轮真实来源核验：必须先有同一 Corpus 的 `list_documents` 成功结果，再有其中真实 `document_slug` 的非空正文结果。历史会话摘要不能替代本轮读取。
+
+## 缺失字段策略
+
+默认：
+
+```text
+draft_policy = database_first_then_placeholder
+```
+
+用户明确值优先；其余先从合同库参考正文取得。仍未找到的金额、付款节点、工商字段、具体日期、质保比例、争议机构等普通草稿字段写成 `【待填写】` / `【待双方确认】` 并继续生成。只有用户明确要求字段完整才能生成时，才以缺失字段阻断。
+
+因此用户说“这些内容先从数据库拿，没有的留空，我自己写”后，不应再次要求其补同一批字段。
 
 ## Gateway
 
-推荐配置：
+必须配置真实生产 interview：
 
 ```text
 base_url = http://docassemble
@@ -45,11 +87,11 @@ output_retention_seconds = 86400
 output_cleanup_interval_seconds = 300
 ```
 
-正常生成把 `interview` 留空使用 `default_interview`。`contractbot_api_smoke.yml` 只用于 API smoke。Gateway 只有真实得到 `status=ready + output_path + output_filename` 时才记录本轮可交付输出。
+`docs/docassemble/contractbot_document_generation.yml` 是当前最小生产生成样例，接收 `document_title` 和 `document_body`。
+
+`contractbot_api_smoke.yml` 仅用于 API smoke，不能作为正式 `default_interview`。如果运行环境仍只 allowlist smoke interview，正式生成必然 BLOCKED；不要通过每次请求调用 status 工具绕过这项部署配置。
 
 ## Delivery
-
-推荐配置：
 
 ```text
 public_root = data/public_downloads
@@ -58,23 +100,18 @@ allowed_source_dirs = [data/plugins_data/astrbot_plugin_docassemble_gateway/outp
 ttl_seconds = 1800
 ```
 
-每次发布先清空旧 publication success 状态，只有真实 HTTPS 发布成功才写回成功。正式生成只能发布同一次 Gateway 输出。Builder 如果声称 `[CONTRACT_DOCASSEMBLE:READY]` 但本轮没有真实发布成功，最终客户回复不会报告成功；这不增加确认、LLM 回合或工具调用。
+只有同一次 Gateway 的 `output_path/output_filename` 可以发布。只有真实 HTTPS 发布成功后才能向客户报告 READY。
 
-## 阶段提示
+## 客户消息数量
 
-```text
-用户确认 → 开始读取合同库
-Gateway 已核验来源 + 即将生成 → “正在通过 Docassemble 生成 DOCX”
-Gateway 已得到本轮 DOCX + 即将发布 → “正在准备临时 HTTPS 下载链接”
-```
-
-## 生命周期
+正常生成只需要：
 
 ```text
-Gateway output_dir   24 小时
-public_downloads     30 分钟
-Generation pending   30 分钟
+1 条处理中提示
+1 条最终成功/失败结果
 ```
+
+不再发送“收到 → 待确认 → 最终确认 → 读取完成 → DOCX 已生成 → 正在发布”等多层阶段消息。
 
 ## 构建与 E2E
 
@@ -83,4 +120,10 @@ python -m compileall -q plugins scripts
 python scripts/build_release.py --clean
 ```
 
-E2E 检查：即时回执、一次确认、Builder 5 工具、无 status preflight、真实参考正文、真实 DOCX、HTTPS 下载成功、无真实发布时不会报告 READY。
+建议 E2E 使用一条请求直接验证：
+
+```text
+根据合同库生成一份合同；相关条款先从数据库找，找不到的留空，按这个生成。
+```
+
+验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不调用 `list_public_corpuses` 猜库、不默认扫描整个 Corpus、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。

@@ -1,52 +1,12 @@
 {
-  "generation_ack_enabled": {
-    "description": "新的合同生成请求进入 LLM 前主动发送“已收到”提示",
+  "generation_progress_enabled": {
+    "description": "实际委派 Builder 开始生成时发送一条处理中提示",
     "type": "bool",
     "default": true
   },
-  "generation_ack_text": {
-    "description": "合同生成请求的即时提示",
+  "generation_progress_text": {
+    "description": "合同生成开始执行时的唯一处理中提示",
     "type": "string",
-    "default": "收到了。我先整理你提供的信息和需要补充的项目，确认无误后再读取合同库并开始生成。"
-  },
-  "generation_start_text": {
-    "description": "用户确认后、正式委派 Builder 前发送的提示",
-    "type": "string",
-    "default": "信息已确认，我现在开始读取合同库中的参考合同并生成文档。"
-  },
-  "document_stage_text": {
-    "description": "list_documents 与 get_document_text 结果已通过运行时核验后、Builder 调用 Docassemble 前发送的提示",
-    "type": "string",
-    "default": "参考合同正文已核验，正在通过 Docassemble 生成 DOCX。"
-  },
-  "delivery_stage_text": {
-    "description": "Builder 发布临时下载链接前发送的提示",
-    "type": "string",
-    "default": "DOCX 已生成，正在准备临时 HTTPS 下载链接。"
-  },
-  "confirmation_fallback_text": {
-    "description": "主人格未提供结构化 confirmation_message 时的兜底确认提示",
-    "type": "string",
-    "default": "我已经整理了本次合同生成需求，但正式生成前需要你确认。如需补充或修改，请直接回复；如果按当前信息生成，请回复“确认生成”。"
-  },
-  "generation_cancel_text": {
-    "description": "待确认阶段用户取消生成时的确定性回复",
-    "type": "string",
-    "default": "已取消本次合同生成。"
-  },
-  "confirmation_ttl_seconds": {
-    "description": "待确认生成方案的保留时间（秒）",
-    "type": "int",
-    "default": 1800
-  },
-  "cleanup_interval_seconds": {
-    "description": "后台主动清理过期待确认方案的扫描间隔（秒）",
-    "type": "int",
-    "default": 60
-  },
-  "state_path": {
-    "description": "生成确认状态文件；仅短时保存待确认方案，并按 TTL 主动清理",
-    "type": "string",
-    "default": "data/plugins_data/astrbot_plugin_contract_generation_flow/pending_generation.json"
+    "default": "正在读取合同库中的参考合同并生成 DOCX，完成后会返回下载链接。"
   }
 }
