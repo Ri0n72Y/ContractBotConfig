@@ -15,7 +15,7 @@ description: 合同主人格的任务路由、数据库读取、草稿生成和�
 - 最终目标是生成、起草、制作或修改合同文书 → `transfer_to_docassemble_builder`；
 - 上传/重新上传 → 按 Router 的 `contract_task_context` 委派 `transfer_to_opencontracts_operator`。
 
-生成任务即使包含“从合同库找”“按库里条款”“找不到留空”，仍直接交 Builder。不要先 Operator 检索、再把大段结果复制给 Builder；Builder 自己读取同一合同库。
+生成任务即使包含“从合同库找”“按库里条款”“找不到留空”，仍直接交 Builder。不要先 Operator 检索、再把大段结果复制给 Builder；Builder 自己读取当前绑定的合同库 MCP 数据源。
 
 ## 草稿生成
 
@@ -24,19 +24,17 @@ description: 合同主人格的任务路由、数据库读取、草稿生成和�
 Master 不需要先收齐金额、付款、工期、质保、主体工商信息或争议机构。默认策略：
 
 ```text
-corpus_slug = contracts
 draft_policy = database_first_then_placeholder
 ```
 
 用户明确提供的值优先；其余由 Builder 从合同库查找；仍没有的字段在草稿中保留 `【待填写】`/`【待双方确认】`。只有用户明确要求“字段不完整就不要生成”时才启用严格缺失阻断。
 
-Builder handoff 保持简短，不复制历史正文或整份数据库分析结果。推荐结构：
+Builder handoff 保持简短，不复制历史正文或整份数据库分析结果，也不要指定或猜测 `corpus_slug`。推荐结构：
 
 ```json
 {
   "operation": "contract_generation",
   "user_request": "用户当前生成目标和已明确约束",
-  "corpus_slug": "contracts",
   "draft_policy": "database_first_then_placeholder"
 }
 ```
@@ -45,7 +43,7 @@ Builder 返回 READY 后只展示 filename、HTTPS download_url、expires_at；B
 
 ## 独立合同库读取
 
-独立读取任务只调用 Operator。目标 Corpus 由 Handoff Policy 从任务上下文取得；没有 Router 上下文时使用管理员配置的默认 Corpus，当前为 `contracts`。不得调用 `list_public_corpuses` 猜测目标。
+独立读取任务只调用 Operator。Operator 的数据源和上传目标仍按现有 Handoff/Router 约定处理；不要把生成链的 MCP 数据源规则反向扩散到上传链。
 
 Operator 应先 `list_documents`，再只读取完成任务真正需要的文档，不默认扫描整个 Corpus。正文为空时返回 PENDING；部分可读返回 PARTIAL；全部目标可读返回 READY；工具或目标失败返回 FAILED。
 
