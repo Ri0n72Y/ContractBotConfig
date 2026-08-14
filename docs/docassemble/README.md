@@ -7,11 +7,12 @@
 ```text
 用户明确要求生成/起草/制作
 → Master 直接委派 Builder
-→ Generation Flow 从 AstrBot 当前 Tool Manager 重建 Builder 四工具 ToolSet
+→ Generation Flow 在 handoff 执行前从 AstrBot 当前 Tool Manager 重建 Builder 四工具 ToolSet
+→ Flow 注入的 list/get 观察代理在 Builder 内部记录真实读取证据
 → Builder 调 list_documents 获取当前绑定 MCP 数据源的真实文档列表
 → Builder 选择最相关 document_slug，并从 offset 0 读取非空正文
 → 合同库可复用信息优先，仍缺失的普通字段保留【待填写】
-→ Gateway 核验本轮 Builder 的真实 list→get 读取
+→ Gateway 消费本轮读取证据并决定是否允许 Docassemble 生成
 → Docassemble 生成 DOCX
 → Delivery 发布临时 HTTPS 链接
 → Master 回复用户
@@ -19,7 +20,7 @@
 
 生成草稿不设置额外固定确认口令。用户说“按这个生成”“开始生成”等自然语言执行表达直接进入生成，不要求再回复“确认生成”。生成任务中需要从合同库补字段时由 Builder 自己读取，不先经过 Operator。
 
-Generation Flow 只负责一条生成处理中提示和 Builder 运行时四工具重建，不保存 pending confirmation，也不维护确认 TTL/别名状态机。Gateway 不再裁剪 Builder ToolSet，也不管理合同库 slug。
+Generation Flow 只负责一条生成处理中提示、Builder handoff 的四工具重建，以及对 Builder 本轮 list/get 实际结果的轻量记录；不保存 pending confirmation，也不维护确认 TTL/别名状态机。Gateway 不再裁剪 Builder ToolSet，也不管理合同库 slug，只在真正调用 `docassemble_generate_document` 时检查本轮读取证据和当前输出。
 
 ## Persona 与工具
 
@@ -50,7 +51,7 @@ Skills: 无
 
 生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
 
-AstrBot handoff 会基于 subagent 配置/Persona 在 reload 时物化子 Agent 的 system prompt 与 tools。部署更新 Persona 或 subagent 绑定后，需要在 WebUI 保存并重载相关 Agent/配置（必要时重启 AstrBot），确保 handoff 对象刷新。即使旧 handoff 仍残留旧工具列表，Generation Flow 0.2.1 会在 Builder 请求开始时从当前全局 Tool Manager 重新解析四个核心工具，并用准确 ToolSet 替换运行时列表。
+AstrBot handoff 会基于 subagent 配置/Persona 在 reload 时物化子 Agent 的 system prompt 与 tools；handoff 执行时直接把该 Agent 的 instructions/tools 传给独立 `tool_loop_agent`，不会重新经过主 pipeline 的 LLM/tool hooks。因此部署更新 Persona 或 subagent 绑定后，需要在 WebUI 保存并重载相关 Agent/配置（必要时重启 AstrBot），确保 handoff 对象刷新。Generation Flow 0.2.1 还会在每次 `transfer_to_docassemble_builder` 真正执行前，从当前全局 Tool Manager 重新解析四个核心工具并覆盖 handoff Agent 的运行时 tools/instructions，避免旧 handoff 的 status-only ToolSet 继续生效。
 
 ## 合同库读取策略
 
@@ -64,7 +65,7 @@ Builder 默认：
 4. 只有主参考确实不足时才读取第二份相关合同；
 5. 某个候选正文为空可换下一份；所有相关参考都不可读才 BLOCKED。
 
-Gateway 只负责本轮真实来源核验：必须先看到 Builder 本轮 `list_documents` 的真实结果，再看到其中某个 `document_slug` 从 offset 0 返回非空正文。Operator 或历史会话中的读取结果不能替代本轮 Builder 读取。
+Flow 注入的两个只读观察代理只记录实际工具返回，不额外发起 MCP 请求：`list_documents` 成功时记录本轮真实 `document_slug` 列表；`get_document_text` 只有读取该列表中的 slug、请求与返回 offset 都为 0、正文非空时才形成 reference verified。Gateway 只消费这份本轮证据。Operator 或历史会话中的读取结果不能替代 Builder 本轮读取。
 
 ## 缺失字段策略
 
@@ -130,4 +131,4 @@ python scripts/build_release.py --clean
 根据合同库生成一份合同；相关条款先从数据库找，找不到的留空，按这个生成。
 ```
 
-验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不要求/猜测 `corpus_slug`、Builder 实际 ToolSet 为四个核心工具、不默认扫描全部文档、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
+验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不要求/猜测 `corpus_slug`、日志中的 Builder 实际 ToolSet 为四个核心工具、不默认扫描全部文档、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
