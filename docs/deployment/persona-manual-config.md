@@ -62,16 +62,16 @@ Builder 的数据库优先、占位符、Docassemble 与 Delivery 规则已固�
 
 ## Persona / Subagent 更新后的重载
 
-AstrBot 的 subagent orchestrator 在 reload 时会把 Persona 的 system prompt 和 tools 物化到 handoff Agent。仅在 Persona 页面修改后，如果相关 subagent/handoff 没有刷新，运行时可能继续使用旧 Prompt/旧 ToolSet。
+AstrBot 的 subagent orchestrator 在 reload 时会把 Persona 的 system prompt 和 tools 物化到 handoff Agent。仅在 Persona 页面修改后，如果相关 subagent/handoff 没有刷新，handoff 对象本身可能暂时保留旧 Prompt/旧 ToolSet。
 
-因此更新 Master/Builder Persona 后执行：
+因此更新 Master/Builder Persona 后仍建议：
 
 1. 在 Persona 页面保存新的 Prompt / Tools / Skills；
 2. 到 Agent/Subagent 配置确认对应 persona_id 仍指向正确 Persona；
 3. 保存并重载 Agent/Subagent 配置；
-4. 若运行日志仍显示旧 Prompt/旧工具列表，重启 AstrBot 一次。
+4. 若其他子人格行为仍显示旧配置，再重启 AstrBot。
 
-Generation Flow 0.2.1 还会在每次 Builder 请求开始时从 AstrBot 当前全局 Tool Manager 重建四个核心工具，所以旧 handoff 中残留的 status-only 工具列表不会再直接进入生成 LLM。
+对于 Builder 生成链，Generation Flow 0.2.1 不再依赖 handoff 缓存：每次 `transfer_to_docassemble_builder` 执行前，它会从当前 PersonaManager 重新读取 `contract_docassemble_builder` Prompt，并从当前全局 Tool Manager 重建四个核心工具。因此只要 Persona 页面已经保存成功、四个工具当前处于注册/启用状态，旧 handoff 中残留的 status-only Prompt/ToolSet 不会继续进入 Builder 运行。
 
 ## 运行语义
 
