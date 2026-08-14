@@ -15,10 +15,13 @@ READ_STATUS_CONTRACT = {
     "pending": "[CONTRACT_READ:PENDING]",
     "failed": "[CONTRACT_READ:FAILED]",
 }
+GENERATION_HANDOFF_TOOL = "transfer_to_docassemble_builder"
+OPENCONTRACTS_HANDOFF_TOOL = "transfer_to_opencontracts_operator"
+CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 
 
 class ContractHandoffPolicy(Star):
-    """Normalize OpenContracts handoffs without rewriting Master tool availability."""
+    """Own target Corpus resolution and normalize OpenContracts handoffs."""
 
     def __init__(
         self,
@@ -45,7 +48,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.5.0 initialized: default_corpus=%s",
+            "Contract handoff policy 0.5.1 initialized: default_corpus=%s",
             self.default_opencontracts_corpus_slug or "<empty>",
         )
 
@@ -296,7 +299,7 @@ class ContractHandoffPolicy(Star):
         }
         return canonical
 
-    @filter.on_using_llm_tool(priority=1000)
+    @filter.on_using_llm_tool(priority=1100)
     async def normalize_handoff(
         self,
         event: AstrMessageEvent,
@@ -306,14 +309,25 @@ class ContractHandoffPolicy(Star):
         tool, tool_args = self._resolve_tool_args(hook_args, hook_kwargs)
         if tool is None or tool_args is None:
             return
-        if str(getattr(tool, "name", "")) != "transfer_to_opencontracts_operator":
-            return
 
-        parsed = self._parse_agent_input(tool_args.get("input"))
+        tool_name = str(getattr(tool, "name", ""))
         task_context = event.get_extra("contract_task_context")
         if not isinstance(task_context, dict):
             task_context = None
 
+        if tool_name == GENERATION_HANDOFF_TOOL:
+            corpus_slug = self._corpus_slug({}, task_context)
+            event.set_extra(CORPUS_EVENT_KEY, corpus_slug)
+            logger.info(
+                "Contract handoff policy: bound generation corpus=%s",
+                corpus_slug or "<empty>",
+            )
+            return
+
+        if tool_name != OPENCONTRACTS_HANDOFF_TOOL:
+            return
+
+        parsed = self._parse_agent_input(tool_args.get("input"))
         operation = str(
             parsed.get("operation")
             or ((task_context or {}).get("operation") or "")
