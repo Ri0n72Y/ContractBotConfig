@@ -3,8 +3,95 @@ metadata:
   title: ContractBot production document generation
   short title: ContractBot document generation
 ---
+initial: True
+code: |
+  if not defined('template_key'):
+    template_key = 'generic'
+  if not defined('document_title'):
+    document_title = '合同草稿'
+  if not defined('contract_data') or not isinstance(contract_data, dict):
+    contract_data = {}
+  if not defined('material_items') or not isinstance(material_items, list):
+    material_items = []
+  if not defined('boq_markdown'):
+    boq_markdown = ''
+
+  contractbot_defaults = {
+    'contract_number': '【待填写】',
+    'project_name': '【待填写】',
+    'work_name': '【待填写】',
+    'project_location': '【待填写】',
+    'signing_place': '【待填写】',
+    'signing_date': '【待填写】',
+    'party_a_name': '国科新能源有限公司',
+    'party_a_address': '上海市普陀区曹杨路2009弄68号604室',
+    'party_a_legal_rep': '杨银海',
+    'party_a_agent': '【待填写】',
+    'party_a_bank': '中国银行上海市大渡河路支行',
+    'party_a_account': '435182031581',
+    'party_a_tax_id': '91310114MA1GT1JH4H',
+    'party_a_postcode': '200333',
+    'party_a_phone': '021-53308876',
+    'party_a_email': '/',
+    'party_b_name': '【待填写】',
+    'party_b_address': '【待填写】',
+    'party_b_legal_rep': '【待填写】',
+    'party_b_agent': '【待填写】',
+    'party_b_bank': '【待填写】',
+    'party_b_account': '【待填写】',
+    'party_b_tax_id': '【待填写】',
+    'party_b_postcode': '【待填写】',
+    'party_b_phone': '【待填写】',
+    'party_b_email': '【待填写】',
+    'road_length_km': '【待填写】',
+    'owner_supplied_materials': '【待填写】',
+    'planned_start_date': '【待填写】',
+    'planned_end_date': '【待填写】',
+    'total_calendar_days': '【待填写】',
+    'unit_price_taxed': '【待填写】',
+    'unit_price_untaxed': '【待填写】',
+    'vat_rate': '【待填写】',
+    'vat_per_km': '【待填写】',
+    'provisional_total': '【待填写】',
+    'provisional_total_upper': '【待填写】',
+    'provisional_total_untaxed': '【待填写】',
+    'provisional_vat': '【待填写】',
+    'party_a_site_rep': '【待填写】',
+    'party_a_site_phone': '【待填写】',
+    'party_b_site_rep': '【待填写】',
+    'party_b_site_phone': '【待填写】',
+    'supply_scope': '【待填写】',
+    'pricing_clause': '【待填写】',
+    'delivery_days': '【待填写】',
+    'progress_payment_percent': '【待填写】',
+    'invoice_payment_days': '【待填写】',
+    'retention_percent': '【待填写】',
+    'warranty_months': '【待填写】',
+    'dispute_resolution': '【待双方确认】',
+    'material_table_note': '以上价格含税。',
+  }
+  for contractbot_key, contractbot_value in contractbot_defaults.items():
+    contract_data.setdefault(contractbot_key, contractbot_value)
+
+  contractbot_template_map = {
+    'road_labor': 'contractbot_road_labor_template.docx',
+    'material_purchase': 'contractbot_material_purchase_template.docx',
+  }
+  if template_key in contractbot_template_map:
+    contractbot_template_filename = contractbot_template_map[template_key]
+---
 attachment:
-  variable name: contractbot_output
+  variable name: contractbot_templated_output
+  name: ${ document_title }
+  filename: contractbot_generated_contract
+  docx template file:
+    code: |
+      contractbot_template_filename
+  valid formats:
+    - docx
+---
+attachment:
+  variable name: contractbot_generic_output
   name: ${ document_title }
   filename: contractbot_generated_contract
   content: |
@@ -14,12 +101,18 @@ attachment:
 ---
 mandatory: True
 code: |
-  contractbot_output
+  if template_key in contractbot_template_map:
+    contractbot_templated_output
+    contractbot_output = contractbot_templated_output
+  else:
+    contractbot_generic_output
+    contractbot_output = contractbot_generic_output
   json_response({
     "contractbot_document": {
       "status": "complete",
       "file_number": contractbot_output.docx.number,
       "filename": "contractbot_generated_contract.docx",
-      "extension": "docx"
+      "extension": "docx",
+      "template_key": template_key
     }
   })
