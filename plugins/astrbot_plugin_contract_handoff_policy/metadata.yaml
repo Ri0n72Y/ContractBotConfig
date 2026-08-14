@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_handoff_policy
 display_name: 合同子代理委派策略
-desc: 规范 OpenContracts 读取与上传委派，固定目标 Corpus，并避免重复委派状态机。
-version: 0.5.0
+desc: 统一解析 OpenContracts 目标 Corpus，并向读取、上传与 Builder 生成链提供同一配置来源。
+version: 0.5.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"
