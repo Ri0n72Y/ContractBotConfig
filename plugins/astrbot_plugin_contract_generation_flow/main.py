@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from typing import Any
 
@@ -12,12 +13,14 @@ from astrbot.core.agent.tool import FunctionTool
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
 BUILDER_PERSONA_ID = "contract_docassemble_builder"
+CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 REQUIRED_BUILDER_TOOLS = (
     "list_documents",
     "get_document_text",
     "docassemble_generate_document",
     "publish_contract_download",
 )
+REFERENCE_TOOLS = {"list_documents", "get_document_text"}
 RUNTIME_GUARD_OPEN = "<contract_generation_runtime_guard>"
 RUNTIME_GUARD_CLOSE = "</contract_generation_runtime_guard>"
 
@@ -66,20 +69,51 @@ def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
     return None
 
 
-class _ObservedReferenceTool(FunctionTool):
-    """Delegate a Builder read tool while recording real reference evidence."""
+def _without_corpus_parameter(parameters: Any) -> Any:
+    """Hide infrastructure-owned corpus_slug from the Builder-facing schema."""
+    cloned = deepcopy(parameters)
+    if isinstance(cloned, dict):
+        properties = cloned.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("corpus_slug", None)
+        required = cloned.get("required")
+        if isinstance(required, list):
+            cloned["required"] = [
+                value for value in required if str(value) != "corpus_slug"
+            ]
+        return cloned
+    if isinstance(cloned, list):
+        return [
+            item
+            for item in cloned
+            if not (
+                isinstance(item, dict)
+                and str(item.get("name") or "") == "corpus_slug"
+            )
+        ]
+    return cloned
 
-    def __init__(self, wrapped: FunctionTool) -> None:
+
+class _ObservedReferenceTool(FunctionTool):
+    """Inject the configured Corpus and record real Builder reference evidence."""
+
+    def __init__(self, wrapped: FunctionTool, corpus_slug: str) -> None:
         super().__init__(
             name=wrapped.name,
-            description=wrapped.description,
-            parameters=wrapped.parameters,
+            description=(
+                str(wrapped.description or "")
+                + "\n目标合同库由运行时配置绑定；调用时不要提供 corpus_slug。"
+            ).strip(),
+            parameters=_without_corpus_parameter(wrapped.parameters),
         )
         self._wrapped = wrapped
+        self._corpus_slug = str(corpus_slug or "").strip()
         self.active = bool(getattr(wrapped, "active", True))
 
     async def call(self, context: Any, **tool_args: Any) -> Any:
-        result = await self._wrapped.call(context, **tool_args)
+        forwarded_args = dict(tool_args)
+        forwarded_args["corpus_slug"] = self._corpus_slug
+        result = await self._wrapped.call(context, **forwarded_args)
         event = context.context.event
         payload = _tool_result_payload(result)
         if payload is None:
@@ -92,7 +126,7 @@ class _ObservedReferenceTool(FunctionTool):
         if self.name == "list_documents":
             self._record_listing(event, payload)
         elif self.name == "get_document_text":
-            self._record_text(event, payload, tool_args)
+            self._record_text(event, payload, forwarded_args)
         return result
 
     @staticmethod
@@ -196,7 +230,7 @@ class ContractGenerationFlow(Star):
         ).strip()
 
     async def initialize(self) -> None:
-        logger.info("Contract generation flow 0.2.1 initialized.")
+        logger.info("Contract generation flow 0.2.2 initialized.")
 
     @staticmethod
     def _resolve_tool_args(
@@ -240,11 +274,11 @@ class ContractGenerationFlow(Star):
         instructions = str(getattr(agent, "instructions", "") or "").strip()
         guard = (
             RUNTIME_GUARD_OPEN
-            + "Builder 运行时核心工具注册不完整。missing_tools="
+            + "Builder 运行时依赖不完整。missing="
             + json.dumps(missing, ensure_ascii=False)
             + "。不要调用其他工具补救；直接返回 "
             "[CONTRACT_DOCASSEMBLE:BLOCKED]，"
-            "reason=builder_runtime_tool_unavailable。"
+            "reason=builder_runtime_dependency_unavailable。"
             + RUNTIME_GUARD_CLOSE
         )
         agent.instructions = f"{instructions}\n\n{guard}" if instructions else guard
@@ -252,6 +286,7 @@ class ContractGenerationFlow(Star):
     def _rebuild_handoff_agent(
         self,
         tool: Any,
+        event: AstrMessageEvent,
     ) -> tuple[list[str], list[str], bool]:
         agent = getattr(tool, "agent", None)
         if agent is None:
@@ -261,13 +296,17 @@ class ContractGenerationFlow(Star):
         registered = self._context.get_llm_tool_manager().get_full_tool_set()
         runtime_tools: list[FunctionTool] = []
         missing: list[str] = []
+        corpus_slug = str(event.get_extra(CORPUS_EVENT_KEY, "") or "").strip()
+        if not corpus_slug:
+            missing.append("opencontracts_corpus_slug")
+
         for name in REQUIRED_BUILDER_TOOLS:
             runtime_tool = registered.get_tool(name)
             if runtime_tool is None or not getattr(runtime_tool, "active", True):
                 missing.append(name)
                 continue
-            if name in {"list_documents", "get_document_text"}:
-                runtime_tool = _ObservedReferenceTool(runtime_tool)
+            if name in REFERENCE_TOOLS and corpus_slug:
+                runtime_tool = _ObservedReferenceTool(runtime_tool, corpus_slug)
             runtime_tools.append(runtime_tool)
 
         if missing:
@@ -276,6 +315,7 @@ class ContractGenerationFlow(Star):
             return [], missing, prompt_refreshed
 
         agent.tools = runtime_tools
+        event.set_extra("contract_generation_reference_corpus_slug", corpus_slug)
         return [runtime_tool.name for runtime_tool in runtime_tools], [], prompt_refreshed
 
     async def _send_progress_once(self, event: AstrMessageEvent) -> None:
@@ -311,20 +351,23 @@ class ContractGenerationFlow(Star):
         self._reset_reference_state(event)
         tool_args["background_task"] = False
 
-        runtime_tools, missing, prompt_refreshed = self._rebuild_handoff_agent(tool)
+        runtime_tools, missing, prompt_refreshed = self._rebuild_handoff_agent(
+            tool, event
+        )
         event.set_extra("contract_generation_builder_runtime_tools", runtime_tools)
         if missing:
             logger.error(
                 "Contract generation flow: Builder runtime unavailable: "
-                "prompt_refreshed=%s missing_tools=%s",
+                "prompt_refreshed=%s missing=%s",
                 prompt_refreshed,
                 missing,
             )
         else:
             logger.info(
                 "Contract generation flow: refreshed Builder handoff: "
-                "prompt_refreshed=%s tools=%s",
+                "prompt_refreshed=%s corpus=%s tools=%s",
                 prompt_refreshed,
+                event.get_extra("contract_generation_reference_corpus_slug", ""),
                 runtime_tools,
             )
         await self._send_progress_once(event)
