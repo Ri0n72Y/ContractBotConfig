@@ -7,9 +7,11 @@
 ```text
 用户明确要求生成/起草/制作
 → Master 直接委派 Builder
-→ Builder 在 contracts 中选择最相关参考合同并读取正文
+→ Generation Flow 从 AstrBot 当前 Tool Manager 重建 Builder 四工具 ToolSet
+→ Builder 调 list_documents 获取当前绑定 MCP 数据源的真实文档列表
+→ Builder 选择最相关 document_slug，并从 offset 0 读取非空正文
 → 合同库可复用信息优先，仍缺失的普通字段保留【待填写】
-→ Gateway 核验本轮 corpus_slug + document_slug
+→ Gateway 核验本轮 Builder 的真实 list→get 读取
 → Docassemble 生成 DOCX
 → Delivery 发布临时 HTTPS 链接
 → Master 回复用户
@@ -17,7 +19,7 @@
 
 生成草稿不设置额外固定确认口令。用户说“按这个生成”“开始生成”等自然语言执行表达直接进入生成，不要求再回复“确认生成”。生成任务中需要从合同库补字段时由 Builder 自己读取，不先经过 Operator。
 
-Generation Flow 只负责一条生成处理中提示和 Builder 核心工具绑定检查，不保存 pending confirmation，也不维护确认 TTL/别名状态机。
+Generation Flow 只负责一条生成处理中提示和 Builder 运行时四工具重建，不保存 pending confirmation，也不维护确认 TTL/别名状态机。Gateway 不再裁剪 Builder ToolSet，也不管理合同库 slug。
 
 ## Persona 与工具
 
@@ -46,21 +48,23 @@ publish_contract_download
 Skills: 无
 ```
 
-生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`，避免为读取 Skill 再产生 shell/文件工具轮次。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
+生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
+
+AstrBot handoff 会基于 subagent 配置/Persona 在 reload 时物化子 Agent 的 system prompt 与 tools。部署更新 Persona 或 subagent 绑定后，需要在 WebUI 保存并重载相关 Agent/配置（必要时重启 AstrBot），确保 handoff 对象刷新。即使旧 handoff 仍残留旧工具列表，Generation Flow 0.2.1 会在 Builder 请求开始时从当前全局 Tool Manager 重新解析四个核心工具，并用准确 ToolSet 替换运行时列表。
 
 ## 合同库读取策略
 
-当前生成库固定使用 `corpus_slug=contracts`。
+生成链不要求 Master、Builder、Gateway 或 handoff 指定 `corpus_slug`。合同库数据源由 Builder 当前绑定的 MCP 连接决定。
 
 Builder 默认：
 
-1. `list_documents` 一次取得真实列表；
-2. 选择一份最相关的主参考，不默认扫描整个 Corpus；
-3. `get_document_text(char_offset=0, max_chars=30000)`，有 `next_offset` 再继续；
+1. `list_documents` 一次取得当前 MCP 数据源中的真实列表；
+2. 选择一份最相关的主参考，不默认扫描全部文档；
+3. 对列表中的真实 `document_slug` 调用 `get_document_text(char_offset=0, max_chars=30000)`；有 `next_offset` 再继续；
 4. 只有主参考确实不足时才读取第二份相关合同；
 5. 某个候选正文为空可换下一份；所有相关参考都不可读才 BLOCKED。
 
-Gateway 仍负责本轮真实来源核验：必须先有同一 Corpus 的 `list_documents` 成功结果，再有其中真实 `document_slug` 的非空正文结果。历史会话摘要不能替代本轮读取。
+Gateway 只负责本轮真实来源核验：必须先看到 Builder 本轮 `list_documents` 的真实结果，再看到其中某个 `document_slug` 从 offset 0 返回非空正文。Operator 或历史会话中的读取结果不能替代本轮 Builder 读取。
 
 ## 缺失字段策略
 
@@ -120,10 +124,10 @@ python -m compileall -q plugins scripts
 python scripts/build_release.py --clean
 ```
 
-建议 E2E 使用一条请求直接验证：
+建议 E2E 使用：
 
 ```text
 根据合同库生成一份合同；相关条款先从数据库找，找不到的留空，按这个生成。
 ```
 
-验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不调用 `list_public_corpuses` 猜库、不默认扫描整个 Corpus、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
+验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不要求/猜测 `corpus_slug`、Builder 实际 ToolSet 为四个核心工具、不默认扫描全部文档、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
