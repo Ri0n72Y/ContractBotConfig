@@ -2,25 +2,43 @@
 
 版本以根目录 `VERSIONS.md` 为准，Persona 工具绑定以 `personas/bindings.json` 为准。
 
-## 正常链路
+## 正常生成链
 
 ```text
 用户明确要求生成/起草/制作
 → Master 直接委派 Builder
-→ Generation Flow 在 handoff 执行前从 AstrBot 当前 Tool Manager 重建 Builder 四工具 ToolSet
-→ Flow 注入的 list/get 观察代理在 Builder 内部记录真实读取证据
-→ Builder 调 list_documents 获取当前绑定 MCP 数据源的真实文档列表
-→ Builder 选择最相关 document_slug，并从 offset 0 读取非空正文
+→ Handoff Policy 从唯一配置解析 OpenContracts Corpus
+→ Generation Flow 刷新 Builder Prompt 和四工具 ToolSet
+→ Flow 将 corpus_slug 从 Builder 可见 schema 隐藏，并在实际 list/get MCP 调用时注入配置值
+→ Builder list_documents → 选择主参考 → get_document_text(offset=0)
 → 合同库可复用信息优先，仍缺失的普通字段保留【待填写】
-→ Gateway 消费本轮读取证据并决定是否允许 Docassemble 生成
-→ Docassemble 生成 DOCX
+→ Builder 选择固定 DOCX template_key 或 generic fallback
+→ Gateway 验证本轮真实参考读取并调用正式 Docassemble interview
+→ Docassemble 基于固定 DOCX 模板生成排版稳定的 DOCX
 → Delivery 发布临时 HTTPS 链接
 → Master 回复用户
 ```
 
-生成草稿不设置额外固定确认口令。用户说“按这个生成”“开始生成”等自然语言执行表达直接进入生成，不要求再回复“确认生成”。生成任务中需要从合同库补字段时由 Builder 自己读取，不先经过 Operator。
+生成草稿不设置额外固定确认口令。用户说“按这个生成”“开始生成”等自然语言执行表达直接进入生成；生成任务中需要从合同库补字段时由 Builder 自己读取，不先经过 Operator。
 
-Generation Flow 只负责一条生成处理中提示、Builder handoff 的四工具重建，以及对 Builder 本轮 list/get 实际结果的轻量记录；不保存 pending confirmation，也不维护确认 TTL/别名状态机。Gateway 不再裁剪 Builder ToolSet，也不管理合同库 slug，只在真正调用 `docassemble_generate_document` 时检查本轮读取证据和当前输出。
+## Corpus 配置
+
+Corpus slug 只有一个配置 owner：`astrbot_plugin_contract_handoff_policy`。
+
+```text
+default_opencontracts_corpus_slug = contracts
+```
+
+该值同时用于独立读取、上传发现与 Builder 生成参考读取。Generation Flow 不保存第二份配置，只消费 Handoff Policy 在本轮 event 上绑定的目标 Corpus。
+
+Builder 实际看到：
+
+```text
+list_documents(search=...)
+get_document_text(document_slug=..., char_offset=0, max_chars=30000)
+```
+
+Builder 不看到也不提交 `corpus_slug`。Flow 在调用原 MCP Tool 前自动补入配置值。因此不要让 Persona 猜 `contracts/default`，也不要调用 `list_public_corpuses`。
 
 ## Persona 与工具
 
@@ -49,39 +67,105 @@ publish_contract_download
 Skills: 无
 ```
 
-生成主路径核心规则固化在 Master/Builder Persona，不绑定 `contract-orchestrator` 或 `contract-docassemble`。两个 status 工具只用于管理员排障，不绑定给 Builder；语义检索保留在 Operator 独立分析路径，不进入常态生成工具集。
+Builder 1.20 支持：
 
-AstrBot handoff 会基于 subagent 配置/Persona 在 reload 时物化子 Agent 的 system prompt 与 tools；handoff 执行时直接把该 Agent 的 instructions/tools 传给独立 `tool_loop_agent`，不会重新经过主 pipeline 的 LLM/tool hooks。因此部署更新 Persona 或 subagent 绑定后，需要在 WebUI 保存并重载相关 Agent/配置（必要时重启 AstrBot），确保 handoff 对象刷新。Generation Flow 0.2.1 还会在每次 `transfer_to_docassemble_builder` 真正执行前，从当前全局 Tool Manager 重新解析四个核心工具并覆盖 handoff Agent 的运行时 tools/instructions，避免旧 handoff 的 status-only ToolSet 继续生效。
+```text
+road_labor         道路工程劳务/施工固定 DOCX 模板
+material_purchase  材料采购/供货固定 DOCX 模板
+generic            尚无固定模板时的旧 document_body fallback
+```
 
-## 合同库读取策略
+固定模板场景不再让 LLM 重写整份合同正文；Builder 只提交已知的 `contract_data` 和必要的列表数据，Interview 对未提供字段写入 `【待填写】` / `【待双方确认】`。
 
-生成链不要求 Master、Builder、Gateway 或 handoff 指定 `corpus_slug`。合同库数据源由 Builder 当前绑定的 MCP 连接决定。
+## 正式 interview
 
-Builder 默认：
+生产 interview：
 
-1. `list_documents` 一次取得当前 MCP 数据源中的真实列表；
-2. 选择一份最相关的主参考，不默认扫描全部文档；
-3. 对列表中的真实 `document_slug` 调用 `get_document_text(char_offset=0, max_chars=30000)`；有 `next_offset` 再继续；
-4. 只有主参考确实不足时才读取第二份相关合同；
-5. 某个候选正文为空可换下一份；所有相关参考都不可读才 BLOCKED。
+```text
+contractbot_document_generation.yml
+```
 
-Flow 注入的两个只读观察代理只记录实际工具返回，不额外发起 MCP 请求：`list_documents` 成功时记录本轮真实 `document_slug` 列表；`get_document_text` 只有读取该列表中的 slug、请求与返回 offset 都为 0、正文非空时才形成 reference verified。Gateway 只消费这份本轮证据。Operator 或历史会话中的读取结果不能替代 Builder 本轮读取。
+支持变量：
+
+```text
+document_title
+template_key
+contract_data
+material_items   # material_purchase 可选
+boq_markdown     # road_labor 可选
+document_body    # 仅 generic fallback
+```
+
+固定模板映射：
+
+```text
+road_labor
+→ contractbot_road_labor_template.docx
+
+material_purchase
+→ contractbot_material_purchase_template.docx
+```
+
+`contractbot_api_smoke.yml` 仅用于 API smoke，不能作为正式 `default_interview`。
+
+## Docassemble Playground 部署模板
+
+在与 production interview 相同的 Playground / Project 中：
+
+1. 打开 `Folders → Templates`；
+2. 上传并保持以下**精确文件名**：
+
+```text
+contractbot_road_labor_template.docx
+contractbot_material_purchase_template.docx
+```
+
+3. 回到 Questions/Interviews，使用仓库当前 `docs/docassemble/contractbot_document_generation.yml` 替换现有 production interview 内容并保存；
+4. Gateway 的 `allowed_interviews/default_interview` 继续指向这个 production interview 的完整 filename，不需要改成 DOCX 模板名；
+5. 重新开始一次新的 interview/session 做 E2E。
+
+如果以后 package 化，则将两个 DOCX 放到 package 的 `data/templates/`，production YAML 保持同名引用即可。
+
+## 模板字段策略
+
+两个 Word 模板保留原合同的页面尺寸、段落、标题、分页、签署页和主要表格版式，只把业务可变位置替换为 Jinja/Docassemble 变量。
+
+常用 `contract_data`：
+
+```text
+contract_number
+project_name
+work_name
+project_location
+signing_place
+signing_date
+party_a_name / party_b_name
+party_a_address / party_b_address
+party_a_legal_rep / party_b_legal_rep
+party_a_agent / party_b_agent
+party_a_bank / party_b_bank
+party_a_account / party_b_account
+party_a_tax_id / party_b_tax_id
+party_a_postcode / party_b_postcode
+party_a_phone / party_b_phone
+party_a_email / party_b_email
+```
+
+道路劳务模板还使用工程工期、道路长度、设备材料、价格/税额、驻场代表等字段，并允许 `boq_markdown` 插入工程量清单。
+
+材料采购模板使用 `pricing_clause` 承载固定单价或固定总价的完整计价表述，避免为两种价格模式维护两份 Word；材料清单由 `material_items` 动态生成表格行。
 
 ## 缺失字段策略
 
 默认：
 
 ```text
-draft_policy = database_first_then_placeholder
+draft_policy = reference_first_then_placeholder
 ```
 
-用户明确值优先；其余先从合同库参考正文取得。仍未找到的金额、付款节点、工商字段、具体日期、质保比例、争议机构等普通草稿字段写成 `【待填写】` / `【待双方确认】` 并继续生成。只有用户明确要求字段完整才能生成时，才以缺失字段阻断。
-
-因此用户说“这些内容先从数据库拿，没有的留空，我自己写”后，不应再次要求其补同一批字段。
+用户明确值优先；其余先从本轮参考合同取得。不同项目的金额、单价、具体日期和比例不能默认照搬，除非用户明确授权这些字段也使用历史值。固定模板中未提供的普通字段由 interview 自动填 `【待填写】`；争议解决等需双方确定的字段可填 `【待双方确认】`。只有用户明确要求字段完整才能生成时才阻断。
 
 ## Gateway
-
-必须配置真实生产 interview：
 
 ```text
 base_url = http://docassemble
@@ -92,9 +176,7 @@ output_retention_seconds = 86400
 output_cleanup_interval_seconds = 300
 ```
 
-`docs/docassemble/contractbot_document_generation.yml` 是当前最小生产生成样例，接收 `document_title` 和 `document_body`。
-
-`contractbot_api_smoke.yml` 仅用于 API smoke，不能作为正式 `default_interview`。如果运行环境仍只 allowlist smoke interview，正式生成必然 BLOCKED；不要通过每次请求调用 status 工具绕过这项部署配置。
+Gateway 只验证本轮参考读取、正式 interview 和当前生成输出，不负责 Corpus 配置或 Builder ToolSet。
 
 ## Delivery
 
@@ -105,30 +187,29 @@ allowed_source_dirs = [data/plugins_data/astrbot_plugin_docassemble_gateway/outp
 ttl_seconds = 1800
 ```
 
-只有同一次 Gateway 的 `output_path/output_filename` 可以发布。只有真实 HTTPS 发布成功后才能向客户报告 READY。
+只有同一次 Gateway 的 `output_path/output_filename` 可以发布；只有真实 HTTPS 发布成功后才能向客户报告 READY。
 
-## 客户消息数量
+## E2E
 
-正常生成只需要：
-
-```text
-1 条处理中提示
-1 条最终成功/失败结果
-```
-
-不再发送“收到 → 待确认 → 最终确认 → 读取完成 → DOCX 已生成 → 正在发布”等多层阶段消息。
-
-## 构建与 E2E
-
-```powershell
-python -m compileall -q plugins scripts
-python scripts/build_release.py --clean
-```
-
-建议 E2E 使用：
+道路劳务：
 
 ```text
-根据合同库生成一份合同；相关条款先从数据库找，找不到的留空，按这个生成。
+根据合同库生成一份道路工程劳务合同。项目名称是“XX项目”，地点是“广东省佛山市”，其他内容优先从合同库参考，找不到的留空，按这个生成。
 ```
 
-验收重点：不要求固定确认口令、不先委派 Operator、不调用 Skill shell、不调用两个 status preflight、不要求/猜测 `corpus_slug`、日志中的 Builder 实际 ToolSet 为四个核心工具、不默认扫描全部文档、未找到字段保留占位符、真实 DOCX + HTTPS 下载成功。
+材料采购：
+
+```text
+生成一份材料采购合同，项目名称“XX项目”，采用固定总价；材料范围和常用条款优先参考合同库，未提供的数据留空，直接生成。
+```
+
+日志验收：
+
+```text
+Contract handoff policy: bound generation corpus=contracts
+Contract generation flow: refreshed Builder handoff ... corpus=contracts ...
+```
+
+Builder 的 `list_documents/get_document_text` 调用日志中不应再出现空 `corpus_slug`、`default` 或 Agent 猜测的 `contracts`；MCP 实际调用由 Flow 自动注入正确配置。
+
+正常客户侧仍只需要一条处理中提示和一条最终成功/失败结果。

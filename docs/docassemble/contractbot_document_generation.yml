@@ -1,10 +1,97 @@
 ---
 metadata:
-  title: ContractBot production document generation
-  short title: ContractBot document generation
+  title: ContractBot legacy document generation
+  short title: ContractBot legacy generation
+---
+initial: True
+code: |
+  if not defined('template_key'):
+    template_key = 'generic'
+  if not defined('document_title'):
+    document_title = '合同草稿'
+  if not defined('contract_data') or not isinstance(contract_data, dict):
+    contract_data = {}
+  if not defined('material_items') or not isinstance(material_items, list):
+    material_items = []
+  if not defined('boq_markdown'):
+    boq_markdown = ''
+
+  placeholder_fields = [
+    'contract_number',
+    'project_name',
+    'work_name',
+    'project_location',
+    'signing_place',
+    'signing_date',
+    'party_a_name',
+    'party_a_address',
+    'party_a_legal_rep',
+    'party_a_agent',
+    'party_a_bank',
+    'party_a_account',
+    'party_a_tax_id',
+    'party_a_postcode',
+    'party_a_phone',
+    'party_a_email',
+    'party_b_name',
+    'party_b_address',
+    'party_b_legal_rep',
+    'party_b_agent',
+    'party_b_bank',
+    'party_b_account',
+    'party_b_tax_id',
+    'party_b_postcode',
+    'party_b_phone',
+    'party_b_email',
+    'road_length_km',
+    'owner_supplied_materials',
+    'planned_start_date',
+    'planned_end_date',
+    'total_calendar_days',
+    'unit_price_taxed',
+    'unit_price_untaxed',
+    'vat_rate',
+    'vat_per_km',
+    'provisional_total',
+    'provisional_total_upper',
+    'provisional_total_untaxed',
+    'provisional_vat',
+    'party_a_site_rep',
+    'party_a_site_phone',
+    'party_b_site_rep',
+    'party_b_site_phone',
+    'supply_scope',
+    'pricing_clause',
+    'delivery_days',
+    'progress_payment_percent',
+    'invoice_payment_days',
+    'retention_percent',
+    'warranty_months',
+    'dispute_resolution',
+    'material_table_note',
+  ]
+  for field_name in placeholder_fields:
+    contract_data.setdefault(field_name, '【待填写】')
+
+  contractbot_template_map = {
+    'road_labor': 'contractbot_road_labor_template.docx',
+    'material_purchase': 'contractbot_material_purchase_template.docx',
+  }
+  if template_key in contractbot_template_map:
+    contractbot_template_filename = contractbot_template_map[template_key]
 ---
 attachment:
-  variable name: contractbot_output
+  variable name: contractbot_templated_output
+  name: ${ document_title }
+  filename: contractbot_generated_contract
+  docx template file:
+    code: |
+      contractbot_template_filename
+  valid formats:
+    - docx
+---
+attachment:
+  variable name: contractbot_generic_output
   name: ${ document_title }
   filename: contractbot_generated_contract
   content: |
@@ -14,12 +101,18 @@ attachment:
 ---
 mandatory: True
 code: |
-  contractbot_output
+  if template_key in contractbot_template_map:
+    contractbot_templated_output
+    contractbot_output = contractbot_templated_output
+  else:
+    contractbot_generic_output
+    contractbot_output = contractbot_generic_output
   json_response({
     "contractbot_document": {
       "status": "complete",
       "file_number": contractbot_output.docx.number,
       "filename": "contractbot_generated_contract.docx",
-      "extension": "docx"
+      "extension": "docx",
+      "template_key": template_key
     }
   })
