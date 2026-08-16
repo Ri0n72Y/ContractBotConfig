@@ -41,7 +41,7 @@ class OpenContractsGateway(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "OpenContracts upload gateway 0.6.1 initialized: "
+            "OpenContracts upload gateway 0.6.2 initialized: "
             "base_url=%s corpus=worker-key-bound",
             self.settings.base_url,
         )

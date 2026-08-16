@@ -30,9 +30,6 @@ class ContractHandoffPolicy(Star):
     ) -> None:
         super().__init__(context, config)
         config = config or {}
-        self.force_synchronous_platforms = set(
-            config.get("force_synchronous_platforms", ["wecom"])
-        )
         self.long_task_ack_enabled = bool(
             config.get("long_task_ack_enabled", True)
         )
@@ -48,7 +45,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.5.1 initialized: default_corpus=%s",
+            "Contract handoff policy 0.5.3 initialized: default_corpus=%s",
             self.default_opencontracts_corpus_slug or "<empty>",
         )
 
@@ -105,7 +102,45 @@ class ContractHandoffPolicy(Star):
         }
 
     @staticmethod
+    def _strip_corpus_overrides(parsed: dict[str, Any]) -> dict[str, Any]:
+        preserved = dict(parsed)
+        preserved.pop("corpus_slug", None)
+
+        targets = preserved.get("targets")
+        if isinstance(targets, dict):
+            clean_targets = dict(targets)
+            clean_targets.pop("opencontracts", None)
+            if clean_targets:
+                preserved["targets"] = clean_targets
+            else:
+                preserved.pop("targets", None)
+
+        for key in ("branch_task", "read_contract", "mcp_contract"):
+            value = preserved.get(key)
+            if not isinstance(value, dict):
+                continue
+            clean_value = dict(value)
+            clean_value.pop("corpus_slug", None)
+            if clean_value:
+                preserved[key] = clean_value
+            else:
+                preserved.pop(key, None)
+
+        branch_tasks = preserved.get("branch_tasks")
+        if isinstance(branch_tasks, dict):
+            clean_branch_tasks = dict(branch_tasks)
+            operator = clean_branch_tasks.get("opencontracts_operator")
+            if isinstance(operator, dict):
+                clean_operator = dict(operator)
+                clean_operator.pop("corpus_slug", None)
+                clean_branch_tasks["opencontracts_operator"] = clean_operator
+            preserved["branch_tasks"] = clean_branch_tasks
+
+        return preserved
+
+    @classmethod
     def _preserve_agent_input(
+        cls,
         canonical: dict[str, Any],
         parsed: dict[str, Any],
     ) -> None:
@@ -119,32 +154,17 @@ class ContractHandoffPolicy(Star):
                 "contract_date": contract_date,
                 "contract_title": contract_title,
             }
-        if parsed:
-            canonical["main_agent_input"] = parsed
+        preserved = cls._strip_corpus_overrides(parsed)
+        if preserved:
+            canonical["main_agent_input"] = preserved
 
     def _corpus_slug(
         self,
         parsed: dict[str, Any],
         context: dict[str, Any] | None,
     ) -> str:
-        candidates = [
-            parsed.get("corpus_slug"),
-            (parsed.get("targets") or {}).get("opencontracts")
-            if isinstance(parsed.get("targets"), dict)
-            else None,
-            (parsed.get("branch_task") or {}).get("corpus_slug")
-            if isinstance(parsed.get("branch_task"), dict)
-            else None,
-            ((context or {}).get("targets") or {}).get("opencontracts")
-            if isinstance((context or {}).get("targets"), dict)
-            else None,
-            self.default_opencontracts_corpus_slug,
-        ]
-        for value in candidates:
-            text = str(value or "").strip()
-            if text:
-                return text
-        return ""
+        del parsed, context
+        return self.default_opencontracts_corpus_slug
 
     async def _send_long_task_ack(self, event: AstrMessageEvent) -> None:
         if (
@@ -255,7 +275,7 @@ class ContractHandoffPolicy(Star):
         canonical["mcp_contract"] = {
             "endpoint": "/mcp/",
             "corpus_slug": corpus_slug or None,
-            "corpus_slug_source": "targets.opencontracts",
+            "corpus_slug_source": "handoff_policy.default_opencontracts_corpus_slug",
             "document_discovery_tool": "list_documents",
             "missing_corpus_slug_action": "block_without_upload",
             "forbidden_tools": [
@@ -297,6 +317,14 @@ class ContractHandoffPolicy(Star):
             "expected_outputs": canonical.get("expected_outputs", []),
             "corpus_slug": corpus_slug or None,
         }
+        if isinstance(canonical.get("branch_tasks"), dict):
+            normalized_branch_tasks = dict(canonical["branch_tasks"])
+            operator_branch = normalized_branch_tasks.get("opencontracts_operator")
+            if isinstance(operator_branch, dict):
+                normalized_operator = dict(operator_branch)
+                normalized_operator["corpus_slug"] = corpus_slug or None
+                normalized_branch_tasks["opencontracts_operator"] = normalized_operator
+            canonical["branch_tasks"] = normalized_branch_tasks
         return canonical
 
     @filter.on_using_llm_tool(priority=1100)

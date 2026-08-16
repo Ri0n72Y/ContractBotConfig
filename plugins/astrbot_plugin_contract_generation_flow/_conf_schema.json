@@ -1,4 +1,9 @@
 {
+  "generation_asset_corpus_slug": {
+    "description": "合同生成资产库 Corpus slug；用于模板、参数和生成规则，不暴露给 Builder",
+    "type": "string",
+    "default": "contract-templates"
+  },
   "generation_progress_enabled": {
     "description": "实际委派 Builder 开始生成时发送一条处理中提示",
     "type": "bool",
@@ -7,6 +12,6 @@
   "generation_progress_text": {
     "description": "合同生成开始执行时的唯一处理中提示",
     "type": "string",
-    "default": "正在读取合同库中的参考合同并生成 DOCX，完成后会返回下载链接。"
+    "default": "正在匹配合同模板和历史参考合同，并生成可编辑 DOCX。"
   }
 }

@@ -1,90 +1,160 @@
 # Contract Generation Flow
 
-合同文书生成的会话控制插件。它不生成 DOCX，也不访问 Docassemble API；它负责生成流程的用户体验、确认状态和运行期护栏。
+合同生成子人格的运行时编排插件。它不保存业务模板、不理解合同法律内容；它负责把 Generation Asset Corpus、Historical Contract Corpus、Draft Store、DOCX Generator 和 HTTPS Delivery 组合成少量 Builder 领域工具，并记录本轮生成证据。
 
-## 目标流程
+## MVP 正式流程
+
+正常新生成优先按 AI 回合组织，而不是按单个工具串行组织：
 
 ```text
-用户提出生成请求
-→ 立即回复“已收到”
-→ Master 整理已知信息 / 缺失信息
-→ 向用户发送确认清单
-→ 等待“确认生成”或修改
-→ 用户确认
-→ 提示“开始读取合同库并生成”
-→ Builder 实时读取 OpenContracts 参考合同
-→ 提示“正在通过 Docassemble 生成 DOCX”
-→ Docassemble Gateway 生成
-→ 提示“正在准备下载链接”
-→ Contract Download Delivery 发布 HTTPS 链接
-→ Master 最终交付
+Master handoff Builder
+
+AI #1
+├─ find_generation_assets(limit=3)
+└─ find_similar_contracts(limit=3, best-effort)
+
+AI #2
+└─ read_generation_asset(max_chars=80000)
+   └─ 只有模板返回 next_offset 才继续读取
+   └─ 历史检索可用且片段明显不足时才 read_reference_contract
+
+AI #3
+└─ generate_and_publish_contract
+   ├─ generate_contract_docx
+   ├─ publish_contract_download
+   └─ finalize_contract_draft（仅发布成功后）
+
+AI #4
+└─ [CONTRACT_GENERATION:READY]
 ```
 
-## 确认门
+AstrBot 支持一次模型响应返回多个 tool calls，因此模板检索和历史相似合同检索优先在同一次 AI 响应中发出。两者都只依赖用户需求，不互相依赖。Provider 不支持多 tool call 时才退化为顺序执行。
 
-首次 `transfer_to_docassemble_builder` 会被改写为 `must_not_execute=true`。对应 Builder 请求的 ToolSet 会被运行时直接清空，因此即使模型忽略提示，也不能在用户确认前调用 OpenContracts、Docassemble 或下载交付工具。
+两个搜索默认各取 3 个最相关结果，首批候选明显不足时才扩大检索。`read_generation_asset` 首次默认 `max_chars=80000`，只有 `next_offset` 非空时才继续读取下一段。`find_similar_contracts` 成功且检索摘要够用时不再读取历史全文；确需全文时 `read_reference_contract` 首次默认 60000 字符。历史搜索 blocked 时 Builder 不重复重试，并在完整模板可用时继续生成。
 
-插件短时保存主人格提交的生成方案，并直接向企业微信发送 `confirmation_message`。待确认状态默认保留 30 分钟。用户回复 `确认生成`、`确认`、`开始生成` 等确认语后，下一次委派才会真正执行；用户补充或修改信息时会重新形成确认方案。用户回复取消类指令时，插件清除待确认状态并直接回复取消结果。
+DOCX 生成、HTTPS 发布和成功交付后的草稿持久化都是确定性动作，由 `generate_and_publish_contract` 内部顺序完成；模型不再处理中间 `output_path` 或 draft finalize。
 
-## Builder 工具护栏
-
-正式生成时 Builder 必须同时具备：
+## 修改当前会话上一版
 
 ```text
-list_documents
-get_document_text
+read_latest_contract_draft(max_chars=60000)
+→ 只有 next_offset 非空时 read_contract_draft
+→ generate_and_publish_contract(source_draft_id=...)
+→ [CONTRACT_GENERATION:READY]
+```
+
+`read_latest_contract_draft` 一次返回最近成功交付草稿的 `draft_id`、元数据和首段正文。有效 `source_draft_id` 会跳过本轮模板/历史检索，因此修改上一版不要求 OpenContracts MCP、Generation Asset Corpus 或 Historical Contract Corpus 当前可用。
+
+## Builder ToolSet
+
+Builder Persona 的静态 Tools 保持为空。Generation Flow 0.6.1 在 handoff 前注入固定的、请求无关的 wrapper ToolSet：
+
+```text
+find_generation_assets
+read_generation_asset
+find_similar_contracts
+read_reference_contract
+read_latest_contract_draft
+read_contract_draft
+generate_and_publish_contract
+```
+
+不注入 list/status/preflight、显式 select template、分块草稿写入、裸 `generate_contract_docx`、裸 `publish_contract_download` 或内部 `finalize_contract_draft`。
+
+Wrapper 底层按调用时动态解析 AstrBot 当前已激活工具：
+
+```text
 search_corpus
-docassemble_gateway_status
-docassemble_generate_document
-contract_download_delivery_status
+get_document_text
+read_latest_contract_draft
+read_contract_draft
+generate_contract_docx
+finalize_contract_draft
 publish_contract_download
 ```
 
-缺少任一工具时插件会移除 Builder 的全部可调用工具，并要求返回：
+Wrapper 会先按公开 JSON schema 丢弃模型多带的无关参数，再注入内部 `corpus_slug` 和性能默认值。因此额外字段不会透传到底层 MCP/plugin handler，MCP 或 Generator/Delivery hot reload 后也不会继续持有旧 handler 对象。
+
+生成资产 Corpus 使用插件配置 `generation_asset_corpus_slug`。历史合同 Corpus 由 Handoff Policy 写入当前 event 的 `contract_opencontracts_corpus_slug`。
+
+历史 Corpus 不存进共享 Handoff Agent。每个 wrapper 调用时从当前 `AstrMessageEvent` 读取绑定，所以并发会话不会互相覆盖 Corpus。共享 Agent 始终只收到同一个请求无关 ToolSet；某个请求恰逢 MCP/插件 hot reload 时，只会在真正调用对应 wrapper 时得到 blocked，不会把共享 Agent ToolSet 清空并影响其他请求。
+
+## Persona protocol
+
+Flow 接受：
 
 ```text
-[CONTRACT_DOCASSEMBLE:BLOCKED]
-reason=builder_tool_binding_incomplete
+<contract_generation_protocol version="4">
 ```
 
-因此不会出现“只有 Docassemble 生成工具、没有合同库读取或下载发布工具，却仍然生成成功”的情况。
+Persona protocol 不兼容时当前 event 记录 runtime missing，Generator 会拒绝正式生成；Flow 不再因为单个请求的 protocol 状态去清空共享 Agent ToolSet。Persona 更新后按部署文档重载对应 Subagent。Flow 不在每个请求里原地刷新共享 Agent Prompt。
 
-## 参考合同读取顺序
+## 模板读取
 
-用户确认后，插件记录本轮是否实际调用过：
+Builder 通过 `find_generation_assets` 选择最合适候选，然后读取该候选。Manifest 是可选元数据，已有纯文本合同模板不需要为了 MVP 重新加工。
+
+运行时只保留读取连续性和显式元数据排除规则：
+
+1. `document_slug` 与请求一致；
+2. 从 `char_offset=0` 开始；
+3. 后续 offset 等于上一块实际文本末尾；
+4. `next_offset=null` 时文本末尾等于 `total_chars`；
+5. 本轮尚未绑定模板时，没有 manifest 的完整可读候选可以直接作为兼容模板；
+6. manifest 明确声明 `contract_template` 且状态为空/active 时可以绑定模板；
+7. 一旦已经绑定模板，后续无 manifest 参数/规则资产不会覆盖模板身份；
+8. manifest 明确声明其他 asset type 或非 active 状态时不自动当作模板；
+9. 完整读完后自动绑定，不要求额外 `select_generation_template` 调用。
+
+Manifest 中的 `render_profile`、`required_headings`、`parameter_assets`、`rule_assets` 作为提示元数据记录。后面三项不作为正式生成代码级 gating；缺失或未知排版回退 `standard_contract`。模板正文和可用的 OpenContracts 资料才是 Builder 的主要依据。
+
+## 运行证据
+
+Flow 仍记录：
 
 ```text
-list_documents
+contract_generation_asset_search_verified
+contract_generation_template_selected_verified
+contract_generation_history_search_verified
+```
+
+其中前两项是新合同 Generator 0.4.2 的代码级必要证据；`contract_generation_history_search_verified` 只表示本轮历史相似合同检索成功，用于诊断和观测，不再是 Generator 的硬门槛。修改已有成功交付 draft 时不要求上述知识库证据。
+
+Flow 每次 handoff 生成唯一：
+
+```text
+contract_generation_generation_id
+```
+
+DOCX output 和 HTTPS publication 都绑定该 generation_id。Generator 和 Delivery 对同一 generation 的已成功结果幂等返回，避免模型误重复调用造成重新渲染或重复发布。
+
+正式 Generator 生成 DOCX 后先把 Markdown 保存在当前 event 的 pending draft；只有 HTTPS publication 成功后，组合工具才调用内部 `finalize_contract_draft` 写入 Draft Store。发布失败不会改变用户可见的“上一版”。
+
+## 运行依赖
+
+Flow 在 handoff 时只把 Persona protocol 不兼容记录为 event 级正式生成阻断。底层工具和 Corpus 状态只用于诊断；实际是否可用由对应 wrapper 在调用时判断：
+
+```text
+search_corpus
 get_document_text
+read_latest_contract_draft
+read_contract_draft
+generate_contract_docx
+finalize_contract_draft
+publish_contract_download
 ```
 
-只有两者均已进入本轮工具调用链后，才发送 Docassemble 生成阶段提示。Docassemble Gateway 0.1.2 会再次检查这两个运行期标记；未经过该读取顺序的正式生成会返回 `status=blocked`，不会启动 Docassemble session。
+因此 transient hot reload 不改变其他请求的 ToolSet。Generation Asset Corpus 和可用模板是新合同生成必要数据；Historical Contract Corpus 是优先使用的 best-effort 参考，不是修改已有 draft 的前置条件，也不在模板完整可用时单独阻止新生成。
 
-该护栏保证“先读取参考合同、后生成”的调用顺序；参考正文是否足够支持具体条款，仍由 Builder Skill 根据工具返回结果判断。
+## 数据边界
 
-## Docassemble smoke interview
+代码仓库不保存真实模板正文、企业参数、历史合同或项目事实。业务内容只存在外部 Corpus。
 
-正式客户合同不得使用文件名包含 `smoke` 的 interview。除运行期指令外，Docassemble Gateway 0.1.2 会在正式确认后的生成调用中确定性拒绝 smoke interview，包括 default interview 仍指向 smoke 的情况。
-
-Smoke interview 仅用于基础 API 链路验证，不能作为生产合同模板。
+当前 MVP 假设 OpenContracts MCP 位于受信 Docker 局域网，部署用户少于 20 人。因此不增加 MCP server identity 探测、网络来源筛查、数据库锁、分布式锁或队列。主要并发边界是 Event 级状态隔离、请求无关共享 ToolSet、Draft Store 文件锁和 Delivery audit 写锁。
 
 ## 配置
 
-所有字段都有默认值。常用配置：
-
 ```text
-generation_ack_enabled = true
-confirmation_ttl_seconds = 1800
+generation_asset_corpus_slug = contract-templates
+generation_progress_enabled = true
+generation_progress_text = 正在匹配合同模板和历史参考合同，并生成可编辑 DOCX。
 ```
-
-即时回执、确认兜底、取消回复和阶段提示文字均可在 AstrBot WebUI 中调整。
-
-## 数据
-
-待确认方案保存在：
-
-```text
-data/plugins_data/astrbot_plugin_contract_generation_flow/pending_generation.json
-```
-
-仅用于跨消息确认恢复，超过 TTL 后在后续消息进入或插件初始化时清理。日志不会记录方案正文。

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
 import zipfile
@@ -30,6 +31,7 @@ class PublicationService:
 
     def __init__(self, settings: DeliverySettings) -> None:
         self.settings = settings
+        self._audit_lock = threading.Lock()
         self.settings.public_root.mkdir(parents=True, exist_ok=True)
         self.settings.audit_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -161,11 +163,11 @@ class PublicationService:
 
     def _audit(self, payload: dict[str, Any]) -> None:
         record = {"recorded_at": int(time.time()), **payload}
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
         try:
-            with self.settings.audit_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(record, ensure_ascii=False, default=str) + "\n"
-                )
+            with self._audit_lock:
+                with self.settings.audit_path.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
         except OSError:
             pass
 

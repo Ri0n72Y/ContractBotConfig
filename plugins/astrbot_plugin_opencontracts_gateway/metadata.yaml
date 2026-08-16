@@ -1,7 +1,7 @@
 name: astrbot_plugin_opencontracts_gateway
 display_name: OpenContracts 上传网关
 desc: 使用 WorkerKey 向绑定 Corpus 导入规范化合同文件，并维护追加式上传审计记录。
-version: 0.6.1
+version: 0.6.2
 author: local
 repo: ""
 astrbot_version: ">=4.23.1,<5"

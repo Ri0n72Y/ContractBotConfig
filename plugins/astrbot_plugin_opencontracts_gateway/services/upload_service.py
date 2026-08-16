@@ -199,6 +199,21 @@ class UploadService:
             "custom_meta": json.dumps(metadata, ensure_ascii=False, default=str),
         }
 
+        if not self.confirmations.task_still_active(
+            session_key,
+            task_id,
+            actual_sha256,
+        ):
+            return json_result(
+                success=False,
+                status="blocked",
+                upload_status="not_started",
+                failure_stage="task_cancelled",
+                error="当前上传任务已被用户结束，未向 OpenContracts 提交写入。",
+                source_sha256=actual_sha256,
+                retry_safe=False,
+            )
+
         response = await self.client.upload(source, data)
         return self.results.map(
             response,

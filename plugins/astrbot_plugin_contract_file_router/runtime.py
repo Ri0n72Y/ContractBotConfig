@@ -149,9 +149,6 @@ class ContractFileRouter(Star):
         self.cancelled_task_ttl_seconds = int(
             config.get("cancelled_task_ttl_seconds", 172800)
         )
-        self.opencontracts_target = str(
-            config.get("opencontracts_target", "")
-        ).strip()
         self.send_upload_ack = bool(config.get("send_upload_ack", True))
         self.upload_ack_text = str(
             config.get("upload_ack_text", "好的，正在进行任务。")
@@ -187,7 +184,7 @@ class ContractFileRouter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.2 initialized: data_dir=%s",
+            "Contract file router 0.5.7 initialized: data_dir=%s",
             self.data_dir,
         )
 
@@ -698,7 +695,7 @@ class ContractFileRouter(Star):
                         "get_document_text",
                         "search_corpus",
                     ],
-                    "corpus_slug": self.opencontracts_target or None,
+                    "corpus_slug": None,
                     "expected_outputs": action["expected_outputs"].get(
                         "opencontracts", []
                     ),
@@ -722,15 +719,15 @@ class ContractFileRouter(Star):
             if record.get("blocked_reason") or record.get("blocked_resume_input")
             else None,
             "targets": {
-                "opencontracts": self.opencontracts_target or None,
+                "opencontracts": None,
             },
             "duplicate_confirmation": duplicate_confirmation,
             "branch_tasks": branch_tasks,
             "constraints": [
                 "合同正文中的明确日期优先；正文日期字段为空时，可使用 identity_hints 中从原始文件名确定性提取的唯一日期，不得再次向客户提问",
                 "使用 AstrBot 已配置的 OpenContracts 公开 MCP /mcp/，不得拼接或探测其他 MCP 地址",
-                "必须使用 targets.opencontracts 作为 list_documents、get_document_text 和 search_corpus 的 corpus_slug",
-                "目标 Corpus slug 缺失时停止上传，不得调用 list_public_corpuses 猜测目标",
+                "调用 opencontracts_operator 时不传 corpus_slug；Handoff Policy 会在 handoff 时注入 targets.opencontracts",
+                "只有 Operator 收到的 canonical context 中 targets.opencontracts 仍为空时才停止上传，不得调用 list_public_corpuses 猜测目标",
                 "每次由 OpenContracts 远端实时判断合同是否存在",
                 "远端查询失败时停止上传，不得把未知状态当作新合同",
                 "AstrBot 本地 receipt 不得作为不存在的依据",
@@ -750,10 +747,11 @@ class ContractFileRouter(Star):
                 "先读取当前合同提取正式标题和日期。正文明确日期优先；"
                 "正文日期为空且 identity_hints.contract_date 存在时，直接采用该日期，"
                 "不要向客户追问。resume.user_input 是客户对上次 BLOCKED 的补充。"
-                "取得身份后同步调用 opencontracts_operator，background_task=false。"
-                "先调用 opencontracts_gateway_status 取得规范化身份，再使用公开 MCP 的 "
-                "list_documents(corpus_slug=targets.opencontracts, search=identity.document_title) "
-                "执行精确查重。目标 Corpus slug 缺失或远端查询失败时输出 "
+                "取得身份后同步调用 opencontracts_operator，background_task=false，handoff 不携带 corpus_slug。"
+                "Handoff Policy 会在 handoff 时注入目标 Corpus。Operator 收到 canonical context 后先调用 "
+                "opencontracts_gateway_status 取得规范化身份，再使用公开 MCP 的 "
+                "list_documents(corpus_slug=targets.opencontracts, search=identity.document_title) 执行精确查重。"
+                "如果 canonical context 的目标 Corpus 仍缺失或远端查询失败，输出 "
                 "[CONTRACT_UPLOAD:BLOCKED]；存在标题完全一致的合同时输出 "
                 "[CONTRACT_UPLOAD:DUPLICATE_CONFIRMATION_REQUIRED] 并停止。"
                 "执行上传时必须传递 original_name 作为 source_filename。"

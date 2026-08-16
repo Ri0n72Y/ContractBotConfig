@@ -26,7 +26,8 @@ class DeliverySettings:
             for item in config.get(
                 "allowed_source_dirs",
                 [
-                    "data/plugins_data/astrbot_plugin_docassemble_gateway/output"
+                    "data/plugins_data/astrbot_plugin_contract_docx_generator/output",
+                    "data/plugins_data/astrbot_plugin_docassemble_gateway/output",
                 ],
             )
             if str(item).strip()
