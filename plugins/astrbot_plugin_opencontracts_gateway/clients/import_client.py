@@ -47,7 +47,7 @@ class ImportClient:
                             ),
                             "Accept": "application/json",
                             "User-Agent": (
-                                "AstrBot-OpenContracts-Upload-Gateway/0.6.1"
+                                "AstrBot-OpenContracts-Upload-Gateway/0.6.2"
                             ),
                         },
                         data={**data, "filename": source.source_filename},

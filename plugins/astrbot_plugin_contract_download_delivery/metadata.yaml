@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_download_delivery
 display_name: 合同临时下载交付
-desc: 发布本轮 Docassemble Gateway 生成的 DOCX，只绑定本轮输出并在最终回复前校验 READY 与真实 HTTPS 发布结果一致，按 TTL 安全清理。
-version: 0.2.0
+desc: 发布本轮正式生成的 DOCX，以 generation_id 绑定当前输出和 HTTPS 发布结果，并对重复发布幂等返回原链接；审计追加写入使用线程锁。
+version: 0.2.4
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"

@@ -265,9 +265,7 @@ def export_personas(root: Path, output: Path) -> list[Artifact]:
             ),
             encoding="utf-8",
         )
-        items.append(
-            artifact(root, "persona", persona_id, version, source, target)
-        )
+        items.append(artifact(root, "persona", persona_id, version, source, target))
 
     extras = sorted(set(bindings) - seen)
     if extras:

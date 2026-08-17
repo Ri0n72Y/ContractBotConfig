@@ -9,11 +9,6 @@
     "type": "string",
     "default": "data/plugins_data/astrbot_plugin_contract_file_router"
   },
-  "opencontracts_target": {
-    "description": "OpenContracts 公开 MCP 使用的目标 Corpus slug",
-    "type": "string",
-    "default": "contracts"
-  },
   "send_upload_ack": {
     "description": "开始任务时立即确认",
     "type": "bool",

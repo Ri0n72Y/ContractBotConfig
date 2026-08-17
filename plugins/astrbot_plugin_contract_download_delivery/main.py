@@ -16,10 +16,16 @@ from .services.publication_service import PublicationService
 
 
 GENERATION_HANDOFF_TOOL = "transfer_to_docassemble_builder"
+GENERATION_READY_MARKERS = (
+    "[CONTRACT_GENERATION:READY]",
+    "[CONTRACT_DOCASSEMBLE:READY]",
+)
+PUBLICATION_VERIFIED_KEY = "contract_generation_download_publication_verified"
+PUBLICATION_RECORD_KEY = "contract_generation_download_publication_record"
 
 
 class ContractDownloadDelivery(Star):
-    """Publish allowlisted generated DOCX files through expiring HTTPS links."""
+    """Publish the current generated DOCX through an expiring HTTPS link."""
 
     def __init__(
         self,
@@ -35,7 +41,7 @@ class ContractDownloadDelivery(Star):
         result = await asyncio.to_thread(self.publications.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract download delivery 0.2.0 initialized: configured=%s "
+            "Contract download delivery 0.2.4 initialized: configured=%s "
             "ttl_seconds=%d cleanup_removed=%d",
             self.settings.validation_error() is None,
             self.settings.ttl_seconds,
@@ -73,6 +79,12 @@ class ContractDownloadDelivery(Star):
             return Path(text).expanduser().resolve(strict=False)
         except (OSError, RuntimeError, ValueError):
             return None
+
+    @staticmethod
+    def _generation_id(event: AstrMessageEvent) -> str:
+        return str(
+            event.get_extra("contract_generation_generation_id", "") or ""
+        ).strip()
 
     @staticmethod
     def _resolve_tool_response(
@@ -122,11 +134,19 @@ class ContractDownloadDelivery(Star):
         source_path: str,
         filename: str,
     ) -> bool:
-        if not event.get_extra("contract_generation_gateway_output_verified", False):
-            return False
-        expected = event.get_extra("contract_generation_gateway_output", {})
+        expected: Any = None
+        if event.get_extra("contract_generation_renderer_output_verified", False):
+            expected = event.get_extra("contract_generation_renderer_output", {})
+        elif event.get_extra("contract_generation_gateway_output_verified", False):
+            expected = event.get_extra("contract_generation_gateway_output", {})
         if not isinstance(expected, dict):
             return False
+
+        expected_generation_id = str(expected.get("generation_id") or "").strip()
+        current_generation_id = cls._generation_id(event)
+        if current_generation_id and expected_generation_id != current_generation_id:
+            return False
+
         expected_path = cls._canonical_path(str(expected.get("output_path") or ""))
         actual_path = cls._canonical_path(source_path)
         expected_filename = str(expected.get("output_filename") or "").strip()
@@ -139,6 +159,43 @@ class ContractDownloadDelivery(Star):
             and actual_filename == expected_filename
         )
 
+    @classmethod
+    def _publication_matches_current_generation(
+        cls,
+        event: AstrMessageEvent,
+    ) -> bool:
+        if not event.get_extra(PUBLICATION_VERIFIED_KEY, False):
+            return False
+        record = event.get_extra(PUBLICATION_RECORD_KEY, {})
+        if not isinstance(record, dict):
+            return False
+        current_generation_id = cls._generation_id(event)
+        if current_generation_id:
+            return str(record.get("generation_id") or "") == current_generation_id
+        return True
+
+    @classmethod
+    def _current_publication(
+        cls,
+        event: AstrMessageEvent,
+        source_path: str,
+        filename: str,
+    ) -> dict[str, Any] | None:
+        if not cls._publication_matches_current_generation(event):
+            return None
+        record = event.get_extra(PUBLICATION_RECORD_KEY, {})
+        if not isinstance(record, dict):
+            return None
+        expected_path = cls._canonical_path(str(record.get("source_path") or ""))
+        actual_path = cls._canonical_path(source_path)
+        if expected_path is None or actual_path is None or expected_path != actual_path:
+            return None
+        if str(record.get("requested_filename") or "") != str(filename or "").strip():
+            return None
+        if not str(record.get("download_url") or "").startswith("https://"):
+            return None
+        return dict(record)
+
     @filter.on_llm_tool_respond(priority=950)
     async def observe_builder_ready(
         self,
@@ -150,9 +207,10 @@ class ContractDownloadDelivery(Star):
         tool, tool_result = self._resolve_tool_response(hook_args, hook_kwargs)
         if tool is None or str(getattr(tool, "name", "")) != GENERATION_HANDOFF_TOOL:
             return
+        text = self._tool_result_text(tool_result)
         event.set_extra(
             "contract_generation_builder_ready_claimed",
-            "[CONTRACT_DOCASSEMBLE:READY]" in self._tool_result_text(tool_result),
+            any(marker in text for marker in GENERATION_READY_MARKERS),
         )
 
     @filter.on_decorating_result(priority=950)
@@ -165,7 +223,7 @@ class ContractDownloadDelivery(Star):
         """Suppress only a false customer-facing READY outcome."""
         if not event.get_extra("contract_generation_builder_ready_claimed", False):
             return
-        if event.get_extra("contract_generation_download_publication_verified", False):
+        if self._publication_matches_current_generation(event):
             return
         result = event.get_result()
         chain = getattr(result, "chain", None) if result else None
@@ -173,12 +231,12 @@ class ContractDownloadDelivery(Star):
             return
         result.chain = [
             Comp.Plain(
-                "文档生成未完成临时下载发布，因此本次不报告生成成功。"
-                "请检查下载交付配置后重新执行生成。"
+                "文档生成未完成本轮临时下载发布，因此本次不报告生成成功。"
+                "请检查合同生成和下载交付配置后重新执行生成。"
             )
         ]
         logger.error(
-            "Contract download delivery: suppressed READY without a verified publication."
+            "Contract download delivery: suppressed READY without current-generation publication."
         )
 
     @filter.llm_tool(name="contract_download_delivery_status")
@@ -207,37 +265,59 @@ class ContractDownloadDelivery(Star):
         source_path: str,
         filename: str = "",
     ) -> str:
-        """将本轮 Gateway 已生成 DOCX 发布为临时 HTTPS 链接。
+        """将本轮正式生成的 DOCX 发布为临时 HTTPS 链接。
 
         Args:
-            source_path(string): Docassemble Gateway 本轮返回的 output_path。
-            filename(string): 必须使用同一次 Gateway 返回的 output_filename。
+            source_path(string): 本轮 DOCX 生成工具返回的 output_path。
+            filename(string): 使用同一次生成结果返回的 output_filename。
         """
-        event.set_extra("contract_generation_download_publication_verified", False)
-        if bool(event.get_extra("contract_docassemble_generation_task", False)):
-            if not self._matches_current_generation_output(event, source_path, filename):
-                return self._json(
-                    success=False,
-                    status="blocked",
-                    failure_stage="generation_output_binding",
-                    error=(
-                        "正式合同下载发布只能使用本轮 Docassemble Gateway "
-                        "刚成功生成的 output_path 和 output_filename。"
-                    ),
-                    retry_safe=True,
-                )
+        current = self._current_publication(event, source_path, filename)
+        if current is not None:
+            current.update(success=True, status="ready", idempotent=True)
+            return self._json(**current)
+
+        event.set_extra(PUBLICATION_VERIFIED_KEY, False)
+        event.set_extra(PUBLICATION_RECORD_KEY, {})
+
+        formal_generation = bool(
+            event.get_extra("contract_generation_task", False)
+            or event.get_extra("contract_docassemble_generation_task", False)
+        )
+        if formal_generation and not self._matches_current_generation_output(
+            event, source_path, filename
+        ):
+            return self._json(
+                success=False,
+                status="blocked",
+                failure_stage="generation_output_binding",
+                error=(
+                    "正式合同下载发布只能使用本轮 DOCX 生成工具刚成功生成的 "
+                    "output_path 和 output_filename。"
+                ),
+                retry_safe=True,
+            )
 
         result = await asyncio.to_thread(
             self.publications.publish,
             source_path=source_path,
             filename=filename,
         )
-        event.set_extra(
-            "contract_generation_download_publication_verified",
-            bool(
-                result.get("success") is True
-                and str(result.get("status") or "").lower() == "ready"
-                and str(result.get("download_url") or "").startswith("https://")
-            ),
+        verified = bool(
+            result.get("success") is True
+            and str(result.get("status") or "").lower() == "ready"
+            and str(result.get("download_url") or "").startswith("https://")
         )
+        event.set_extra(PUBLICATION_VERIFIED_KEY, verified)
+        if verified:
+            record = {
+                **result,
+                "generation_id": self._generation_id(event),
+                "source_path": source_path,
+                "requested_filename": str(filename or "").strip(),
+                "idempotent": False,
+            }
+            event.set_extra(PUBLICATION_RECORD_KEY, record)
+            result = dict(result)
+            result["generation_id"] = self._generation_id(event)
+            result["idempotent"] = False
         return self._json(**result)
