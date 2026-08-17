@@ -47,7 +47,7 @@ read_latest_contract_draft(max_chars=60000)
 
 ## Builder ToolSet
 
-Builder Persona 的静态 Tools 保持为空。Generation Flow 0.6.1 在 handoff 前注入固定的、请求无关的 wrapper ToolSet：
+Builder Persona 的静态 Tools 保持为空。Generation Flow 0.6.2 在 handoff 前注入固定的、请求无关的 wrapper ToolSet：
 
 ```text
 find_generation_assets
@@ -74,6 +74,8 @@ publish_contract_download
 ```
 
 Wrapper 会先按公开 JSON schema 丢弃模型多带的无关参数，再注入内部 `corpus_slug` 和性能默认值。因此额外字段不会透传到底层 MCP/plugin handler，MCP 或 Generator/Delivery hot reload 后也不会继续持有旧 handler 对象。
+
+Flow 0.6.2 不再直接调用动态解析到的 `FunctionTool.call()`，而是统一交给 AstrBot 原生 `FunctionToolExecutor`。因此 AstrBot 4.23.2 中把实现保存在 `handler` 的普通插件工具、MCPTool 和自定义 override-call Tool 都按框架原生语义执行；这个兼容层不增加模型调用或额外工具回合。
 
 生成资产 Corpus 使用插件配置 `generation_asset_corpus_slug`。历史合同 Corpus 由 Handoff Policy 写入当前 event 的 `contract_opencontracts_corpus_slug`。
 

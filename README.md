@@ -82,7 +82,7 @@ read_contract_draft
 generate_and_publish_contract
 ```
 
-Builder 不看到 `corpus_slug`，也不直接看到 `generate_contract_docx` / `publish_contract_download` / `finalize_contract_draft`。历史 Corpus 从当前 `AstrMessageEvent` 读取，不写进共享 Handoff Agent。运行 wrappers 每次调用时动态解析当前底层 MCP/插件工具，并按公开 schema 过滤参数，因此模型多带无关参数不会透传到底层工具。
+Builder 不看到 `corpus_slug`，也不直接看到 `generate_contract_docx` / `publish_contract_download` / `finalize_contract_draft`。历史 Corpus 从当前 `AstrMessageEvent` 读取，不写进共享 Handoff Agent。运行 wrappers 每次调用时动态解析当前底层 MCP/插件工具，并按公开 schema 过滤参数，因此模型多带无关参数不会透传到底层工具。底层调用统一交给 AstrBot 原生 `FunctionToolExecutor`，兼容 AstrBot 4.23.2 的 handler 型插件 Tool、MCPTool 和自定义 override-call Tool，不增加模型回合。
 
 ## Generation Assets
 
@@ -141,7 +141,7 @@ Renderer 支持 A4、中文字体、标题、正文、Markdown 表格、列表�
 ```text
 contract_file_router             0.5.7
 contract_docx_generator          0.4.2
-contract_generation_flow         0.6.1
+contract_generation_flow         0.6.2
 contract_handoff_policy          0.5.3
 contract_download_delivery       0.2.4
 opencontracts_gateway            0.6.2

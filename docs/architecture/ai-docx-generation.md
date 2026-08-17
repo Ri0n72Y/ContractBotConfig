@@ -105,7 +105,7 @@ read_latest_contract_draft(max_chars=60000)
 
 ## Builder ToolSet ownership
 
-Builder Persona 静态 Tools 为空。Generation Flow 0.6.1 在 handoff 前注入：
+Builder Persona 静态 Tools 为空。Generation Flow 0.6.2 在 handoff 前注入：
 
 ```text
 find_generation_assets
@@ -132,6 +132,8 @@ publish_contract_download
 ```
 
 Wrapper 会先按自己公开的 JSON schema 丢弃模型多带的无关参数，再注入内部 `corpus_slug` 和性能默认值，因此额外参数不会透传到底层 MCP/plugin handler。MCP 或 Generator/Delivery hot reload 后也不会继续持有旧 FunctionTool handler。
+
+动态解析到的底层 Tool 不直接调用其 `FunctionTool.call()`，而是统一交给 AstrBot 原生 `FunctionToolExecutor`。这样 AstrBot 4.23.2 的 decorator handler Tool、MCPTool 和自定义 override-call Tool 都走框架自己的调度语义；该兼容层不新增 LLM 请求、工具选择回合或用户确认。
 
 ## 并发模型
 
@@ -169,7 +171,7 @@ render_profile: standard_contract
 parameter_assets:
   - <optional-parameter-asset-id>
 rule_assets:
-  - <optional-rule-asset-id>
+  - <optional-generation-rule-asset-id>
 required_headings:
   - <optional-heading-hint>
 ---

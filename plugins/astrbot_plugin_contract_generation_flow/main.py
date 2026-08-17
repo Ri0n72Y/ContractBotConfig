@@ -10,6 +10,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 import astrbot.api.message_components as Comp
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
@@ -189,6 +190,29 @@ def _resolve_registered_tool(context: Context, name: str) -> FunctionTool | None
     return context.get_llm_tool_manager().get_full_tool_set().get_tool(name)
 
 
+async def _invoke_registered_tool(
+    tool: FunctionTool,
+    context: Any,
+    **tool_args: Any,
+) -> Any:
+    """Execute a registered tool through AstrBot's native executor.
+
+    AstrBot 4.23.x decorator tools keep their implementation in ``handler`` and
+    inherit the base ``FunctionTool.call`` that raises ``NotImplementedError``.
+    The native executor is the compatibility boundary that dispatches handler,
+    MCPTool and custom ``call`` implementations with the correct event/context.
+    """
+    result: Any = None
+    async for item in FunctionToolExecutor.execute(
+        tool=tool,
+        run_context=context,
+        **tool_args,
+    ):
+        if item is not None:
+            result = item
+    return result
+
+
 def _scalar(value: str) -> str:
     text = str(value or "").strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
@@ -274,7 +298,11 @@ class _DynamicRegisteredTool(FunctionTool):
                 error=f"运行工具 {self._source_name} 当前不可用。",
                 retry_safe=True,
             )
-        return await source.call(context, **_filter_args(self.parameters, tool_args))
+        return await _invoke_registered_tool(
+            source,
+            context,
+            **_filter_args(self.parameters, tool_args),
+        )
 
 
 class _BoundCorpusTool(FunctionTool):
@@ -342,7 +370,7 @@ class _BoundCorpusTool(FunctionTool):
         forwarded_args = _filter_args(self.parameters, tool_args)
         self._defaults(forwarded_args)
         forwarded_args["corpus_slug"] = corpus_slug
-        result = await source.call(context, **forwarded_args)
+        result = await _invoke_registered_tool(source, context, **forwarded_args)
         payload = _tool_result_payload(result)
         if payload is None or payload.get("error") or payload.get("success") is False:
             return result
@@ -507,7 +535,8 @@ class _GenerateAndPublishTool(FunctionTool):
                 retry_safe=True,
             )
 
-        generated = await generator.call(
+        generated = await _invoke_registered_tool(
+            generator,
             context,
             **_filter_args(self.parameters, tool_args),
         )
@@ -537,7 +566,8 @@ class _GenerateAndPublishTool(FunctionTool):
                 retry_safe=True,
             )
 
-        published = await publisher.call(
+        published = await _invoke_registered_tool(
+            publisher,
             context,
             source_path=source_path,
             filename=filename,
@@ -562,7 +592,7 @@ class _GenerateAndPublishTool(FunctionTool):
         finalizer = _resolve_registered_tool(self._context, "finalize_contract_draft")
         if finalizer is not None and getattr(finalizer, "active", True):
             try:
-                finalized = await finalizer.call(context)
+                finalized = await _invoke_registered_tool(finalizer, context)
                 finalized_payload = _tool_result_payload(finalized)
                 if isinstance(finalized_payload, dict) and (
                     finalized_payload.get("success") is True
@@ -622,7 +652,7 @@ class ContractGenerationFlow(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract generation flow 0.6.1 initialized: asset_corpus=%s",
+            "Contract generation flow 0.6.2 initialized: asset_corpus=%s",
             self.asset_corpus_slug or "<empty>",
         )
 

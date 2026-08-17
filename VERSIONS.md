@@ -6,7 +6,7 @@
 - astrbot_plugin_contract_docx_generator: 0.4.2
 - astrbot_plugin_contract_download_delivery: 0.2.4
 - astrbot_plugin_contract_file_router: 0.5.7
-- astrbot_plugin_contract_generation_flow: 0.6.1
+- astrbot_plugin_contract_generation_flow: 0.6.2
 - astrbot_plugin_contract_handoff_policy: 0.5.3
 - astrbot_plugin_docassemble_gateway: 0.2.1
 - astrbot_plugin_opencontracts_gateway: 0.6.2

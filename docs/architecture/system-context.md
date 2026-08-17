@@ -101,7 +101,7 @@ flowchart TB
 
 独立合同库读取和上传继续由 Operator 返回稳定业务状态，供 Master 形成客户回复。
 
-### Generation Flow 0.6.1
+### Generation Flow 0.6.2
 
 每次 Builder handoff 前：
 
@@ -111,10 +111,11 @@ flowchart TB
 4. 历史 Corpus 只写入当前 event，不写入共享 Agent；
 5. 给 Builder 绑定固定、请求无关的受限 wrapper ToolSet；即使 protocol 不兼容，也不保留 `tools=None` 或请求级清空；
 6. wrapper 调用时动态解析当前 MCP/Generator/Delivery Tool，并按公开 schema 过滤 LLM 多带参数；
-7. 模板/历史搜索默认各取 3 个结果，减少后续模型上下文；
-8. 记录模板检索、连续模板读取和历史相似合同检索证据；
-9. 模板首次读取默认 80000 字符，完整读完可用模板后自动绑定；
-10. 最后通过 `generate_and_publish_contract` 在一个工具回合内完成 DOCX、HTTPS 发布和交付后草稿持久化。
+7. 动态解析到的底层 Tool 统一通过 AstrBot 原生 `FunctionToolExecutor` 执行，兼容 4.23.2 的 handler 型插件 Tool、MCPTool 和自定义 override-call Tool；
+8. 模板/历史搜索默认各取 3 个结果，减少后续模型上下文；
+9. 记录模板检索、连续模板读取和历史相似合同检索证据；
+10. 模板首次读取默认 80000 字符，完整读完可用模板后自动绑定；
+11. 最后通过 `generate_and_publish_contract` 在一个工具回合内完成 DOCX、HTTPS 发布和交付后草稿持久化。
 
 Builder Persona 静态 Tools 为空。Flow 不在请求期间修改共享 Agent Prompt，也不把请求级 Corpus 或 generation state 写进共享 Agent。底层 MCP/插件在某个 handoff 瞬间不可用时不会清空共享 Agent ToolSet，实际调用对应 wrapper 时再返回 blocked。Persona protocol 不兼容只作为本轮 runtime missing；Generator 会拒绝正式生成。
 
