@@ -24,11 +24,20 @@ finalize_contract_draft          内部工具；仅在 HTTPS 发布成功后持�
 contract_generation_policy_verified = true
 ```
 
-handoff JSON 无法解析、`fallback_policy` 非法、或 `require_specific_template` 缺少 `required_template_query` 时，Flow 会把 policy 标记为 invalid，Generator 直接 BLOCKED，不会静默退回 `allow_ai_fallback`。
+Generation Flow 0.7.1 还要求正式 handoff 的 `generation_policy_protocol=1` 与显式 `fallback_policy` 已通过校验。旧 Master、缺失 policy、非法 JSON、未知 policy 或 strict policy 缺少 `required_template_query` 都会 fail-closed。
 
-`allow_ai_fallback` 的正式新生成默认要求模板检索和历史检索都至少尝试过。纯“修改上一版”且 `generation_basis=source_draft` 时可以跳过本轮知识库检索。
+`allow_ai_fallback` 的全新合同生成仍要求模板检索和历史检索都至少尝试过，以保持企业资料优先。
 
-`require_specific_template` 只要求资产检索，不要求历史检索；历史 wrapper 在 strict 模式下不会调用 OpenContracts。
+修改上一版时，知识检索要求按本轮实际 basis 最小化：
+
+```text
+source_draft       → 不要求重新检索
+specific_template  → 要求生成资产检索；模板证据由 basis 校验继续验证
+history_reference  → 要求历史检索；实际结果由 basis 校验继续验证
+ai_scaffold        → 不机械要求重新检索两个 Corpus
+```
+
+`require_specific_template` 只要求生成资产侧的指定模板身份解析，不要求历史检索。
 
 ## 生成依据
 
@@ -86,11 +95,11 @@ contract_generation_selected_template_required_match_verified = true
 contract_generation_template_selected_verified = true
 ```
 
-也就是说，strict 模式不只是要求“选了一个模板”，还要求该模板来自本轮 `required_template_query` 的候选集合并被完整读取绑定。
+这里的 required match 不是普通语义相似。Generation Flow strict resolver 会先通过 `list_documents` 对 generation asset corpus 做 document slug / 标准化标题身份解析，只有身份匹配的 document slug 才能成为 strict template candidate。
 
 ## source_draft 与 generation_basis
 
-`source_draft_id` 只表示本轮从哪个已成功交付版本开始修改，不再自动覆盖本轮内容依据。因此下面都合法：
+`source_draft_id` 只表示本轮从哪个已成功交付版本开始修改，不自动覆盖本轮内容依据。因此下面都合法：
 
 ```text
 source_draft_id=<上一版> + generation_basis=source_draft
@@ -112,6 +121,26 @@ read_latest_contract_draft(max_chars=60000)
    )
 ```
 
+## Draft lineage
+
+成功交付后 finalized draft manifest 同时持久化：
+
+```text
+generation_basis
+source_draft_id
+template_asset_id
+template_document_slug
+```
+
+字段语义：
+
+- `source_draft_id`：本轮版本来源，允许为空；
+- `specific_template`：模板字段记录本轮新绑定模板；
+- `source_draft`：若上一版本身来自模板，可继承上一版模板 provenance；
+- `history_reference` / `ai_scaffold`：不会把上一版模板误记为“本轮模板”，如需追溯则沿 `source_draft_id` 查看上一版 manifest。
+
+`get_latest_contract_draft`、`read_latest_contract_draft` 和 `read_contract_draft` 都返回 `generation_basis` 与 `source_draft_id`。旧 manifest 没有这些新增字段时使用 `.get()` 读取，保持向后兼容。
+
 ## 一次生成与幂等
 
 一次生成完整 DOCX，不再使用由模型管理的 begin/chunk/finalize 草稿事务。正式顺序：
@@ -125,9 +154,7 @@ generate_contract_docx
 → Draft Workspace
 ```
 
-同一 `generation_id` 已产生 verified output 且文件仍存在时再次调用会直接返回原 output，并标记 `idempotent=true`。
-
-`generation_basis` 会保存进 finalized draft manifest；`get_latest_contract_draft`、`read_latest_contract_draft` 和 `read_contract_draft` 都会把该字段返回。旧草稿 manifest 没有该字段时保持向后兼容。
+同一 `generation_id` 已产生 verified output 且文件仍存在时再次调用会直接返回原 output，并标记 `idempotent=true`；幂等结果也保留 `source_draft_id`。
 
 ## 内容边界
 
@@ -137,7 +164,7 @@ Renderer 不执行唯一 H1、required headings、条款数量或商业逻辑等
 
 ## Render profile
 
-当前支持 `standard_contract`。本轮 `generation_basis=specific_template` 时优先使用新绑定模板 profile，即使同时存在 `source_draft_id`；纯上一版修改则沿用上一版 profile；没有模板和上一版时使用 `standard_contract`。未知 profile 回退到 `standard_contract`。
+当前支持 `standard_contract`。本轮 `generation_basis=specific_template` 时优先使用新绑定模板 profile，即使同时存在 `source_draft_id`；有 source draft 且本轮不是新模板时沿用上一版 profile；没有模板和上一版时使用 `standard_contract`。未知 profile 回退到 `standard_contract`。
 
 ## Markdown 子集
 
