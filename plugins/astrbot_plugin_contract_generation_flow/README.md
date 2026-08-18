@@ -96,13 +96,14 @@ Generator 会校验声明与运行证据：
 2. strict 模式的 `find_generation_assets` 不把 `search_corpus` 的语义相似结果直接升级为模板身份；
 3. Flow 内部调用 `list_documents`，遍历 generation asset corpus，按精确 document slug 或标准化模板标题做确定性身份匹配；
 4. 标题标准化会忽略空白/标点，并把常见尾缀 `生成模板` / `模板` / `template` 视为展示后缀，因此 `材料采购合同模板` 可与 `材料采购合同_生成模板` 建立确定性标题身份；
-5. 只有确定性身份匹配得到的 document slug 才进入 `contract_generation_required_template_candidates`；
-6. 只有这些候选才允许 `read_generation_asset(..., use_as_template=true)` 绑定；
-7. 全文连续读取完成后设置 `contract_generation_selected_template_required_match_verified=true`；
-8. Generator 只接受 `generation_basis=specific_template`，并要求 required search 与 required match 两层证据；
-9. strict 模式不调用历史合同检索。
+5. 精确 slug 命中优先；标题标准化命中必须唯一。如果多个文档标准化后同名，则 fail-closed，要求调用方改用 document slug 明确指定；
+6. 只有确定性身份匹配得到的 document slug 才进入 `contract_generation_required_template_candidates`；
+7. 只有这些候选才允许 `read_generation_asset(..., use_as_template=true)` 绑定；
+8. 全文连续读取完成后设置 `contract_generation_selected_template_required_match_verified=true`；
+9. Generator 只接受 `generation_basis=specific_template`，并要求 required search 与 required match 两层证据；
+10. strict 模式不调用历史合同检索。
 
-因此“语义上像指定模板”不足以满足“必须使用用户点名模板”。如果无法用 slug 或标准化标题确定身份，系统应 BLOCKED，而不是偷偷选择另一个相似模板。
+因此“语义上像指定模板”不足以满足“必须使用用户点名模板”。如果无法用 slug 或唯一标准化标题确定身份，系统应 BLOCKED，而不是偷偷选择另一个相似模板。
 
 ## 历史合同边界
 
