@@ -112,6 +112,7 @@ class DraftWorkspaceService:
         owner_key: str,
         generation_id: str,
         generation_basis: str,
+        source_draft_id: str,
         template_asset_id: str,
         template_document_slug: str,
         document_title: str,
@@ -127,6 +128,10 @@ class DraftWorkspaceService:
         if len(text) > self.settings.max_markdown_chars:
             raise DraftWorkspaceError("draft exceeds max_markdown_chars")
 
+        source_id = str(source_draft_id or "").strip().lower()
+        if source_id:
+            self._validate_draft_id(source_id)
+
         draft_id = uuid.uuid4().hex
         now = time.time()
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -135,6 +140,7 @@ class DraftWorkspaceService:
             "owner_key": owner,
             "generation_id": str(generation_id or ""),
             "generation_basis": str(generation_basis or ""),
+            "source_draft_id": source_id or None,
             "template_asset_id": str(template_asset_id or ""),
             "template_document_slug": str(template_document_slug or ""),
             "document_title": str(document_title or ""),
@@ -278,6 +284,7 @@ class DraftWorkspaceService:
             "next_offset": next_offset,
             "generation_id": manifest.get("generation_id"),
             "generation_basis": manifest.get("generation_basis"),
+            "source_draft_id": manifest.get("source_draft_id"),
             "template_asset_id": manifest.get("template_asset_id"),
             "template_document_slug": manifest.get("template_document_slug"),
             "document_title": manifest.get("document_title"),
@@ -316,9 +323,6 @@ class DraftWorkspaceService:
                             shutil.rmtree(directory)
                             removed += 1
                     except (DraftWorkspaceError, TypeError, ValueError, OSError):
-                        # A crash can leave body.md without a completed manifest.
-                        # Such an orphan is not readable and can be removed by the
-                        # same retention policy using the directory timestamp.
                         try:
                             if directory.stat().st_mtime < cutoff:
                                 shutil.rmtree(directory)
