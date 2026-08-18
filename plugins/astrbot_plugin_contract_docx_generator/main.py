@@ -28,6 +28,7 @@ NEW_GENERATION_BASES = {
     "history_reference",
     "ai_scaffold",
 }
+FORMAL_GENERATION_BASES = NEW_GENERATION_BASES | {"source_draft"}
 
 
 class ContractDocxGenerator(Star):
@@ -142,6 +143,8 @@ class ContractDocxGenerator(Star):
     def _formal_generation_error(
         self,
         event: AstrMessageEvent,
+        requested_basis: str,
+        source_draft: dict[str, Any] | None,
     ) -> tuple[str, str] | None:
         runtime_missing = event.get_extra(
             "contract_generation_builder_runtime_missing", []
@@ -149,16 +152,41 @@ class ContractDocxGenerator(Star):
         if isinstance(runtime_missing, list) and runtime_missing:
             return "builder_runtime", "Builder 正式运行工具未完整加载。"
 
+        if not event.get_extra("contract_generation_policy_verified", False):
+            return (
+                "generation_policy",
+                str(
+                    event.get_extra("contract_generation_policy_error", "")
+                    or "生成策略无效。"
+                ),
+            )
+
+        requested = str(requested_basis or "").strip().lower()
+        strict_template = bool(
+            event.get_extra("contract_generation_require_specific_template", False)
+        )
+
+        if strict_template:
+            if not event.get_extra("contract_generation_asset_search_attempted", False):
+                return (
+                    "generation_asset_search",
+                    "指定模板模式需要先使用 required_template_query 检索生成资产。",
+                )
+            return None
+
+        if source_draft is not None and requested == "source_draft":
+            return None
+
         required_attempts = (
             (
                 "contract_generation_asset_search_attempted",
                 "generation_asset_search",
-                "正式新生成前需要至少尝试一次生成资产检索。",
+                "正式生成前需要至少尝试一次生成资产检索。",
             ),
             (
                 "contract_generation_history_search_attempted",
                 "generation_history_search",
-                "正式新生成前需要至少尝试一次历史相似合同检索。",
+                "正式生成前需要至少尝试一次历史相似合同检索。",
             ),
         )
         for key, stage, message in required_attempts:
@@ -167,20 +195,10 @@ class ContractDocxGenerator(Star):
         return None
 
     @staticmethod
-    def _history_result_count(event: AstrMessageEvent) -> int:
-        try:
-            return max(
-                0,
-                int(
-                    event.get_extra(
-                        "contract_generation_history_search_result_count",
-                        0,
-                    )
-                    or 0
-                ),
-            )
-        except (TypeError, ValueError):
-            return 0
+    def _history_had_results(event: AstrMessageEvent) -> bool:
+        return bool(
+            event.get_extra("contract_generation_history_search_had_results", False)
+        )
 
     @classmethod
     def _validate_generation_basis(
@@ -190,37 +208,52 @@ class ContractDocxGenerator(Star):
         source_draft: dict[str, Any] | None,
     ) -> tuple[str, tuple[str, str] | None]:
         requested = str(requested_basis or "").strip().lower()
-
-        if source_draft is not None:
-            if requested and requested != "source_draft":
-                return "", (
-                    "generation_basis",
-                    "修改上一版时 generation_basis 必须为 source_draft。",
-                )
-            return "source_draft", None
-
-        if requested not in NEW_GENERATION_BASES:
+        if requested not in FORMAL_GENERATION_BASES:
             return "", (
                 "generation_basis",
-                "正式新生成必须显式声明 generation_basis：specific_template、history_reference 或 ai_scaffold。",
+                "正式生成必须显式声明 generation_basis：specific_template、history_reference、ai_scaffold 或 source_draft。",
             )
 
+        strict_template = bool(
+            event.get_extra("contract_generation_require_specific_template", False)
+        )
         template_selected = bool(
             event.get_extra("contract_generation_template_selected_verified", False)
         )
-        history_verified = bool(
-            event.get_extra("contract_generation_history_search_verified", False)
-        )
-        history_result_count = cls._history_result_count(event)
-        require_specific_template = bool(
-            event.get_extra("contract_generation_require_specific_template", False)
-        )
 
-        if require_specific_template and requested != "specific_template":
-            return "", (
-                "required_template",
-                "用户要求必须使用指定模板，本轮不允许历史参考或 AI fallback。",
-            )
+        if strict_template:
+            if requested != "specific_template":
+                return "", (
+                    "required_template",
+                    "用户要求必须使用指定模板，本轮 generation_basis 必须为 specific_template。",
+                )
+            if not event.get_extra(
+                "contract_generation_required_template_search_verified", False
+            ):
+                return "", (
+                    "required_template_search",
+                    "指定模板模式尚未完成 required_template_query 对应的资产检索。",
+                )
+            if not event.get_extra(
+                "contract_generation_selected_template_required_match_verified", False
+            ):
+                return "", (
+                    "required_template_match",
+                    "当前绑定模板不能证明来自本轮 required_template_query 的候选结果。",
+                )
+
+        if requested == "source_draft":
+            if source_draft is None:
+                return "", (
+                    "source_draft",
+                    "generation_basis=source_draft 必须提供有效 source_draft_id。",
+                )
+            if template_selected:
+                return "", (
+                    "generation_basis",
+                    "本轮已经明确绑定专用模板，generation_basis 应为 specific_template。",
+                )
+            return requested, None
 
         if requested == "specific_template":
             if not template_selected:
@@ -237,10 +270,15 @@ class ContractDocxGenerator(Star):
             )
 
         if requested == "history_reference":
-            if not history_verified or history_result_count <= 0:
+            if not event.get_extra("contract_generation_history_search_verified", False):
                 return "", (
                     "generation_history_reference",
-                    "generation_basis=history_reference 需要一次成功且有实际结果的历史合同检索。",
+                    "generation_basis=history_reference 需要成功完成历史合同检索。",
+                )
+            if not cls._history_had_results(event):
+                return "", (
+                    "generation_history_reference",
+                    "generation_basis=history_reference 需要本轮历史检索至少曾返回一个实际结果。",
                 )
             return requested, None
 
@@ -270,8 +308,14 @@ class ContractDocxGenerator(Star):
         event: AstrMessageEvent,
         requested: str,
         source_draft: dict[str, Any] | None,
+        generation_basis: str,
     ) -> str:
-        if source_draft:
+        if self._formal_generation(event) and generation_basis == "specific_template":
+            selected = str(
+                event.get_extra("contract_generation_selected_render_profile", "")
+                or "standard_contract"
+            ).strip()
+        elif source_draft:
             selected = str(source_draft.get("render_profile") or "standard_contract").strip()
         elif self._formal_generation(event):
             selected = str(
@@ -604,17 +648,20 @@ class ContractDocxGenerator(Star):
                     error=terminal_reason,
                     retry_safe=False,
                 )
-            if source_draft is None:
-                guard_error = self._formal_generation_error(event)
-                if guard_error:
-                    stage, message = guard_error
-                    return self._json(
-                        success=False,
-                        status="blocked",
-                        failure_stage=stage,
-                        error=message,
-                        retry_safe=True,
-                    )
+            guard_error = self._formal_generation_error(
+                event,
+                generation_basis,
+                source_draft,
+            )
+            if guard_error:
+                stage, message = guard_error
+                return self._json(
+                    success=False,
+                    status="blocked",
+                    failure_stage=stage,
+                    error=message,
+                    retry_safe=True,
+                )
 
         title = str(document_title or "").strip()
         markdown = str(document_markdown or "").strip()
@@ -651,7 +698,7 @@ class ContractDocxGenerator(Star):
                     error=message,
                     retry_safe=True,
                 )
-        elif source_draft is not None:
+        elif source_draft is not None and not str(generation_basis or "").strip():
             resolved_basis = "source_draft"
         else:
             resolved_basis = (
@@ -664,6 +711,7 @@ class ContractDocxGenerator(Star):
                 event,
                 render_profile,
                 source_draft,
+                resolved_basis,
             )
             filename = self.renderer.normalize_filename(
                 output_filename,
