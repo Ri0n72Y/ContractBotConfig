@@ -27,6 +27,22 @@ json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 完整 traceback 只写服务日志。模型侧错误应收敛为 `status / failure_stage / error / retry_safe` 等结构化字段。
 
+## MCP 错误边界
+
+JSON 可解析不代表 MCP 调用成功。处理 `CallToolResult` 时顺序必须是：
+
+```text
+先检查 isError / is_error
+→ error=true：详细内容写日志，模型侧只返回短结构化错误
+→ error=false：再解析 structuredContent / content[].text
+→ JSON parse
+→ ensure_ascii=False 紧凑序列化
+```
+
+禁止先解析错误正文再根据 payload 猜测成功/失败。否则一个 `isError=true`、但错误正文恰好是合法 JSON 的响应可能被错误记录为 verified。
+
+无法解析的 ToolResult 同样不直接原样进入模型上下文；服务日志保留诊断详情，模型只拿到稳定错误 contract。
+
 ## 容器环境
 
 自维护 Python 容器建议设置：
@@ -67,6 +83,8 @@ UTF-8 bytes -> Base64 -> ASCII stdin -> 容器内 decode
 
 ## Generation Flow
 
-Generation Flow 0.7.0 会把可解析 MCP JSON 重新序列化为真实 UTF-8 紧凑 JSON 后再返回 Builder。因此 OpenContracts MCP 即使在传输文本中使用 Unicode escape，Builder 也不应再看到 raw `\uXXXX` JSON。
+Generation Flow 0.7.0 会在 MCP wrapper 边界先尊重 `CallToolResult.isError`，再解析成功 JSON，并以真实 UTF-8 紧凑 JSON 返回 Builder。因此：
 
-正文读取结果不进行额外“转译”；Unicode escape 的恢复属于 JSON parse 的正常行为，不增加额外 LLM 回合。
+- OpenContracts MCP 即使在成功 JSON 中使用 Unicode escape，Builder 也不应再看到 raw `\uXXXX`；
+- MCP 错误详情和无法解析的原始 ToolResult 不会直接注入 Builder 上下文；
+- 正文读取结果不进行额外“转译”；Unicode escape 的恢复属于 JSON parse 的正常行为，不增加额外 LLM 回合。
