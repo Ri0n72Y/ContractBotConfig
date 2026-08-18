@@ -14,12 +14,20 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
-BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="4">'
+BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="5">'
 HISTORY_CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 ASSET_CORPUS_EVENT_KEY = "contract_generation_asset_corpus_slug_bound"
 SEARCH_DEFAULT_LIMIT = 3
 TEMPLATE_READ_DEFAULT_CHARS = 80000
 REFERENCE_READ_DEFAULT_CHARS = 60000
+FALLBACK_POLICY_ALLOW = "allow_ai_fallback"
+FALLBACK_POLICY_REQUIRE_TEMPLATE = "require_specific_template"
+GENERATION_BASES = (
+    "specific_template",
+    "history_reference",
+    "ai_scaffold",
+    "source_draft",
+)
 
 SEARCH_PARAMETERS = {
     "type": "object",
@@ -41,6 +49,20 @@ READ_PARAMETERS = {
         "document_slug": {"type": "string", "description": "文档 slug。"},
         "char_offset": {"type": "integer", "description": "字符起点。"},
         "max_chars": {"type": "integer", "description": "本次最多读取字符数。"},
+    },
+    "required": ["document_slug"],
+}
+
+ASSET_READ_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "document_slug": {"type": "string", "description": "文档 slug。"},
+        "char_offset": {"type": "integer", "description": "字符起点。"},
+        "max_chars": {"type": "integer", "description": "本次最多读取字符数。"},
+        "use_as_template": {
+            "type": "boolean",
+            "description": "只有已经决定采用该资产作为本轮专用合同模板时才设为 true。",
+        },
     },
     "required": ["document_slug"],
 }
@@ -76,6 +98,15 @@ GENERATE_AND_PUBLISH_PARAMETERS = {
             "type": "string",
             "description": "已经编制完成的完整合同 Markdown。",
         },
+        "generation_basis": {
+            "type": "string",
+            "enum": list(GENERATION_BASES),
+            "description": (
+                "本轮最终实际采用的生成依据：专用模板 specific_template、"
+                "历史参考 history_reference、AI 自组织 ai_scaffold；"
+                "修改上一版时使用 source_draft。"
+            ),
+        },
         "output_filename": {
             "type": "string",
             "description": "可选 DOCX 文件名。",
@@ -89,7 +120,7 @@ GENERATE_AND_PUBLISH_PARAMETERS = {
             "description": "修改上一版时传入已读取的 draft_id。",
         },
     },
-    "required": ["document_title", "document_markdown"],
+    "required": ["document_title", "document_markdown", "generation_basis"],
 }
 
 KNOWLEDGE_TOOL_SPECS = (
@@ -104,8 +135,8 @@ KNOWLEDGE_TOOL_SPECS = (
         "read_generation_asset",
         "get_document_text",
         "asset",
-        "读取生成资产正文。只有确实选用该模板时才从 char_offset=0 开始读取，只有返回 next_offset 才继续。",
-        READ_PARAMETERS,
+        "读取生成资产正文。只有已经决定采用该资产作为专用模板时才传 use_as_template=true；普通参数/规则读取不要绑定为模板。",
+        ASSET_READ_PARAMETERS,
     ),
     (
         "find_similar_contracts",
@@ -139,12 +170,7 @@ def _json(**payload: Any) -> str:
 
 
 def _tool_json(payload: dict[str, Any]) -> str:
-    """Compact UTF-8 JSON for model-facing tool results.
-
-    MCP transports may serialize Chinese as ``\\uXXXX``.  Returning the parsed
-    payload with ``ensure_ascii=False`` prevents the model from paying the token
-    cost of those escape sequences while preserving the exact Unicode text.
-    """
+    """Compact UTF-8 JSON for model-facing tool results."""
     return json.dumps(
         payload,
         ensure_ascii=False,
@@ -176,8 +202,43 @@ def _decode_json_dict(value: Any) -> dict[str, Any] | None:
     return dict(current) if isinstance(current, dict) else None
 
 
+def _tool_result_is_error(tool_result: Any) -> bool:
+    if tool_result is None or isinstance(tool_result, dict):
+        return False
+    return bool(
+        getattr(tool_result, "isError", False)
+        or getattr(tool_result, "is_error", False)
+    )
+
+
+def _tool_result_texts(tool_result: Any) -> list[str]:
+    texts: list[str] = []
+    if isinstance(tool_result, str):
+        return [tool_result]
+    content = getattr(tool_result, "content", None)
+    if not isinstance(content, list):
+        return texts
+    for item in content:
+        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+        if text is not None:
+            texts.append(str(text))
+    return texts
+
+
+def _tool_error_detail(tool_result: Any, limit: int = 1000) -> str:
+    pieces = _tool_result_texts(tool_result)
+    if not pieces:
+        structured = getattr(tool_result, "structuredContent", None)
+        if structured is None:
+            structured = getattr(tool_result, "structured_content", None)
+        if structured is not None:
+            pieces.append(str(structured))
+    detail = " | ".join(piece.strip() for piece in pieces if piece.strip())
+    return detail[:limit]
+
+
 def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
-    if tool_result is None:
+    if tool_result is None or _tool_result_is_error(tool_result):
         return None
     if isinstance(tool_result, dict):
         return dict(tool_result)
@@ -189,33 +250,28 @@ def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
     if parsed is not None:
         return parsed
 
-    pieces: list[str] = []
-    if isinstance(tool_result, str):
-        pieces.append(tool_result)
-    else:
-        content = getattr(tool_result, "content", None)
-        if isinstance(content, list):
-            for item in content:
-                text = (
-                    item.get("text")
-                    if isinstance(item, dict)
-                    else getattr(item, "text", None)
-                )
-                if text is not None:
-                    pieces.append(str(text))
-
-    for piece in pieces:
+    for piece in _tool_result_texts(tool_result):
         parsed = _decode_json_dict(piece)
         if parsed is not None:
             return parsed
     return None
 
 
-def _normalized_result(tool_result: Any) -> Any:
-    payload = _tool_result_payload(tool_result)
-    if payload is not None:
-        return _tool_json(payload)
-    return tool_result
+def _normalized_tool_failure(
+    *,
+    failure_stage: str,
+    error: str,
+    retry_safe: bool = True,
+) -> str:
+    return _tool_json(
+        {
+            "success": False,
+            "status": "blocked" if retry_safe else "failed",
+            "failure_stage": failure_stage,
+            "error": error,
+            "retry_safe": retry_safe,
+        }
+    )
 
 
 def _resolve_registered_tool(context: Context, name: str) -> FunctionTool | None:
@@ -297,6 +353,11 @@ def _list_field(manifest: dict[str, Any], key: str) -> list[str]:
     return []
 
 
+def _search_result_count(payload: dict[str, Any]) -> int:
+    results = payload.get("results")
+    return len(results) if isinstance(results, list) else 0
+
+
 class _DynamicRegisteredTool(FunctionTool):
     def __init__(
         self,
@@ -317,19 +378,36 @@ class _DynamicRegisteredTool(FunctionTool):
     async def call(self, context: Any, **tool_args: Any) -> Any:
         source = _resolve_registered_tool(self._context, self._source_name)
         if source is None or not getattr(source, "active", True):
-            return _json(
-                success=False,
-                status="blocked",
+            return _normalized_tool_failure(
                 failure_stage="runtime_tool",
                 error=f"运行工具 {self._source_name} 当前不可用。",
-                retry_safe=True,
             )
         result = await _invoke_registered_tool(
             source,
             context,
             **_filter_args(self.parameters, tool_args),
         )
-        return _normalized_result(result)
+        if _tool_result_is_error(result):
+            logger.warning(
+                "Contract generation flow: runtime tool %s returned error: %s",
+                self._source_name,
+                _tool_error_detail(result),
+            )
+            return _normalized_tool_failure(
+                failure_stage="runtime_tool",
+                error=f"运行工具 {self._source_name} 调用失败。",
+            )
+        payload = _tool_result_payload(result)
+        if payload is None:
+            logger.warning(
+                "Contract generation flow: runtime tool %s returned unparseable result",
+                self._source_name,
+            )
+            return _normalized_tool_failure(
+                failure_stage="runtime_result",
+                error=f"运行工具 {self._source_name} 返回了无法解析的结果。",
+            )
+        return _tool_json(payload)
 
 
 class _BoundCorpusTool(FunctionTool):
@@ -381,45 +459,75 @@ class _BoundCorpusTool(FunctionTool):
 
         corpus_slug = self._corpus_slug(event)
         if not corpus_slug:
-            return _json(
-                success=False,
-                status="blocked",
+            return _normalized_tool_failure(
                 failure_stage=(
                     "generation_asset_corpus"
                     if self._role == "asset"
                     else "history_corpus"
                 ),
                 error="目标合同库未绑定。",
-                retry_safe=True,
             )
 
         source = _resolve_registered_tool(self._context, self._source_name)
         if source is None or not getattr(source, "active", True):
-            return _json(
-                success=False,
-                status="blocked",
+            return _normalized_tool_failure(
                 failure_stage="opencontracts_tool",
                 error=f"OpenContracts 工具 {self._source_name} 当前不可用。",
-                retry_safe=True,
             )
 
         forwarded_args = _filter_args(self.parameters, tool_args)
+        use_as_template = False
+        if self.name == "read_generation_asset":
+            use_as_template = bool(forwarded_args.pop("use_as_template", False))
         self._defaults(forwarded_args)
         forwarded_args["corpus_slug"] = corpus_slug
+
         result = await _invoke_registered_tool(source, context, **forwarded_args)
+        if _tool_result_is_error(result):
+            logger.warning(
+                "Contract generation flow: OpenContracts tool %s returned error: %s",
+                self._source_name,
+                _tool_error_detail(result),
+            )
+            return _normalized_tool_failure(
+                failure_stage="opencontracts_tool",
+                error=f"OpenContracts 工具 {self._source_name} 调用失败。",
+            )
+
         payload = _tool_result_payload(result)
         if payload is None:
-            return result
+            logger.warning(
+                "Contract generation flow: OpenContracts tool %s returned unparseable result",
+                self._source_name,
+            )
+            return _normalized_tool_failure(
+                failure_stage="opencontracts_result",
+                error=f"OpenContracts 工具 {self._source_name} 返回了无法解析的结果。",
+            )
+
         normalized = _tool_json(payload)
         if payload.get("error") or payload.get("success") is False:
             return normalized
 
         if self.name == "find_generation_assets":
             event.set_extra("contract_generation_asset_search_verified", True)
+            event.set_extra(
+                "contract_generation_asset_search_result_count",
+                _search_result_count(payload),
+            )
         elif self.name == "find_similar_contracts":
             event.set_extra("contract_generation_history_search_verified", True)
+            event.set_extra(
+                "contract_generation_history_search_result_count",
+                _search_result_count(payload),
+            )
         elif self.name == "read_generation_asset":
-            self._record_asset_text(event, payload, forwarded_args)
+            self._record_asset_text(
+                event,
+                payload,
+                forwarded_args,
+                use_as_template=use_as_template,
+            )
         return normalized
 
     @staticmethod
@@ -470,6 +578,8 @@ class _BoundCorpusTool(FunctionTool):
         event: AstrMessageEvent,
         payload: dict[str, Any],
         tool_args: dict[str, Any],
+        *,
+        use_as_template: bool,
     ) -> None:
         identity = cls._text_identity(payload, tool_args)
         if identity is None:
@@ -485,6 +595,7 @@ class _BoundCorpusTool(FunctionTool):
                 "total_chars": total_chars,
                 "expected_offset": next_offset,
                 "complete": next_offset is None,
+                "use_as_template": bool(use_as_template),
             }
         else:
             previous = states.get(slug)
@@ -500,10 +611,13 @@ class _BoundCorpusTool(FunctionTool):
             state = dict(previous)
             state["expected_offset"] = next_offset
             state["complete"] = next_offset is None
+            state["use_as_template"] = bool(
+                state.get("use_as_template", False) or use_as_template
+            )
 
         states[slug] = state
         event.set_extra("contract_generation_asset_read_states", states)
-        if not state.get("complete"):
+        if not state.get("complete") or not state.get("use_as_template"):
             return
 
         manifest = state.get("manifest")
@@ -513,10 +627,6 @@ class _BoundCorpusTool(FunctionTool):
         if status not in {"", "active"}:
             return
         if asset_type and asset_type != "contract_template":
-            return
-        if not asset_type and event.get_extra(
-            "contract_generation_template_selected_verified", False
-        ):
             return
 
         asset_id = str(manifest.get("asset_id") or slug).strip() or slug
@@ -548,11 +658,30 @@ class _GenerateAndPublishTool(FunctionTool):
             name="generate_and_publish_contract",
             description=(
                 "把完整合同 Markdown 生成 DOCX 并立即发布临时 HTTPS 下载链接。"
-                "正式新生成前应已尝试模板和历史检索；没有匹配模板时可按历史参考或 AI 自组织结构继续。"
+                "必须显式声明本轮实际 generation_basis；正式新生成前应已尝试模板和历史检索。"
             ),
             parameters=GENERATE_AND_PUBLISH_PARAMETERS,
         )
         self._context = context
+
+    @staticmethod
+    def _call_failure(
+        result: Any,
+        *,
+        tool_name: str,
+        failure_stage: str,
+    ) -> str | None:
+        if not _tool_result_is_error(result):
+            return None
+        logger.warning(
+            "Contract generation: tool %s returned error: %s",
+            tool_name,
+            _tool_error_detail(result),
+        )
+        return _normalized_tool_failure(
+            failure_stage=failure_stage,
+            error=f"工具 {tool_name} 调用失败。",
+        )
 
     async def call(self, context: Any, **tool_args: Any) -> Any:
         generator = _resolve_registered_tool(self._context, "generate_contract_docx")
@@ -566,12 +695,9 @@ class _GenerateAndPublishTool(FunctionTool):
             if tool is None or not getattr(tool, "active", True)
         ]
         if missing:
-            return _json(
-                success=False,
-                status="blocked",
+            return _normalized_tool_failure(
                 failure_stage="generation_runtime",
                 error="正式生成工具不可用：" + ", ".join(missing),
-                retry_safe=True,
             )
 
         generated = await _invoke_registered_tool(
@@ -579,14 +705,18 @@ class _GenerateAndPublishTool(FunctionTool):
             context,
             **_filter_args(self.parameters, tool_args),
         )
+        generated_failure = self._call_failure(
+            generated,
+            tool_name="generate_contract_docx",
+            failure_stage="docx_result",
+        )
+        if generated_failure:
+            return generated_failure
         generated_payload = _tool_result_payload(generated)
         if not isinstance(generated_payload, dict):
-            return _json(
-                success=False,
-                status="failed",
+            return _normalized_tool_failure(
                 failure_stage="docx_result",
                 error="DOCX 生成工具返回了无法解析的结果。",
-                retry_safe=True,
             )
         if not (
             generated_payload.get("success") is True
@@ -597,12 +727,9 @@ class _GenerateAndPublishTool(FunctionTool):
         source_path = str(generated_payload.get("output_path") or "").strip()
         filename = str(generated_payload.get("output_filename") or "").strip()
         if not source_path or not filename:
-            return _json(
-                success=False,
-                status="failed",
+            return _normalized_tool_failure(
                 failure_stage="docx_result",
                 error="DOCX 生成成功但缺少 output_path 或 output_filename。",
-                retry_safe=True,
             )
 
         published = await _invoke_registered_tool(
@@ -611,14 +738,18 @@ class _GenerateAndPublishTool(FunctionTool):
             source_path=source_path,
             filename=filename,
         )
+        published_failure = self._call_failure(
+            published,
+            tool_name="publish_contract_download",
+            failure_stage="publication_result",
+        )
+        if published_failure:
+            return published_failure
         published_payload = _tool_result_payload(published)
         if not isinstance(published_payload, dict):
-            return _json(
-                success=False,
-                status="failed",
+            return _normalized_tool_failure(
                 failure_stage="publication_result",
                 error="下载发布工具返回了无法解析的结果。",
-                retry_safe=True,
             )
         if not (
             published_payload.get("success") is True
@@ -632,43 +763,52 @@ class _GenerateAndPublishTool(FunctionTool):
         if finalizer is not None and getattr(finalizer, "active", True):
             try:
                 finalized = await _invoke_registered_tool(finalizer, context)
-                finalized_payload = _tool_result_payload(finalized)
-                if isinstance(finalized_payload, dict) and (
-                    finalized_payload.get("success") is True
-                    and str(finalized_payload.get("status") or "").lower() == "ready"
-                ):
-                    draft_id = finalized_payload.get("draft_id") or draft_id
-                    draft_saved = bool(finalized_payload.get("draft_saved"))
-                else:
+                if _tool_result_is_error(finalized):
                     logger.warning(
-                        "Contract generation: publication succeeded but draft finalize did not complete."
+                        "Contract generation: publication succeeded but draft finalize returned error: %s",
+                        _tool_error_detail(finalized),
                     )
+                else:
+                    finalized_payload = _tool_result_payload(finalized)
+                    if isinstance(finalized_payload, dict) and (
+                        finalized_payload.get("success") is True
+                        and str(finalized_payload.get("status") or "").lower()
+                        == "ready"
+                    ):
+                        draft_id = finalized_payload.get("draft_id") or draft_id
+                        draft_saved = bool(finalized_payload.get("draft_saved"))
+                    else:
+                        logger.warning(
+                            "Contract generation: publication succeeded but draft finalize did not complete."
+                        )
             except Exception:
                 logger.exception(
                     "Contract generation: publication succeeded but draft finalize raised."
                 )
 
-        return _json(
-            success=True,
-            status="ready",
-            generation_id=generated_payload.get("generation_id"),
-            generation_basis=generated_payload.get("generation_basis"),
-            renderer=generated_payload.get("renderer"),
-            render_profile=generated_payload.get("render_profile"),
-            draft_id=draft_id,
-            draft_saved=draft_saved,
-            filename=published_payload.get("filename") or filename,
-            size_bytes=published_payload.get("size_bytes")
-            or generated_payload.get("size_bytes"),
-            download_url=published_payload.get("download_url"),
-            expires_at=published_payload.get("expires_at"),
-            expires_in_seconds=published_payload.get("expires_in_seconds"),
-            delivery_format=published_payload.get("delivery_format"),
-            publication_id=published_payload.get("publication_id"),
-            idempotent=bool(
-                generated_payload.get("idempotent")
-                or published_payload.get("idempotent")
-            ),
+        return _tool_json(
+            {
+                "success": True,
+                "status": "ready",
+                "generation_id": generated_payload.get("generation_id"),
+                "generation_basis": generated_payload.get("generation_basis"),
+                "renderer": generated_payload.get("renderer"),
+                "render_profile": generated_payload.get("render_profile"),
+                "draft_id": draft_id,
+                "draft_saved": draft_saved,
+                "filename": published_payload.get("filename") or filename,
+                "size_bytes": published_payload.get("size_bytes")
+                or generated_payload.get("size_bytes"),
+                "download_url": published_payload.get("download_url"),
+                "expires_at": published_payload.get("expires_at"),
+                "expires_in_seconds": published_payload.get("expires_in_seconds"),
+                "delivery_format": published_payload.get("delivery_format"),
+                "publication_id": published_payload.get("publication_id"),
+                "idempotent": bool(
+                    generated_payload.get("idempotent")
+                    or published_payload.get("idempotent")
+                ),
+            }
         )
 
 
@@ -715,11 +855,24 @@ class ContractGenerationFlow(Star):
         return tool, tool_args
 
     @staticmethod
+    def _parse_generation_input(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return dict(value)
+        if not isinstance(value, str) or not value.strip():
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
     def _reset_generation_state(event: AstrMessageEvent) -> None:
         values: dict[str, Any] = {
             "contract_generation_generation_id": uuid.uuid4().hex,
             "contract_generation_asset_search_attempted": False,
             "contract_generation_asset_search_verified": False,
+            "contract_generation_asset_search_result_count": 0,
             "contract_generation_asset_read_states": {},
             "contract_generation_template_selected_verified": False,
             "contract_generation_selected_template_document_slug": "",
@@ -729,6 +882,10 @@ class ContractGenerationFlow(Star):
             "contract_generation_template_hints": {},
             "contract_generation_history_search_attempted": False,
             "contract_generation_history_search_verified": False,
+            "contract_generation_history_search_result_count": 0,
+            "contract_generation_fallback_policy": FALLBACK_POLICY_ALLOW,
+            "contract_generation_require_specific_template": False,
+            "contract_generation_required_template_query": "",
             "contract_generation_basis_verified": False,
             "contract_generation_basis": "",
             "contract_generation_renderer_output_verified": False,
@@ -745,6 +902,29 @@ class ContractGenerationFlow(Star):
         }
         for key, value in values.items():
             event.set_extra(key, value)
+
+    @staticmethod
+    def _apply_generation_policy(
+        event: AstrMessageEvent,
+        parsed_input: dict[str, Any],
+    ) -> None:
+        policy = str(
+            parsed_input.get("fallback_policy") or FALLBACK_POLICY_ALLOW
+        ).strip().lower()
+        if policy not in {FALLBACK_POLICY_ALLOW, FALLBACK_POLICY_REQUIRE_TEMPLATE}:
+            policy = FALLBACK_POLICY_ALLOW
+        required_template_query = str(
+            parsed_input.get("required_template_query") or ""
+        ).strip()
+        event.set_extra("contract_generation_fallback_policy", policy)
+        event.set_extra(
+            "contract_generation_require_specific_template",
+            policy == FALLBACK_POLICY_REQUIRE_TEMPLATE,
+        )
+        event.set_extra(
+            "contract_generation_required_template_query",
+            required_template_query,
+        )
 
     @staticmethod
     def _builder_prompt_compatible(agent: Any) -> bool:
@@ -817,7 +997,7 @@ class ContractGenerationFlow(Star):
 
         if not self._builder_prompt_compatible(agent):
             return [tool.name for tool in self._runtime_tools], [
-                "builder_persona_protocol_v4"
+                "builder_persona_protocol_v5"
             ]
         return [tool.name for tool in self._runtime_tools], []
 
@@ -849,8 +1029,10 @@ class ContractGenerationFlow(Star):
         ):
             return
 
+        parsed_input = self._parse_generation_input(tool_args.get("input"))
         event.set_extra("contract_generation_task", True)
         self._reset_generation_state(event)
+        self._apply_generation_policy(event, parsed_input)
         tool_args["background_task"] = False
 
         agent = getattr(tool, "agent", None)
@@ -869,10 +1051,11 @@ class ContractGenerationFlow(Star):
         else:
             logger.info(
                 "Contract generation flow: Builder runtime ready: generation_id=%s "
-                "asset_corpus=%s history_corpus=%s diagnostics=%s tools=%s",
+                "asset_corpus=%s history_corpus=%s fallback_policy=%s diagnostics=%s tools=%s",
                 event.get_extra("contract_generation_generation_id", ""),
                 self.asset_corpus_slug,
                 event.get_extra(HISTORY_CORPUS_EVENT_KEY, ""),
+                event.get_extra("contract_generation_fallback_policy", ""),
                 event.get_extra(
                     "contract_generation_builder_runtime_optional_missing", []
                 ),
