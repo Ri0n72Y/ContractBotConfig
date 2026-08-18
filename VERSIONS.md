@@ -27,7 +27,7 @@ Docassemble Gateway 0.2.1 暂时保留用于回滚，但已退出正式合同生
 
 ## 人格
 
-- contract_docassemble_builder: 1.26
+- contract_docassemble_builder: 1.26（generation protocol v5）
 - contract_master_orchestrator: 1.24
 - contract_opencontracts_operator: 1.17
 
