@@ -129,7 +129,7 @@ find_generation_assets
 list_documents(contract-templates, 分页)
         ↓
 精确 document slug
-或标准化模板标题身份匹配
+或唯一标准化模板标题身份匹配
         ↓
 contract_generation_required_template_candidates
         ↓ 仅候选 slug 可 use_as_template=true
@@ -144,7 +144,9 @@ Generator strict gate
 
 strict 模式不使用 `search_corpus` 的普通语义相似结果证明模板身份。`search_corpus` 搜索 annotation/block 正文，而文档身份应基于 `list_documents` 返回的 slug/title。标题身份标准化忽略空白与标点，并允许常见展示尾缀 `生成模板` / `模板` / `template`，例如 `材料采购合同模板` 与 `材料采购合同_生成模板` 可以建立确定性标题身份。
 
-如果只有语义相似但 slug/标准化标题不匹配，系统 BLOCKED；不能把另一个相似合同模板冒充用户点名模板。
+精确 slug 命中优先。标准化标题只有在唯一命中时才可建立身份；若两个或更多文档标准化后同名，系统 fail-closed 并要求使用 document slug 明确指定。
+
+如果只有语义相似但 slug/唯一标准化标题不匹配，系统 BLOCKED；不能把另一个相似合同模板冒充用户点名模板。
 
 strict 模式不调用历史合同检索。Flow 会阻止 `find_similar_contracts` / `read_reference_contract` 进入 OpenContracts，Generator 也不要求 `history_search_attempted`。
 
