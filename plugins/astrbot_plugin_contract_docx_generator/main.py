@@ -651,7 +651,6 @@ class ContractDocxGenerator(Star):
                     error=message,
                     retry_safe=True,
                 )
-            self._record_generation_basis(event, resolved_basis)
         elif source_draft is not None:
             resolved_basis = "source_draft"
         else:
@@ -701,6 +700,9 @@ class ContractDocxGenerator(Star):
                 error=str(exc),
                 retry_safe=False,
             )
+
+        if self._formal_generation(event):
+            self._record_generation_basis(event, resolved_basis)
 
         template_asset_id = str(
             event.get_extra("contract_generation_selected_template_asset_id", "")
