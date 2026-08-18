@@ -655,8 +655,10 @@ class ContractDocxGenerator(Star):
         elif source_draft is not None:
             resolved_basis = "source_draft"
         else:
-            resolved_basis = str(generation_basis or "direct_generation").strip().lower()
-            or "direct_generation"
+            resolved_basis = (
+                str(generation_basis or "direct_generation").strip().lower()
+                or "direct_generation"
+            )
 
         try:
             profile = self._profile_for_generation(
