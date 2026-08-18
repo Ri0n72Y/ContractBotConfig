@@ -31,4 +31,4 @@ Docassemble Gateway 0.2.1 暂时保留用于回滚，但已退出正式合同生
 - contract_master_orchestrator: 1.24（generation policy protocol 1）
 - contract_opencontracts_operator: 1.17
 
-正式合同生成链路见 `docs/architecture/ai-docx-generation.md`；Persona 绑定以 `personas/bindings.json` 为准。新合同生成按“专用模板 -> 历史参考 -> AI 自组织结构”回退，不要求仓库内存在通用合同骨架。正式生成 handoff 必须显式携带 generation_policy_protocol=1 与 fallback_policy；业务模板、企业参数和历史合同不进入代码仓库。
+正式合同生成链路见 `docs/architecture/ai-docx-generation.md`；Persona 绑定以 `personas/bindings.json` 为准。新合同生成按“专用模板 -> 历史参考 -> AI 自组织结构”回退，不要求仓库内存在通用合同骨架。正式生成 handoff 必须显式携带 generation_policy_protocol=1 与 fallback_policy；strict 指定模板身份按精确 document slug 或唯一标准化标题确定，语义相似不构成身份验证。业务模板、企业参数和历史合同不进入代码仓库。
