@@ -2,7 +2,7 @@
 
 把 Builder 已经编制好的完整合同 Markdown 一次生成可编辑 DOCX。正式生成时，只有 HTTPS 发布成功后的 Markdown 才保存为当前会话“上一版”，供后续修改。
 
-插件不读取合同库、不判断法律正确性、不补业务事实。Generation Flow 负责知识来源尝试和模板绑定；Generator 只验证流程证据、记录生成依据并确定性渲染。
+插件不读取合同库、不判断法律正确性、不补业务事实。Generation Flow 负责知识来源尝试和模板绑定；Generator 负责校验正式生成证据、校验 Builder 显式声明的生成依据并确定性渲染。
 
 ## Generator 原生工具
 
@@ -18,31 +18,59 @@ finalize_contract_draft          内部工具；仅在 HTTPS 发布成功后持�
 
 ## 新生成与生成依据
 
-正式新生成前，Generator 只要求 Builder 已经至少尝试过：
+正式新生成前，Generator 要求 Builder 已经至少尝试过：
 
 ```text
 contract_generation_asset_search_attempted = true
 contract_generation_history_search_attempted = true
 ```
 
-这两个状态表示流程已经尝试利用企业知识，不要求对应知识源一定成功。随后按实际证据确定：
+这两个状态表示流程已经尝试利用企业知识，不要求对应知识源一定成功。
+
+Builder 在最终生成调用中必须显式声明：
 
 ```text
-specific_template   已完整读取并绑定合适的专用模板
-history_reference   没有绑定模板，但历史相似合同检索成功
-ai_scaffold         没有可用模板或历史参考，由 AI 基于用户事实自行组织合同结构
+generation_basis = specific_template
+                 | history_reference
+                 | ai_scaffold
 ```
 
-Generator 写入：
+Generator 不根据“某次搜索调用成功”自动推导 basis，而是验证声明与证据：
+
+```text
+specific_template
+  contract_generation_template_selected_verified = true
+
+history_reference
+  没有绑定专用模板
+  contract_generation_history_search_verified = true
+  contract_generation_history_search_result_count > 0
+
+ai_scaffold
+  没有绑定专用模板
+  历史结果可以为空、不可用，或虽有候选但 Builder 判断不适配
+```
+
+这使 `ai_scaffold` 能准确表达“实际主要由 AI 基于用户事实和通用合同知识组织”，不会因为历史搜索技术上成功但结果为空而误记为 `history_reference`。
+
+Generator 验证成功后写入：
 
 ```text
 contract_generation_basis_verified = true
-contract_generation_basis = <上述值>
+contract_generation_basis = <实际 basis>
 ```
 
-因此“没有匹配模板”不再是代码级阻断条件。当前系统也不假设存在通用合同骨架资产；`ai_scaffold` 表示 Builder 根据用户明确事实和通用合同知识形成完整合同。
+## 指定模板约束
 
-`contract_generation_asset_search_verified`、`contract_generation_history_search_verified` 和 `contract_generation_template_selected_verified` 仍保留，用于表示对应来源真正成功，而不是用于强迫选择低相关模板。
+如果当前 event 中：
+
+```text
+contract_generation_require_specific_template = true
+```
+
+Generator 只接受 `generation_basis=specific_template`，并要求已经完整绑定一个模板。`history_reference` 和 `ai_scaffold` 都会被代码级阻断。
+
+## 一次生成与幂等
 
 一次生成完整 DOCX，不再使用由模型管理的 begin/chunk/finalize 草稿事务。正式顺序：
 
@@ -62,10 +90,15 @@ generate_contract_docx
 ```text
 read_latest_contract_draft(max_chars=60000)
 → 只有 next_offset 非空时 read_contract_draft
-→ generate_and_publish_contract(source_draft_id=<上一版 draft_id>)
+→ generate_and_publish_contract(
+     source_draft_id=<上一版 draft_id>,
+     generation_basis=source_draft
+   )
 ```
 
-有效 `source_draft_id` 代表用户已经选定修改来源，不要求重新跑模板或历史检索，生成依据记录为 `source_draft`。上一版排版 profile 继续优先沿用。
+有效 `source_draft_id` 代表用户已经选定修改来源，不要求重新跑模板或历史检索。上一版排版 profile 继续优先沿用。
+
+`generation_basis` 会保存进 finalized draft manifest；`get_latest_contract_draft`、`read_latest_contract_draft` 和 `read_contract_draft` 都会把该字段返回。旧草稿 manifest 没有该字段时保持向后兼容。
 
 ## 内容边界
 
