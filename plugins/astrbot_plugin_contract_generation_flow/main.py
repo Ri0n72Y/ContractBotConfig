@@ -14,7 +14,7 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
-BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="5">'
+BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="6">'
 HISTORY_CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 ASSET_CORPUS_EVENT_KEY = "contract_generation_asset_corpus_slug_bound"
 SEARCH_DEFAULT_LIMIT = 3
@@ -102,9 +102,10 @@ GENERATE_AND_PUBLISH_PARAMETERS = {
             "type": "string",
             "enum": list(GENERATION_BASES),
             "description": (
-                "本轮最终实际采用的生成依据：专用模板 specific_template、"
+                "本轮最终实际采用的内容依据：专用模板 specific_template、"
                 "历史参考 history_reference、AI 自组织 ai_scaffold；"
-                "修改上一版时使用 source_draft。"
+                "仅以上一版为主要依据时使用 source_draft。source_draft_id 只是版本来源，"
+                "可与 specific_template/history_reference/ai_scaffold 同时使用。"
             ),
         },
         "output_filename": {
@@ -117,7 +118,7 @@ GENERATE_AND_PUBLISH_PARAMETERS = {
         },
         "source_draft_id": {
             "type": "string",
-            "description": "修改上一版时传入已读取的 draft_id。",
+            "description": "修改上一版时传入已读取的 draft_id；它不替代 generation_basis。",
         },
     },
     "required": ["document_title", "document_markdown", "generation_basis"],
@@ -203,8 +204,10 @@ def _decode_json_dict(value: Any) -> dict[str, Any] | None:
 
 
 def _tool_result_is_error(tool_result: Any) -> bool:
-    if tool_result is None or isinstance(tool_result, dict):
+    if tool_result is None:
         return False
+    if isinstance(tool_result, dict):
+        return bool(tool_result.get("isError") or tool_result.get("is_error"))
     return bool(
         getattr(tool_result, "isError", False)
         or getattr(tool_result, "is_error", False)
@@ -358,6 +361,42 @@ def _search_result_count(payload: dict[str, Any]) -> int:
     return len(results) if isinstance(results, list) else 0
 
 
+def _search_candidates(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    candidates: dict[str, dict[str, str]] = {}
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return candidates
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        slug = str(item.get("document_slug") or item.get("slug") or "").strip()
+        if not slug:
+            continue
+        title = str(item.get("document_title") or item.get("title") or "").strip()
+        candidates[slug] = {
+            "document_slug": slug,
+            "document_title": title,
+        }
+    return candidates
+
+
+def _normalized_lookup(value: Any) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _merge_candidate_maps(
+    event: AstrMessageEvent,
+    key: str,
+    additions: dict[str, dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    current = event.get_extra(key, {})
+    merged = dict(current) if isinstance(current, dict) else {}
+    for slug, metadata in additions.items():
+        merged[str(slug)] = dict(metadata)
+    event.set_extra(key, merged)
+    return merged
+
+
 class _DynamicRegisteredTool(FunctionTool):
     def __init__(
         self,
@@ -453,9 +492,32 @@ class _BoundCorpusTool(FunctionTool):
         elif tool_name == "find_similar_contracts":
             event.set_extra("contract_generation_history_search_attempted", True)
 
+    @staticmethod
+    def _strict_template_mode(event: AstrMessageEvent) -> bool:
+        return bool(event.get_extra("contract_generation_require_specific_template", False))
+
     async def call(self, context: Any, **tool_args: Any) -> Any:
         event = context.context.event
         self._record_search_attempt(event, self.name)
+
+        if not event.get_extra("contract_generation_policy_verified", False):
+            return _normalized_tool_failure(
+                failure_stage="generation_policy",
+                error=str(
+                    event.get_extra("contract_generation_policy_error", "")
+                    or "生成策略无效。"
+                ),
+            )
+
+        strict_template = self._strict_template_mode(event)
+        if strict_template and self.name in {
+            "find_similar_contracts",
+            "read_reference_contract",
+        }:
+            return _normalized_tool_failure(
+                failure_stage="generation_policy",
+                error="指定模板模式不使用历史合同，请只检索并读取用户指定模板。",
+            )
 
         corpus_slug = self._corpus_slug(event)
         if not corpus_slug:
@@ -479,6 +541,32 @@ class _BoundCorpusTool(FunctionTool):
         use_as_template = False
         if self.name == "read_generation_asset":
             use_as_template = bool(forwarded_args.pop("use_as_template", False))
+
+        if strict_template and self.name == "find_generation_assets":
+            required_query = str(
+                event.get_extra("contract_generation_required_template_query", "") or ""
+            ).strip()
+            actual_query = str(forwarded_args.get("query") or "").strip()
+            if not required_query or _normalized_lookup(actual_query) != _normalized_lookup(
+                required_query
+            ):
+                return _normalized_tool_failure(
+                    failure_stage="required_template_search",
+                    error="指定模板模式必须使用 required_template_query 原样检索生成资产。",
+                )
+
+        if strict_template and self.name == "read_generation_asset" and use_as_template:
+            requested_slug = str(forwarded_args.get("document_slug") or "").strip()
+            candidates = event.get_extra(
+                "contract_generation_required_template_candidates", {}
+            )
+            candidates = dict(candidates) if isinstance(candidates, dict) else {}
+            if not requested_slug or requested_slug not in candidates:
+                return _normalized_tool_failure(
+                    failure_stage="required_template_match",
+                    error="只能把本轮 required_template_query 检索返回的候选绑定为指定模板。",
+                )
+
         self._defaults(forwarded_args)
         forwarded_args["corpus_slug"] = corpus_slug
 
@@ -510,16 +598,42 @@ class _BoundCorpusTool(FunctionTool):
             return normalized
 
         if self.name == "find_generation_assets":
+            current_count = _search_result_count(payload)
+            previous_count = int(
+                event.get_extra("contract_generation_asset_search_result_count", 0) or 0
+            )
             event.set_extra("contract_generation_asset_search_verified", True)
             event.set_extra(
                 "contract_generation_asset_search_result_count",
-                _search_result_count(payload),
+                previous_count + current_count,
             )
+            if strict_template:
+                candidates = _search_candidates(payload)
+                _merge_candidate_maps(
+                    event,
+                    "contract_generation_required_template_candidates",
+                    candidates,
+                )
+                event.set_extra(
+                    "contract_generation_required_template_search_verified", True
+                )
         elif self.name == "find_similar_contracts":
+            current_count = _search_result_count(payload)
+            previous_count = int(
+                event.get_extra("contract_generation_history_search_result_count", 0)
+                or 0
+            )
             event.set_extra("contract_generation_history_search_verified", True)
             event.set_extra(
                 "contract_generation_history_search_result_count",
-                _search_result_count(payload),
+                previous_count + current_count,
+            )
+            if current_count > 0:
+                event.set_extra("contract_generation_history_search_had_results", True)
+            _merge_candidate_maps(
+                event,
+                "contract_generation_history_candidates",
+                _search_candidates(payload),
             )
         elif self.name == "read_generation_asset":
             self._record_asset_text(
@@ -629,10 +743,31 @@ class _BoundCorpusTool(FunctionTool):
         if asset_type and asset_type != "contract_template":
             return
 
+        strict_template = bool(
+            event.get_extra("contract_generation_require_specific_template", False)
+        )
+        required_match_verified = False
+        selected_title = ""
+        if strict_template:
+            candidates = event.get_extra(
+                "contract_generation_required_template_candidates", {}
+            )
+            candidates = dict(candidates) if isinstance(candidates, dict) else {}
+            candidate = candidates.get(slug)
+            if not isinstance(candidate, dict):
+                return
+            required_match_verified = True
+            selected_title = str(candidate.get("document_title") or "").strip()
+
         asset_id = str(manifest.get("asset_id") or slug).strip() or slug
         event.set_extra("contract_generation_template_selected_verified", True)
         event.set_extra("contract_generation_selected_template_document_slug", slug)
         event.set_extra("contract_generation_selected_template_asset_id", asset_id)
+        event.set_extra("contract_generation_selected_template_document_title", selected_title)
+        event.set_extra(
+            "contract_generation_selected_template_required_match_verified",
+            required_match_verified,
+        )
         event.set_extra(
             "contract_generation_selected_template_version",
             str(manifest.get("version") or "").strip(),
@@ -658,7 +793,7 @@ class _GenerateAndPublishTool(FunctionTool):
             name="generate_and_publish_contract",
             description=(
                 "把完整合同 Markdown 生成 DOCX 并立即发布临时 HTTPS 下载链接。"
-                "必须显式声明本轮实际 generation_basis；正式新生成前应已尝试模板和历史检索。"
+                "必须显式声明本轮实际 generation_basis；source_draft_id 只是版本来源。"
             ),
             parameters=GENERATE_AND_PUBLISH_PARAMETERS,
         )
@@ -855,27 +990,34 @@ class ContractGenerationFlow(Star):
         return tool, tool_args
 
     @staticmethod
-    def _parse_generation_input(value: Any) -> dict[str, Any]:
+    def _parse_generation_input(value: Any) -> tuple[dict[str, Any], str]:
         if isinstance(value, dict):
-            return dict(value)
-        if not isinstance(value, str) or not value.strip():
-            return {}
+            return dict(value), ""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return {}, ""
+        if not isinstance(value, str):
+            return {}, "Builder handoff input 必须是 JSON 对象。"
         try:
             parsed = json.loads(value)
         except (TypeError, ValueError):
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
+            return {}, "Builder handoff input 不是有效 JSON。"
+        if not isinstance(parsed, dict):
+            return {}, "Builder handoff input 必须解析为 JSON 对象。"
+        return dict(parsed), ""
 
     @staticmethod
     def _reset_generation_state(event: AstrMessageEvent) -> None:
         values: dict[str, Any] = {
             "contract_generation_generation_id": uuid.uuid4().hex,
+            "contract_generation_policy_verified": False,
+            "contract_generation_policy_error": "",
             "contract_generation_asset_search_attempted": False,
             "contract_generation_asset_search_verified": False,
             "contract_generation_asset_search_result_count": 0,
             "contract_generation_asset_read_states": {},
             "contract_generation_template_selected_verified": False,
             "contract_generation_selected_template_document_slug": "",
+            "contract_generation_selected_template_document_title": "",
             "contract_generation_selected_template_asset_id": "",
             "contract_generation_selected_template_version": "",
             "contract_generation_selected_render_profile": "standard_contract",
@@ -883,9 +1025,14 @@ class ContractGenerationFlow(Star):
             "contract_generation_history_search_attempted": False,
             "contract_generation_history_search_verified": False,
             "contract_generation_history_search_result_count": 0,
+            "contract_generation_history_search_had_results": False,
+            "contract_generation_history_candidates": {},
             "contract_generation_fallback_policy": FALLBACK_POLICY_ALLOW,
             "contract_generation_require_specific_template": False,
             "contract_generation_required_template_query": "",
+            "contract_generation_required_template_search_verified": False,
+            "contract_generation_required_template_candidates": {},
+            "contract_generation_selected_template_required_match_verified": False,
             "contract_generation_basis_verified": False,
             "contract_generation_basis": "",
             "contract_generation_renderer_output_verified": False,
@@ -907,15 +1054,40 @@ class ContractGenerationFlow(Star):
     def _apply_generation_policy(
         event: AstrMessageEvent,
         parsed_input: dict[str, Any],
+        parse_error: str,
     ) -> None:
-        policy = str(
-            parsed_input.get("fallback_policy") or FALLBACK_POLICY_ALLOW
-        ).strip().lower()
+        if parse_error:
+            event.set_extra("contract_generation_fallback_policy", "invalid")
+            event.set_extra("contract_generation_policy_error", parse_error)
+            return
+
+        raw_policy_present = "fallback_policy" in parsed_input
+        raw_policy = parsed_input.get("fallback_policy")
+        policy = (
+            str(raw_policy).strip().lower()
+            if raw_policy_present
+            else FALLBACK_POLICY_ALLOW
+        )
         if policy not in {FALLBACK_POLICY_ALLOW, FALLBACK_POLICY_REQUIRE_TEMPLATE}:
-            policy = FALLBACK_POLICY_ALLOW
+            event.set_extra("contract_generation_fallback_policy", policy or "invalid")
+            event.set_extra(
+                "contract_generation_policy_error",
+                "fallback_policy 只能是 allow_ai_fallback 或 require_specific_template。",
+            )
+            return
+
         required_template_query = str(
             parsed_input.get("required_template_query") or ""
         ).strip()
+        if policy == FALLBACK_POLICY_REQUIRE_TEMPLATE and not required_template_query:
+            event.set_extra("contract_generation_fallback_policy", policy)
+            event.set_extra("contract_generation_require_specific_template", True)
+            event.set_extra(
+                "contract_generation_policy_error",
+                "require_specific_template 必须提供 required_template_query。",
+            )
+            return
+
         event.set_extra("contract_generation_fallback_policy", policy)
         event.set_extra(
             "contract_generation_require_specific_template",
@@ -925,6 +1097,8 @@ class ContractGenerationFlow(Star):
             "contract_generation_required_template_query",
             required_template_query,
         )
+        event.set_extra("contract_generation_policy_verified", True)
+        event.set_extra("contract_generation_policy_error", "")
 
     @staticmethod
     def _builder_prompt_compatible(agent: Any) -> bool:
@@ -978,7 +1152,10 @@ class ContractGenerationFlow(Star):
                 missing.append(name)
         if not self.asset_corpus_slug:
             missing.append("generation_asset_corpus_slug")
-        if not str(event.get_extra(HISTORY_CORPUS_EVENT_KEY, "") or "").strip():
+        if (
+            not event.get_extra("contract_generation_require_specific_template", False)
+            and not str(event.get_extra(HISTORY_CORPUS_EVENT_KEY, "") or "").strip()
+        ):
             missing.append("history_corpus_slug")
         return missing
 
@@ -997,7 +1174,7 @@ class ContractGenerationFlow(Star):
 
         if not self._builder_prompt_compatible(agent):
             return [tool.name for tool in self._runtime_tools], [
-                "builder_persona_protocol_v5"
+                "builder_persona_protocol_v6"
             ]
         return [tool.name for tool in self._runtime_tools], []
 
@@ -1029,10 +1206,10 @@ class ContractGenerationFlow(Star):
         ):
             return
 
-        parsed_input = self._parse_generation_input(tool_args.get("input"))
+        parsed_input, parse_error = self._parse_generation_input(tool_args.get("input"))
         event.set_extra("contract_generation_task", True)
         self._reset_generation_state(event)
-        self._apply_generation_policy(event, parsed_input)
+        self._apply_generation_policy(event, parsed_input, parse_error)
         tool_args["background_task"] = False
 
         agent = getattr(tool, "agent", None)
@@ -1047,6 +1224,11 @@ class ContractGenerationFlow(Star):
             logger.error(
                 "Contract generation flow: Builder runtime unavailable: missing=%s",
                 missing,
+            )
+        elif not event.get_extra("contract_generation_policy_verified", False):
+            logger.error(
+                "Contract generation flow: invalid generation policy: %s",
+                event.get_extra("contract_generation_policy_error", ""),
             )
         else:
             logger.info(
