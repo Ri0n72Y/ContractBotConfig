@@ -15,11 +15,13 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
 BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="6">'
+GENERATION_POLICY_PROTOCOL = "1"
 HISTORY_CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 ASSET_CORPUS_EVENT_KEY = "contract_generation_asset_corpus_slug_bound"
 SEARCH_DEFAULT_LIMIT = 3
 TEMPLATE_READ_DEFAULT_CHARS = 80000
 REFERENCE_READ_DEFAULT_CHARS = 60000
+LIST_DOCUMENTS_PAGE_SIZE = 100
 FALLBACK_POLICY_ALLOW = "allow_ai_fallback"
 FALLBACK_POLICY_REQUIRE_TEMPLATE = "require_specific_template"
 GENERATION_BASES = (
@@ -129,7 +131,7 @@ KNOWLEDGE_TOOL_SPECS = (
         "find_generation_assets",
         "search_corpus",
         "asset",
-        "在生成资产库中语义检索最匹配的合同模板、参数或规则。Corpus 已由运行时绑定；没有合适模板时允许继续使用历史参考或 AI 自组织结构。",
+        "在生成资产库中检索最匹配的合同模板、参数或规则。普通模式使用语义检索；指定模板模式由运行时按 slug/标题身份确定性解析。",
         SEARCH_PARAMETERS,
     ),
     (
@@ -157,6 +159,7 @@ KNOWLEDGE_TOOL_SPECS = (
 
 RUNTIME_SOURCE_NAMES = (
     "search_corpus",
+    "list_documents",
     "get_document_text",
     "read_latest_contract_draft",
     "read_contract_draft",
@@ -218,7 +221,10 @@ def _tool_result_texts(tool_result: Any) -> list[str]:
     texts: list[str] = []
     if isinstance(tool_result, str):
         return [tool_result]
-    content = getattr(tool_result, "content", None)
+    if isinstance(tool_result, dict):
+        content = tool_result.get("content")
+    else:
+        content = getattr(tool_result, "content", None)
     if not isinstance(content, list):
         return texts
     for item in content:
@@ -230,12 +236,19 @@ def _tool_result_texts(tool_result: Any) -> list[str]:
 
 def _tool_error_detail(tool_result: Any, limit: int = 1000) -> str:
     pieces = _tool_result_texts(tool_result)
-    if not pieces:
+    if isinstance(tool_result, dict):
+        direct_error = tool_result.get("error")
+        if direct_error:
+            pieces.append(str(direct_error))
+        structured = tool_result.get("structuredContent")
+        if structured is None:
+            structured = tool_result.get("structured_content")
+    else:
         structured = getattr(tool_result, "structuredContent", None)
         if structured is None:
             structured = getattr(tool_result, "structured_content", None)
-        if structured is not None:
-            pieces.append(str(structured))
+    if structured is not None:
+        pieces.append(str(structured))
     detail = " | ".join(piece.strip() for piece in pieces if piece.strip())
     return detail[:limit]
 
@@ -243,8 +256,29 @@ def _tool_error_detail(tool_result: Any, limit: int = 1000) -> str:
 def _tool_result_payload(tool_result: Any) -> dict[str, Any] | None:
     if tool_result is None or _tool_result_is_error(tool_result):
         return None
+
     if isinstance(tool_result, dict):
-        return dict(tool_result)
+        has_wrapper_shape = any(
+            key in tool_result
+            for key in (
+                "content",
+                "structuredContent",
+                "structured_content",
+                "isError",
+                "is_error",
+            )
+        )
+        structured = tool_result.get("structuredContent")
+        if structured is None:
+            structured = tool_result.get("structured_content")
+        parsed = _decode_json_dict(structured)
+        if parsed is not None:
+            return parsed
+        for piece in _tool_result_texts(tool_result):
+            parsed = _decode_json_dict(piece)
+            if parsed is not None:
+                return parsed
+        return None if has_wrapper_shape else dict(tool_result)
 
     structured = getattr(tool_result, "structuredContent", None)
     if structured is None:
@@ -286,15 +320,25 @@ async def _invoke_registered_tool(
     context: Any,
     **tool_args: Any,
 ) -> Any:
-    """Execute a registered tool through AstrBot's native executor."""
+    """Execute a registered tool while keeping framework exceptions out of LLM context."""
     result: Any = None
-    async for item in FunctionToolExecutor.execute(
-        tool=tool,
-        run_context=context,
-        **tool_args,
-    ):
-        if item is not None:
-            result = item
+    try:
+        async for item in FunctionToolExecutor.execute(
+            tool=tool,
+            run_context=context,
+            **tool_args,
+        ):
+            if item is not None:
+                result = item
+    except Exception:
+        logger.exception(
+            "Contract generation flow: registered tool %s raised during execution",
+            getattr(tool, "name", type(tool).__name__),
+        )
+        return {
+            "isError": True,
+            "error": "registered tool execution failed",
+        }
     return result
 
 
@@ -382,6 +426,28 @@ def _search_candidates(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 def _normalized_lookup(value: Any) -> str:
     return " ".join(str(value or "").split()).casefold()
+
+
+def _template_identity_key(value: Any) -> str:
+    text = "".join(
+        char
+        for char in str(value or "").strip().casefold()
+        if char.isalnum()
+    )
+    for suffix in ("生成模板", "template", "模板"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
+def _template_identity_matches(query: str, slug: str, title: str) -> bool:
+    query_lookup = _normalized_lookup(query)
+    if query_lookup and query_lookup == _normalized_lookup(slug):
+        return True
+    query_key = _template_identity_key(query)
+    title_key = _template_identity_key(title)
+    return bool(query_key and title_key and query_key == title_key)
 
 
 def _merge_candidate_maps(
@@ -496,6 +562,75 @@ class _BoundCorpusTool(FunctionTool):
     def _strict_template_mode(event: AstrMessageEvent) -> bool:
         return bool(event.get_extra("contract_generation_require_specific_template", False))
 
+    async def _resolve_required_template_identity(
+        self,
+        context: Any,
+        *,
+        corpus_slug: str,
+        required_query: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        source = _resolve_registered_tool(self._context, "list_documents")
+        if source is None or not getattr(source, "active", True):
+            return None, "OpenContracts 工具 list_documents 当前不可用。"
+
+        documents: list[dict[str, Any]] = []
+        offset = 0
+        total_count: int | None = None
+        while total_count is None or offset < total_count:
+            result = await _invoke_registered_tool(
+                source,
+                context,
+                corpus_slug=corpus_slug,
+                limit=LIST_DOCUMENTS_PAGE_SIZE,
+                offset=offset,
+                search="",
+            )
+            if _tool_result_is_error(result):
+                logger.warning(
+                    "Contract generation flow: list_documents failed during strict template resolution: %s",
+                    _tool_error_detail(result),
+                )
+                return None, "指定模板身份解析失败。"
+            payload = _tool_result_payload(result)
+            if not isinstance(payload, dict):
+                return None, "指定模板身份解析返回了无法解析的结果。"
+            page = payload.get("documents")
+            if not isinstance(page, list):
+                return None, "指定模板身份解析缺少 documents。"
+            try:
+                total_count = max(0, int(payload.get("total_count", len(page)) or 0))
+            except (TypeError, ValueError):
+                return None, "指定模板身份解析返回了非法 total_count。"
+            documents.extend(item for item in page if isinstance(item, dict))
+            if not page:
+                break
+            offset += len(page)
+            if offset <= 0:
+                break
+
+        matches: list[dict[str, Any]] = []
+        for document in documents:
+            slug = str(document.get("slug") or "").strip()
+            title = str(document.get("title") or "").strip()
+            if not slug or not _template_identity_matches(required_query, slug, title):
+                continue
+            matches.append(
+                {
+                    "type": "document_identity",
+                    "document_slug": slug,
+                    "document_title": title,
+                    "description": str(document.get("description") or ""),
+                    "identity_verified": True,
+                }
+            )
+
+        return {
+            "query": required_query,
+            "identity_resolution": "slug_or_normalized_title",
+            "identity_verified": bool(matches),
+            "results": matches,
+        }, None
+
     async def call(self, context: Any, **tool_args: Any) -> Any:
         event = context.context.event
         self._record_search_attempt(event, self.name)
@@ -530,13 +665,6 @@ class _BoundCorpusTool(FunctionTool):
                 error="目标合同库未绑定。",
             )
 
-        source = _resolve_registered_tool(self._context, self._source_name)
-        if source is None or not getattr(source, "active", True):
-            return _normalized_tool_failure(
-                failure_stage="opencontracts_tool",
-                error=f"OpenContracts 工具 {self._source_name} 当前不可用。",
-            )
-
         forwarded_args = _filter_args(self.parameters, tool_args)
         use_as_template = False
         if self.name == "read_generation_asset":
@@ -554,6 +682,30 @@ class _BoundCorpusTool(FunctionTool):
                     failure_stage="required_template_search",
                     error="指定模板模式必须使用 required_template_query 原样检索生成资产。",
                 )
+            payload, resolution_error = await self._resolve_required_template_identity(
+                context,
+                corpus_slug=corpus_slug,
+                required_query=required_query,
+            )
+            if resolution_error or payload is None:
+                return _normalized_tool_failure(
+                    failure_stage="required_template_search",
+                    error=resolution_error or "指定模板身份解析失败。",
+                )
+            candidates = _search_candidates(payload)
+            event.set_extra("contract_generation_asset_search_verified", True)
+            event.set_extra(
+                "contract_generation_asset_search_result_count",
+                len(candidates),
+            )
+            event.set_extra(
+                "contract_generation_required_template_candidates",
+                candidates,
+            )
+            event.set_extra(
+                "contract_generation_required_template_search_verified", True
+            )
+            return _tool_json(payload)
 
         if strict_template and self.name == "read_generation_asset" and use_as_template:
             requested_slug = str(forwarded_args.get("document_slug") or "").strip()
@@ -564,8 +716,15 @@ class _BoundCorpusTool(FunctionTool):
             if not requested_slug or requested_slug not in candidates:
                 return _normalized_tool_failure(
                     failure_stage="required_template_match",
-                    error="只能把本轮 required_template_query 检索返回的候选绑定为指定模板。",
+                    error="只能把本轮 required_template_query 确定性解析出的模板候选绑定为指定模板。",
                 )
+
+        source = _resolve_registered_tool(self._context, self._source_name)
+        if source is None or not getattr(source, "active", True):
+            return _normalized_tool_failure(
+                failure_stage="opencontracts_tool",
+                error=f"OpenContracts 工具 {self._source_name} 当前不可用。",
+            )
 
         self._defaults(forwarded_args)
         forwarded_args["corpus_slug"] = corpus_slug
@@ -607,16 +766,6 @@ class _BoundCorpusTool(FunctionTool):
                 "contract_generation_asset_search_result_count",
                 previous_count + current_count,
             )
-            if strict_template:
-                candidates = _search_candidates(payload)
-                _merge_candidate_maps(
-                    event,
-                    "contract_generation_required_template_candidates",
-                    candidates,
-                )
-                event.set_extra(
-                    "contract_generation_required_template_search_verified", True
-                )
         elif self.name == "find_similar_contracts":
             current_count = _search_result_count(payload)
             previous_count = int(
@@ -896,30 +1045,24 @@ class _GenerateAndPublishTool(FunctionTool):
         draft_saved = bool(generated_payload.get("draft_saved"))
         finalizer = _resolve_registered_tool(self._context, "finalize_contract_draft")
         if finalizer is not None and getattr(finalizer, "active", True):
-            try:
-                finalized = await _invoke_registered_tool(finalizer, context)
-                if _tool_result_is_error(finalized):
-                    logger.warning(
-                        "Contract generation: publication succeeded but draft finalize returned error: %s",
-                        _tool_error_detail(finalized),
-                    )
-                else:
-                    finalized_payload = _tool_result_payload(finalized)
-                    if isinstance(finalized_payload, dict) and (
-                        finalized_payload.get("success") is True
-                        and str(finalized_payload.get("status") or "").lower()
-                        == "ready"
-                    ):
-                        draft_id = finalized_payload.get("draft_id") or draft_id
-                        draft_saved = bool(finalized_payload.get("draft_saved"))
-                    else:
-                        logger.warning(
-                            "Contract generation: publication succeeded but draft finalize did not complete."
-                        )
-            except Exception:
-                logger.exception(
-                    "Contract generation: publication succeeded but draft finalize raised."
+            finalized = await _invoke_registered_tool(finalizer, context)
+            if _tool_result_is_error(finalized):
+                logger.warning(
+                    "Contract generation: publication succeeded but draft finalize returned error: %s",
+                    _tool_error_detail(finalized),
                 )
+            else:
+                finalized_payload = _tool_result_payload(finalized)
+                if isinstance(finalized_payload, dict) and (
+                    finalized_payload.get("success") is True
+                    and str(finalized_payload.get("status") or "").lower() == "ready"
+                ):
+                    draft_id = finalized_payload.get("draft_id") or draft_id
+                    draft_saved = bool(finalized_payload.get("draft_saved"))
+                else:
+                    logger.warning(
+                        "Contract generation: publication succeeded but draft finalize did not complete."
+                    )
 
         return _tool_json(
             {
@@ -967,7 +1110,7 @@ class ContractGenerationFlow(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract generation flow 0.7.0 initialized: asset_corpus=%s",
+            "Contract generation flow 0.7.1 initialized: asset_corpus=%s",
             self.asset_corpus_slug or "<empty>",
         )
 
@@ -1009,6 +1152,7 @@ class ContractGenerationFlow(Star):
     def _reset_generation_state(event: AstrMessageEvent) -> None:
         values: dict[str, Any] = {
             "contract_generation_generation_id": uuid.uuid4().hex,
+            "contract_generation_policy_protocol": "",
             "contract_generation_policy_verified": False,
             "contract_generation_policy_error": "",
             "contract_generation_asset_search_attempted": False,
@@ -1027,7 +1171,7 @@ class ContractGenerationFlow(Star):
             "contract_generation_history_search_result_count": 0,
             "contract_generation_history_search_had_results": False,
             "contract_generation_history_candidates": {},
-            "contract_generation_fallback_policy": FALLBACK_POLICY_ALLOW,
+            "contract_generation_fallback_policy": "",
             "contract_generation_require_specific_template": False,
             "contract_generation_required_template_query": "",
             "contract_generation_required_template_search_verified": False,
@@ -1061,13 +1205,26 @@ class ContractGenerationFlow(Star):
             event.set_extra("contract_generation_policy_error", parse_error)
             return
 
-        raw_policy_present = "fallback_policy" in parsed_input
+        protocol = str(parsed_input.get("generation_policy_protocol") or "").strip()
+        event.set_extra("contract_generation_policy_protocol", protocol)
+        if protocol != GENERATION_POLICY_PROTOCOL:
+            event.set_extra("contract_generation_fallback_policy", "invalid")
+            event.set_extra(
+                "contract_generation_policy_error",
+                f"generation_policy_protocol 必须为 {GENERATION_POLICY_PROTOCOL}。",
+            )
+            return
+
+        if "fallback_policy" not in parsed_input:
+            event.set_extra("contract_generation_fallback_policy", "invalid")
+            event.set_extra(
+                "contract_generation_policy_error",
+                "正式生成 handoff 必须显式提供 fallback_policy。",
+            )
+            return
+
         raw_policy = parsed_input.get("fallback_policy")
-        policy = (
-            str(raw_policy).strip().lower()
-            if raw_policy_present
-            else FALLBACK_POLICY_ALLOW
-        )
+        policy = str(raw_policy or "").strip().lower()
         if policy not in {FALLBACK_POLICY_ALLOW, FALLBACK_POLICY_REQUIRE_TEMPLATE}:
             event.set_extra("contract_generation_fallback_policy", policy or "invalid")
             event.set_extra(
@@ -1233,10 +1390,11 @@ class ContractGenerationFlow(Star):
         else:
             logger.info(
                 "Contract generation flow: Builder runtime ready: generation_id=%s "
-                "asset_corpus=%s history_corpus=%s fallback_policy=%s diagnostics=%s tools=%s",
+                "asset_corpus=%s history_corpus=%s policy_protocol=%s fallback_policy=%s diagnostics=%s tools=%s",
                 event.get_extra("contract_generation_generation_id", ""),
                 self.asset_corpus_slug,
                 event.get_extra(HISTORY_CORPUS_EVENT_KEY, ""),
+                event.get_extra("contract_generation_policy_protocol", ""),
                 event.get_extra("contract_generation_fallback_policy", ""),
                 event.get_extra(
                     "contract_generation_builder_runtime_optional_missing", []
