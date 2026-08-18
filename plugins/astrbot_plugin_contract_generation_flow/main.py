@@ -441,15 +441,6 @@ def _template_identity_key(value: Any) -> str:
     return text
 
 
-def _template_identity_matches(query: str, slug: str, title: str) -> bool:
-    query_lookup = _normalized_lookup(query)
-    if query_lookup and query_lookup == _normalized_lookup(slug):
-        return True
-    query_key = _template_identity_key(query)
-    title_key = _template_identity_key(title)
-    return bool(query_key and title_key and query_key == title_key)
-
-
 def _merge_candidate_maps(
     event: AstrMessageEvent,
     key: str,
@@ -605,28 +596,48 @@ class _BoundCorpusTool(FunctionTool):
             if not page:
                 break
             offset += len(page)
-            if offset <= 0:
-                break
 
-        matches: list[dict[str, Any]] = []
+        query_slug = _normalized_lookup(required_query)
+        query_title = _template_identity_key(required_query)
+        exact_slug_matches: list[dict[str, Any]] = []
+        title_matches: list[dict[str, Any]] = []
         for document in documents:
             slug = str(document.get("slug") or "").strip()
             title = str(document.get("title") or "").strip()
-            if not slug or not _template_identity_matches(required_query, slug, title):
+            if not slug:
                 continue
-            matches.append(
-                {
-                    "type": "document_identity",
-                    "document_slug": slug,
-                    "document_title": title,
-                    "description": str(document.get("description") or ""),
-                    "identity_verified": True,
-                }
+            candidate = {
+                "type": "document_identity",
+                "document_slug": slug,
+                "document_title": title,
+                "description": str(document.get("description") or ""),
+                "identity_verified": True,
+            }
+            if query_slug and query_slug == _normalized_lookup(slug):
+                exact_slug_matches.append(candidate)
+            elif query_title and query_title == _template_identity_key(title):
+                title_matches.append(candidate)
+
+        if exact_slug_matches:
+            matches = exact_slug_matches[:1]
+            resolution = "exact_slug"
+        elif len(title_matches) == 1:
+            matches = title_matches
+            resolution = "normalized_title"
+        elif len(title_matches) > 1:
+            logger.warning(
+                "Contract generation flow: required template title is ambiguous: query=%s candidates=%s",
+                required_query,
+                [item.get("document_slug") for item in title_matches],
             )
+            return None, "指定模板标题匹配到多个文档，请使用 document slug 明确指定。"
+        else:
+            matches = []
+            resolution = "not_found"
 
         return {
             "query": required_query,
-            "identity_resolution": "slug_or_normalized_title",
+            "identity_resolution": resolution,
             "identity_verified": bool(matches),
             "results": matches,
         }, None
@@ -1070,6 +1081,7 @@ class _GenerateAndPublishTool(FunctionTool):
                 "status": "ready",
                 "generation_id": generated_payload.get("generation_id"),
                 "generation_basis": generated_payload.get("generation_basis"),
+                "source_draft_id": generated_payload.get("source_draft_id"),
                 "renderer": generated_payload.get("renderer"),
                 "render_profile": generated_payload.get("render_profile"),
                 "draft_id": draft_id,
