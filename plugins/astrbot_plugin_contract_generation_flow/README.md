@@ -1,157 +1,224 @@
 # Contract Generation Flow
 
-合同生成子人格的运行时编排插件。它不保存业务模板、不理解合同法律内容；它负责把 Generation Asset Corpus、Historical Contract Corpus、Draft Store、DOCX Generator 和 HTTPS Delivery 组合成少量 Builder 领域工具，并记录本轮生成证据。
+合同生成子人格的运行时编排插件。它不保存业务模板、不判断合同法律内容；负责把 Generation Asset Corpus、Historical Contract Corpus、Draft Store、DOCX Generator 和 HTTPS Delivery 组合成 Builder 领域工具，并记录本轮生成证据。
 
-## MVP 正式流程
+## 正常 fallback 生成
 
-正常新生成优先按 AI 回合组织，而不是按单个工具串行组织：
+`fallback_policy=allow_ai_fallback` 的全新合同优先低回合执行：
 
 ```text
-Master handoff Builder
-
 AI #1
 ├─ find_generation_assets(limit=3)
-└─ find_similar_contracts(limit=3, best-effort)
+└─ find_similar_contracts(limit=3)
 
-AI #2
-└─ read_generation_asset(max_chars=80000)
-   └─ 只有模板返回 next_offset 才继续读取
-   └─ 历史检索可用且片段明显不足时才 read_reference_contract
+AI #2（按需要）
+├─ 有合适专用模板：read_generation_asset(use_as_template=true)
+├─ 历史摘要不足：read_reference_contract
+└─ 都不需要全文：直接起草
 
 AI #3
-└─ generate_and_publish_contract
+└─ generate_and_publish_contract(generation_basis=...)
    ├─ generate_contract_docx
    ├─ publish_contract_download
-   └─ finalize_contract_draft（仅发布成功后）
-
-AI #4
-└─ [CONTRACT_GENERATION:READY]
+   └─ finalize_contract_draft
 ```
 
-AstrBot 支持一次模型响应返回多个 tool calls，因此模板检索和历史相似合同检索优先在同一次 AI 响应中发出。两者都只依赖用户需求，不互相依赖。Provider 不支持多 tool call 时才退化为顺序执行。
+全新合同的生成资产和历史合同两类来源都至少尝试一次；修改上一版时改为按 `generation_basis` 最小化检索。
 
-两个搜索默认各取 3 个最相关结果，首批候选明显不足时才扩大检索。`read_generation_asset` 首次默认 `max_chars=80000`，只有 `next_offset` 非空时才继续读取下一段。`find_similar_contracts` 成功且检索摘要够用时不再读取历史全文；确需全文时 `read_reference_contract` 首次默认 60000 字符。历史搜索 blocked 时 Builder 不重复重试，并在完整模板可用时继续生成。
+## Generation policy protocol
 
-DOCX 生成、HTTPS 发布和成功交付后的草稿持久化都是确定性动作，由 `generate_and_publish_contract` 内部顺序完成；模型不再处理中间 `output_path` 或 draft finalize。
-
-## 修改当前会话上一版
+正式 Master → Builder handoff 必须显式提供：
 
 ```text
-read_latest_contract_draft(max_chars=60000)
-→ 只有 next_offset 非空时 read_contract_draft
-→ generate_and_publish_contract(source_draft_id=...)
-→ [CONTRACT_GENERATION:READY]
+generation_policy_protocol = 2
+fallback_policy = allow_ai_fallback | require_specific_template
 ```
 
-`read_latest_contract_draft` 一次返回最近成功交付草稿的 `draft_id`、元数据和首段正文。有效 `source_draft_id` 会跳过本轮模板/历史检索，因此修改上一版不要求 OpenContracts MCP、Generation Asset Corpus 或 Historical Contract Corpus 当前可用。
+以下情况 fail-closed：非法 JSON、protocol 缺失/不是 `2`、`fallback_policy` 缺失/非法、strict 模式缺 `required_template_query`、`reference_value_fields` 提供但不是数组。
 
-## Builder ToolSet
+`generation_policy_protocol=2` 同时约束新的结果契约：Master 必须认识 `[CONTRACT_GENERATION:PARTIAL]`，不能把“HTTPS 已发布但 draft finalize 失败”误报为完整 READY。
 
-Builder Persona 的静态 Tools 保持为空。Generation Flow 0.6.2 在 handoff 前注入固定的、请求无关的 wrapper ToolSet：
+## Builder protocol
+
+当前 Builder prompt 必须包含：
+
+```text
+<contract_generation_protocol version="7">
+```
+
+v7 增加三项硬约束：
+
+1. 普通模式的模板绑定也必须来自本轮 `find_generation_assets` 实际候选；
+2. `generate_and_publish_contract` 的 timeout/cancel/commit-unknown 不得在同一 generation 自动重试；
+3. `status=partial + delivery_committed=true` 返回 `[CONTRACT_GENERATION:PARTIAL]`，不是 READY。
+
+Flow 遇到旧 Builder prompt 时记录 protocol mismatch 并阻止正式生成。
+
+## 生成依据
+
+Builder 最终必须显式声明：
+
+```text
+specific_template
+history_reference
+ai_scaffold
+source_draft
+```
+
+`source_draft_id` 只表示版本来源，可以和 `specific_template/history_reference/ai_scaffold` 同时出现。当前没有额外的通用合同骨架资产；没有匹配模板本身不是阻断条件。
+
+## 模板 search → selection 证据链
+
+普通 `allow_ai_fallback` 模式不再允许“先搜索 A，再直接读取任意 B 并绑定”。
 
 ```text
 find_generation_assets
-read_generation_asset
-find_similar_contracts
-read_reference_contract
-read_latest_contract_draft
-read_contract_draft
-generate_and_publish_contract
+        ↓
+contract_generation_asset_candidates
+        ↓
+read_generation_asset(document_slug=<candidate>, use_as_template=true)
+        ↓ 全文连续读到 EOF
+contract_generation_template_selected_verified=true
+contract_generation_selected_template_search_match_verified=true
 ```
 
-不注入 list/status/preflight、显式 select template、分块草稿写入、裸 `generate_contract_docx`、裸 `publish_contract_download` 或内部 `finalize_contract_draft`。
+只有本轮生成资产搜索结果中出现过的 `document_slug` 才能绑定为专用模板。参数/规则资产读取仍可使用 `use_as_template=false`，不会成为模板。
 
-Wrapper 底层按调用时动态解析 AstrBot 当前已激活工具：
+### strict 指定模板
 
-```text
-search_corpus
-get_document_text
-read_latest_contract_draft
-read_contract_draft
-generate_contract_docx
-finalize_contract_draft
-publish_contract_download
+`require_specific_template` 继续使用更严格的确定性身份链：
+
+1. `required_template_query` 原样进入 `find_generation_assets`；
+2. Flow 内部分页调用 `list_documents(contract-templates)`；
+3. 精确 document slug 优先；否则按唯一标准化标题匹配；
+4. 同名歧义 fail-closed，要求 document slug；
+5. 只有确定性身份候选可 `use_as_template=true`；
+6. strict 模式不调用历史合同。
+
+语义相似的 `search_corpus` 结果不能冒充用户点名模板。
+
+## 历史合同与 reference_value_fields
+
+历史合同默认只提供可迁移的结构、条款组合和企业措辞。项目特定金额、数量、日期、比例、税率、账户、地址、工期等不能默认照搬。
+
+如果用户明确允许某些具体字段参考历史合同，Master 在 handoff 中传：
+
+```json
+{"reference_value_fields":["付款比例","质保比例"]}
 ```
 
-Wrapper 会先按公开 JSON schema 丢弃模型多带的无关参数，再注入内部 `corpus_slug` 和性能默认值。因此额外字段不会透传到底层 MCP/plugin handler，MCP 或 Generator/Delivery hot reload 后也不会继续持有旧 handler 对象。
+它是白名单，不是“复制历史合同”的开关。Builder 只能对列出的字段在历史合同实际相关、且不与用户本轮事实/模板规则冲突时参考；其他项目特定字段仍禁止继承。Flow 同时把该数组记录为 `contract_generation_reference_value_fields` 供审计。
 
-Flow 0.6.2 不再直接调用动态解析到的 `FunctionTool.call()`，而是统一交给 AstrBot 原生 `FunctionToolExecutor`。因此 AstrBot 4.23.2 中把实现保存在 `handler` 的普通插件工具、MCPTool 和自定义 override-call Tool 都按框架原生语义执行；这个兼容层不增加模型调用或额外工具回合。
+历史搜索证据继续累积：后续一次 `results=[]` 不会抹掉前面已经获得的历史候选。
 
-生成资产 Corpus 使用插件配置 `generation_asset_corpus_slug`。历史合同 Corpus 由 Handoff Policy 写入当前 event 的 `contract_opencontracts_corpus_slug`。
+## 写操作 timeout / cancellation
 
-历史 Corpus 不存进共享 Handoff Agent。每个 wrapper 调用时从当前 `AstrMessageEvent` 读取绑定，所以并发会话不会互相覆盖 Corpus。共享 Agent 始终只收到同一个请求无关 ToolSet；某个请求恰逢 MCP/插件 hot reload 时，只会在真正调用对应 wrapper 时得到 blocked，不会把共享 Agent ToolSet 清空并影响其他请求。
-
-## Persona protocol
-
-Flow 接受：
+Flow 0.7.2 区分只读工具与写工具。
 
 ```text
-<contract_generation_protocol version="4">
+read/search executor exception
+→ 短结构化 blocked
+→ retry_safe=true
+
+DOCX / publish / finalize executor exception
+→ commit_unknown=true
+→ retry_safe=false
+→ contract_generation_terminal_failure=true
+→ 同一 generation 后续 generate_and_publish_contract 被硬阻止
 ```
 
-Persona protocol 不兼容时当前 event 记录 runtime missing，Generator 会拒绝正式生成；Flow 不再因为单个请求的 protocol 状态去清空共享 Agent ToolSet。Persona 更新后按部署文档重载对应 Subagent。Flow 不在每个请求里原地刷新共享 Agent Prompt。
+原因是 Generator/Delivery 的实际文件工作可能运行在线程中；asyncio 上层 timeout/cancel 不能证明线程没有完成副作用。因此写操作不能把“调用超时”解释为“什么都没发生，可以再试一次”。
 
-## 模板读取
-
-Builder 通过 `find_generation_assets` 选择最合适候选，然后读取该候选。Manifest 是可选元数据，已有纯文本合同模板不需要为了 MVP 重新加工。
-
-运行时只保留读取连续性和显式元数据排除规则：
-
-1. `document_slug` 与请求一致；
-2. 从 `char_offset=0` 开始；
-3. 后续 offset 等于上一块实际文本末尾；
-4. `next_offset=null` 时文本末尾等于 `total_chars`；
-5. 本轮尚未绑定模板时，没有 manifest 的完整可读候选可以直接作为兼容模板；
-6. manifest 明确声明 `contract_template` 且状态为空/active 时可以绑定模板；
-7. 一旦已经绑定模板，后续无 manifest 参数/规则资产不会覆盖模板身份；
-8. manifest 明确声明其他 asset type 或非 active 状态时不自动当作模板；
-9. 完整读完后自动绑定，不要求额外 `select_generation_template` 调用。
-
-Manifest 中的 `render_profile`、`required_headings`、`parameter_assets`、`rule_assets` 作为提示元数据记录。后面三项不作为正式生成代码级 gating；缺失或未知排版回退 `standard_contract`。模板正文和可用的 OpenContracts 资料才是 Builder 的主要依据。
-
-## 运行证据
-
-Flow 仍记录：
+如果外层 `generate_and_publish_contract` 自己被取消/超时，Flow 会先记录：
 
 ```text
+contract_generation_write_stage
+contract_generation_write_commit_unknown=true
+contract_generation_write_commit_unknown_stage
+contract_generation_terminal_failure=true
+```
+
+然后保留取消语义向 AstrBot 返回。Builder v7 被明确禁止在同一 generation 再次调用写工具。
+
+## READY 与 PARTIAL
+
+完整 READY 现在要求三件事全部可验证：
+
+```text
+DOCX ready
++ HTTPS publication ready
++ finalize_contract_draft ready, draft_saved=true, draft_id 非空
+```
+
+只有这样组合工具才返回：
+
+```text
+success=true
+status=ready
+```
+
+若 HTTPS 已经发布，但 draft finalize 异常、结果无法解析或没有可验证 `draft_id`：
+
+```text
+success=false
+status=partial
+delivery_committed=true
+draft_saved=false
+retry_safe=false
+manual_recovery_required=true
+```
+
+结果仍保留 `filename/download_url/expires_at/publication_id`，让用户可以取得已发布文件，但不能声称该版本已经进入“上一版可继续修改”的 Draft Store，也不能重新执行整条生成链补救。
+
+## UTF-8 / tool-result boundary
+
+模型可见工具输出继续执行：
+
+```text
+CallToolResult
+→ isError/is_error 检查（object + dict）
+→ structuredContent/content JSON 解包
+→ Python dict
+→ json.dumps(ensure_ascii=False, separators=(",", ":"))
+→ Builder
+```
+
+详细异常只写服务日志；成功 JSON 不使用 `\uXXXX` 形式重新塞回模型上下文。
+
+## 修改上一版
+
+```text
+source_draft       → 不要求重新检索 OpenContracts
+specific_template  → 只要求生成资产/模板证据
+history_reference  → 只要求历史检索/历史证据
+ai_scaffold        → 不机械重查两个 Corpus
+```
+
+`source_draft_id` 与 `generation_basis` 都写入 finalized draft manifest；模板 provenance 只在 `specific_template` 或纯 `source_draft` 继承场景记录，不把上一版模板错误标记成本轮 history/AI 的模板依据。
+
+## 主要 event 状态
+
+```text
+contract_generation_policy_protocol
+contract_generation_policy_verified
+contract_generation_reference_value_fields
+contract_generation_asset_search_attempted
 contract_generation_asset_search_verified
+contract_generation_asset_candidates
 contract_generation_template_selected_verified
-contract_generation_history_search_verified
+contract_generation_selected_template_search_match_verified
+contract_generation_history_search_had_results
+contract_generation_history_candidates
+contract_generation_required_template_candidates
+contract_generation_selected_template_required_match_verified
+contract_generation_write_stage
+contract_generation_write_commit_unknown
+contract_generation_write_commit_unknown_stage
+contract_generation_terminal_failure
+contract_generation_terminal_failure_reason
 ```
 
-其中前两项是新合同 Generator 0.4.2 的代码级必要证据；`contract_generation_history_search_verified` 只表示本轮历史相似合同检索成功，用于诊断和观测，不再是 Generator 的硬门槛。修改已有成功交付 draft 时不要求上述知识库证据。
-
-Flow 每次 handoff 生成唯一：
-
-```text
-contract_generation_generation_id
-```
-
-DOCX output 和 HTTPS publication 都绑定该 generation_id。Generator 和 Delivery 对同一 generation 的已成功结果幂等返回，避免模型误重复调用造成重新渲染或重复发布。
-
-正式 Generator 生成 DOCX 后先把 Markdown 保存在当前 event 的 pending draft；只有 HTTPS publication 成功后，组合工具才调用内部 `finalize_contract_draft` 写入 Draft Store。发布失败不会改变用户可见的“上一版”。
-
-## 运行依赖
-
-Flow 在 handoff 时只把 Persona protocol 不兼容记录为 event 级正式生成阻断。底层工具和 Corpus 状态只用于诊断；实际是否可用由对应 wrapper 在调用时判断：
-
-```text
-search_corpus
-get_document_text
-read_latest_contract_draft
-read_contract_draft
-generate_contract_docx
-finalize_contract_draft
-publish_contract_download
-```
-
-因此 transient hot reload 不改变其他请求的 ToolSet。Generation Asset Corpus 和可用模板是新合同生成必要数据；Historical Contract Corpus 是优先使用的 best-effort 参考，不是修改已有 draft 的前置条件，也不在模板完整可用时单独阻止新生成。
-
-## 数据边界
-
-代码仓库不保存真实模板正文、企业参数、历史合同或项目事实。业务内容只存在外部 Corpus。
-
-当前 MVP 假设 OpenContracts MCP 位于受信 Docker 局域网，部署用户少于 20 人。因此不增加 MCP server identity 探测、网络来源筛查、数据库锁、分布式锁或队列。主要并发边界是 Event 级状态隔离、请求无关共享 ToolSet、Draft Store 文件锁和 Delivery audit 写锁。
+这些状态描述流程和证据，不声称合同法律内容已经通过审查。
 
 ## 配置
 

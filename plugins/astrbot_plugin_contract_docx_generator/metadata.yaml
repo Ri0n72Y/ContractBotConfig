@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_docx_generator
 display_name: 合同 DOCX 生成器
-desc: 将 Builder 的完整合同 Markdown 一次生成可编辑 DOCX，按 generation_id 幂等，并仅在成功交付后持久化最近草稿供后续修改。
-version: 0.4.2
+desc: 将 Builder 的完整合同 Markdown 一次生成可编辑 DOCX，按 generation_id 幂等；支持显式 generation_basis、source draft 版本来源和成功交付后的草稿 lineage 持久化。
+version: 0.5.1
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"

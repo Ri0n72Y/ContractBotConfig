@@ -1,6 +1,6 @@
 # System UML
 
-本图是 ContractBot 的架构入口。详细说明见 `docs/architecture/`。
+当前正式 ContractBot 架构，不包含 Docassemble Gateway。
 
 ```mermaid
 flowchart LR
@@ -9,37 +9,39 @@ flowchart LR
     Router[Contract File Router]
     Master[Contract Master Persona]
     Handoff[Contract Handoff Policy]
-    OCOperator[OpenContracts Operator]
-    MCP[OpenContracts MCP Tools]
-    Gateway[OpenContracts Upload Gateway]
+    Operator[OpenContracts Operator]
+    MCP[OpenContracts MCP]
+    UploadGateway[OpenContracts Upload Gateway]
     ImportAPI[Official Import API]
     OpenContracts[OpenContracts]
+    Builder[Contract Builder]
+    Flow[Generation Flow]
+    Generator[Contract DOCX Generator]
+    Delivery[HTTPS Download Delivery]
     Guard[WeCom Final Result Guard]
-    DocBuilder[Docassemble Builder]
-    Docassemble[Docassemble]
 
-    User --> WeCom
-    WeCom --> Router
-    Router --> Master
-    Master --> Handoff
-    Handoff --> OCOperator
-    OCOperator -->|读取、识别、正文、搜索、状态| MCP
-    MCP --> OpenContracts
-    OCOperator -->|上传命令| Gateway
-    Gateway -->|WorkerKey| ImportAPI
-    ImportAPI --> OpenContracts
-    Master --> DocBuilder
-    DocBuilder --> Docassemble
-    Master --> Guard
-    Guard --> WeCom
+    User --> WeCom --> Router --> Master
+
+    Master --> Handoff --> Operator
+    Operator -->|读取/搜索| MCP --> OpenContracts
+    Operator -->|上传| UploadGateway -->|WorkerKey| ImportAPI --> OpenContracts
+
+    Master --> Builder
+    Handoff --> Flow --> Builder
+    Builder --> Flow
+    Flow -->|模板/历史只读| MCP
+    Flow --> Generator --> Delivery
+
+    Master --> Guard --> WeCom
 ```
 
-## 集成路径
+## 正式路径
 
 ```text
-读取与检索：OpenContracts Operator -> OpenContracts MCP -> OpenContracts
-上传与版本写入：OpenContracts Operator -> Upload Gateway -> Official Import API -> OpenContracts
-用户结果：Master Persona -> WeCom Final Result Guard -> WeCom Adapter
+读取：Master → Operator → OpenContracts MCP
+上传：Master → Operator → OpenContracts Gateway → WorkerKey Import API → MCP 核验
+生成：Master → Builder → Generation Flow → DOCX Generator → Download Delivery → Draft finalize
+结果：Master → WeCom Final Result Guard → WeCom
 ```
 
-Gateway 的读取相关 REST 实现属于当前 0.5.1 基线与目标架构之间的待重构差异。Phase 2 按上述路径迁移读取和重复判断。
+Skills 只保留 `contract-direct-analysis` 和 `contract-conversation-control`；Operator 与 Builder 不绑定 Skill。

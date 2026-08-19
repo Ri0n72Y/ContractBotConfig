@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_download_delivery
 display_name: 合同临时下载交付
-desc: 发布本轮正式生成的 DOCX，以 generation_id 绑定当前输出和 HTTPS 发布结果，并对重复发布幂等返回原链接；审计追加写入使用线程锁。
-version: 0.2.4
+desc: 仅发布本轮 Contract DOCX Generator 的已验证输出，以 generation_id 绑定 HTTPS 发布结果并对重复发布幂等返回原链接；不保留旧生成网关兼容入口。
+version: 0.2.5
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"

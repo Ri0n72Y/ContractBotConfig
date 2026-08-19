@@ -10,11 +10,10 @@
     "default": "https://download.ri0n72y.top/contracts"
   },
   "allowed_source_dirs": {
-    "description": "允许发布文件的本地来源目录白名单；不得配置任意工作目录或系统目录",
+    "description": "允许发布文件的本地来源目录白名单；正式链路只允许 Contract DOCX Generator 输出目录",
     "type": "list",
     "default": [
-      "data/plugins_data/astrbot_plugin_contract_docx_generator/output",
-      "data/plugins_data/astrbot_plugin_docassemble_gateway/output"
+      "data/plugins_data/astrbot_plugin_contract_docx_generator/output"
     ]
   },
   "ttl_seconds": {
