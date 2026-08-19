@@ -2,12 +2,48 @@
 
 合同生成子人格的运行时编排插件。它不保存业务模板、不判断合同法律内容；负责把 Generation Asset Corpus、Historical Contract Corpus、Draft Store、DOCX Generator 和 HTTPS Delivery 组合成 Builder 领域工具，并记录本轮生成证据。
 
+## Builder Skill 运行时
+
+AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界使用 AstrBot 原生 `SkillManager` 和 `build_skills_prompt()` 补齐这一层，而不是复制 Skill 内容或维护第二套 Skill 配置。
+
+正式 Builder 仍只暴露受控合同生成工具，并额外提供：
+
+```text
+read_bound_skill(skill_name)
+```
+
+该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、且 AstrBot `SkillManager` 判定为启用状态的 Skill 名称；文件路径由 `SkillManager` 解析，模型不能提供任意本地路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。
+
+当前正式生成要求：
+
+```text
+contract-document-specification
+```
+
+必须已绑定、可用并在本轮通过 `read_bound_skill` 完成 grounding。未读取时调用 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED，要求先读取 Skill；不会静默跳过格式规范后继续生成。
+
+运行日志会显示：
+
+```text
+document_spec_required=true
+document_spec_available=true
+document_spec_loaded=false|true
+tools=[read_bound_skill, ...]
+```
+
+成功读取后会记录：
+
+```text
+Builder Skill grounded: skill=contract-document-specification
+```
+
 ## 正常 fallback 生成
 
 `fallback_policy=allow_ai_fallback` 的全新合同优先低回合执行：
 
 ```text
 AI #1
+├─ read_bound_skill(contract-document-specification)
 ├─ find_generation_assets(limit=3)
 └─ find_similar_contracts(limit=3)
 
@@ -23,7 +59,7 @@ AI #3
    └─ finalize_contract_draft
 ```
 
-全新合同的生成资产和历史合同两类来源都至少尝试一次；修改上一版时改为按 `generation_basis` 最小化检索。
+全新合同的生成资产和历史合同两类来源都至少尝试一次；修改上一版时改为按 `generation_basis` 最小化检索。文档格式 Skill 仍适用于新生成、修改、重写和定稿。
 
 ## Generation policy protocol
 
@@ -36,7 +72,7 @@ fallback_policy = allow_ai_fallback | require_specific_template
 
 以下情况 fail-closed：非法 JSON、protocol 缺失/不是 `2`、`fallback_policy` 缺失/非法、strict 模式缺 `required_template_query`、`reference_value_fields` 提供但不是数组。
 
-`generation_policy_protocol=2` 同时约束新的结果契约：Master 必须认识 `[CONTRACT_GENERATION:PARTIAL]`，不能把“HTTPS 已发布但 draft finalize 失败”误报为完整 READY。
+`generation_policy_protocol=2` 同时约束结果契约：Master 必须认识 `[CONTRACT_GENERATION:PARTIAL]`，不能把“HTTPS 已发布但 draft finalize 失败”误报为完整 READY。
 
 ## Builder protocol
 
@@ -46,13 +82,13 @@ fallback_policy = allow_ai_fallback | require_specific_template
 <contract_generation_protocol version="7">
 ```
 
-v7 增加三项硬约束：
+v7 继续约束：
 
-1. 普通模式的模板绑定也必须来自本轮 `find_generation_assets` 实际候选；
+1. 普通模式的模板绑定必须来自本轮 `find_generation_assets` 实际候选；
 2. `generate_and_publish_contract` 的 timeout/cancel/commit-unknown 不得在同一 generation 自动重试；
 3. `status=partial + delivery_committed=true` 返回 `[CONTRACT_GENERATION:PARTIAL]`，不是 READY。
 
-Flow 遇到旧 Builder prompt 时记录 protocol mismatch 并阻止正式生成。
+Flow 遇到旧 Builder prompt 时记录 protocol mismatch 并阻止正式生成。Skill runtime 修复不改变 generation protocol，因此 Builder 仍为 protocol v7。
 
 ## 生成依据
 
@@ -69,7 +105,7 @@ source_draft
 
 ## 模板 search → selection 证据链
 
-普通 `allow_ai_fallback` 模式不再允许“先搜索 A，再直接读取任意 B 并绑定”。
+普通 `allow_ai_fallback` 模式不允许“先搜索 A，再直接读取任意 B 并绑定”。
 
 ```text
 find_generation_assets
@@ -86,7 +122,7 @@ contract_generation_selected_template_search_match_verified=true
 
 ### strict 指定模板
 
-`require_specific_template` 继续使用更严格的确定性身份链：
+`require_specific_template` 使用确定性身份链：
 
 1. `required_template_query` 原样进入 `find_generation_assets`；
 2. Flow 内部分页调用 `list_documents(contract-templates)`；
@@ -113,7 +149,7 @@ contract_generation_selected_template_search_match_verified=true
 
 ## 写操作 timeout / cancellation
 
-Flow 0.7.2 区分只读工具与写工具。
+Flow 0.7.3 区分只读工具与写工具。
 
 ```text
 read/search executor exception
@@ -129,20 +165,11 @@ DOCX / publish / finalize executor exception
 
 原因是 Generator/Delivery 的实际文件工作可能运行在线程中；asyncio 上层 timeout/cancel 不能证明线程没有完成副作用。因此写操作不能把“调用超时”解释为“什么都没发生，可以再试一次”。
 
-如果外层 `generate_and_publish_contract` 自己被取消/超时，Flow 会先记录：
-
-```text
-contract_generation_write_stage
-contract_generation_write_commit_unknown=true
-contract_generation_write_commit_unknown_stage
-contract_generation_terminal_failure=true
-```
-
-然后保留取消语义向 AstrBot 返回。Builder v7 被明确禁止在同一 generation 再次调用写工具。
+Skill 未 grounding 的 BLOCKED 发生在任何写工具调用之前，所以允许在读取 Skill 后再次调用 `generate_and_publish_contract`。
 
 ## READY 与 PARTIAL
 
-完整 READY 现在要求三件事全部可验证：
+完整 READY 要求三件事全部可验证：
 
 ```text
 DOCX ready
@@ -196,12 +223,19 @@ ai_scaffold        → 不机械重查两个 Corpus
 
 `source_draft_id` 与 `generation_basis` 都写入 finalized draft manifest；模板 provenance 只在 `specific_template` 或纯 `source_draft` 继承场景记录，不把上一版模板错误标记成本轮 history/AI 的模板依据。
 
+无论采用哪一种 basis，正式合同格式 Skill 都必须先完成 grounding。
+
 ## 主要 event 状态
 
 ```text
 contract_generation_policy_protocol
 contract_generation_policy_verified
 contract_generation_reference_value_fields
+contract_generation_document_spec_required
+contract_generation_document_spec_available
+contract_generation_document_spec_loaded
+contract_generation_skill_grounding_attempted
+contract_generation_skill_grounding_loaded
 contract_generation_asset_search_attempted
 contract_generation_asset_search_verified
 contract_generation_asset_candidates
