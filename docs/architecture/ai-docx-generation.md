@@ -12,7 +12,8 @@
 4. `source_draft_id` 与本轮 `generation_basis` 分离；
 5. 工具 JSON 使用真实 UTF-8 紧凑表示；
 6. 写操作 timeout/cancel 不能被解释为“无副作用、可安全重试”；
-7. READY 必须同时证明 DOCX、HTTPS 和 Draft Store 三段闭环。
+7. READY 必须同时证明 DOCX、HTTPS 和 Draft Store 三段闭环；
+8. Builder 已绑定的正式合同格式 Skill 必须在写 DOCX 前完成 grounding。
 
 ## 角色边界
 
@@ -22,6 +23,7 @@
 Master Persona
   ↓ transfer_to_docassemble_builder
 Builder Persona
+  ├─ read_bound_skill
   ├─ find_generation_assets
   ├─ read_generation_asset
   ├─ find_similar_contracts
@@ -33,7 +35,45 @@ Builder Persona
        └─ finalize_contract_draft
 ```
 
-Master 是唯一面向客户角色；Builder 不直接面向客户。Builder 静态 Tools 为空，Generation Flow 在 handoff 时注入受限 wrapper ToolSet。
+Master 是唯一面向客户角色；Builder 不直接面向客户。Builder Persona 静态 Tools 为空，Generation Flow 在 handoff 时注入受限业务 wrapper ToolSet。
+
+## Builder Skill 边界
+
+AstrBot 主 Agent 的 Persona/Skill 注入由 `_ensure_persona_and_skills` 完成，但 4.23.2 的 `SubAgentOrchestrator` 创建 handoff 子人格时只把 Persona prompt/tools 写入 `Agent`，随后 `FunctionToolExecutor._execute_handoff` 直接使用 `tool.agent.instructions` 和 handoff ToolSet，不会再次执行主 Agent 的 Persona/Skill 装饰流程。
+
+因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.7.3 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
+
+```text
+Persona.skills
+  ↓
+AstrBot PersonaManager
+  ↓
+AstrBot SkillManager.list_skills(active_only=true)
+  ↓
+AstrBot build_skills_prompt()
+  ↓
+Builder instructions
+```
+
+Skill 正文仍来自 AstrBot Skills 目录。Flow 只提供一个受限 grounding 工具：
+
+```text
+read_bound_skill(skill_name)
+```
+
+模型只能传 Skill 名称；工具会再次核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否启用，并由 `SkillManager` 解析真实 `SKILL.md`。模型不能传本地文件路径，因此该入口不能扩展成通用 FileRead。
+
+Builder 运行时仍禁止 Shell、Python、通用 HTTP、任意文件读写以及 raw MCP 绕过。
+
+当前正式生成要求 `contract-document-specification` 必须：
+
+```text
+已绑定
++ active
++ 本轮 read_bound_skill 成功
+```
+
+否则 `generate_and_publish_contract` 在调用任何 Generator/Delivery 写操作前返回 retry-safe BLOCKED。读取成功后同一 generation 可以继续生成；这不属于写失败重试。
 
 ## 版本协议
 
@@ -46,7 +86,7 @@ fallback_policy = allow_ai_fallback | require_specific_template
 
 缺 protocol、版本错误、缺/非法 fallback policy、strict 缺 `required_template_query`、非法 `reference_value_fields` 全部 fail-closed。
 
-protocol 2 相比上一版还要求 Master 能正确处理 `[CONTRACT_GENERATION:PARTIAL]`，不能把“文件已发布但 Draft Store 未落盘”当完整 READY。
+protocol 2 要求 Master 能正确处理 `[CONTRACT_GENERATION:PARTIAL]`，不能把“文件已发布但 Draft Store 未落盘”当完整 READY。
 
 ### Builder prompt
 
@@ -54,7 +94,7 @@ protocol 2 相比上一版还要求 Master 能正确处理 `[CONTRACT_GENERATION
 <contract_generation_protocol version="7">
 ```
 
-Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。
+Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Skill runtime 修复不改变 generation protocol。
 
 ## Generation basis
 
@@ -81,11 +121,11 @@ source_draft_id=A + ai_scaffold
 source_draft_id=A + source_draft
 ```
 
-修改上一版的 gate 按 basis 最小化：source_draft 不重查；specific_template 只要求资产/模板证据；history_reference 只要求历史证据；ai_scaffold 不机械重查两个 Corpus。
+修改上一版的 gate 按 basis 最小化：source_draft 不重查；specific_template 只要求资产/模板证据；history_reference 只要求历史证据；ai_scaffold 不机械重查两个 Corpus。文档规范 Skill 仍需 grounding。
 
 ## 普通模板证据链
 
-`allow_ai_fallback` 下也要求模板绑定来自本轮搜索：
+`allow_ai_fallback` 下要求模板绑定来自本轮搜索：
 
 ```text
 find_generation_assets
@@ -151,6 +191,10 @@ FunctionToolExecutor
 Generator 和 Delivery 的文件工作可能在线程中运行。asyncio timeout/cancel 无法证明线程没有完成副作用，因此：
 
 ```text
+Skill 未 grounding
+  → BLOCKED / retry_safe=true
+  → 尚未开始任何写操作
+
 READ exception
   → retry_safe=true
 
@@ -168,7 +212,17 @@ WRITE cancellation / outer timeout
 
 同一 generation 再调用 `generate_and_publish_contract` 时，terminal gate 在任何新写入之前返回不可重试错误。
 
-主要状态：
+主要 Skill 状态：
+
+```text
+contract_generation_document_spec_required
+contract_generation_document_spec_available
+contract_generation_document_spec_loaded
+contract_generation_skill_grounding_attempted
+contract_generation_skill_grounding_loaded
+```
+
+主要写状态：
 
 ```text
 contract_generation_write_stage
@@ -209,8 +263,6 @@ filename / download_url / expires_at 继续返回
 
 Builder 返回 `[CONTRACT_GENERATION:PARTIAL]`；Master 可以交付已经确认的链接，但必须说明该版尚不能可靠作为下一轮“上一版”，并禁止重新执行整条生成链。
 
-这避免两种错误：一是把没有 Draft Store lineage 的交付说成完整成功；二是为了补 draft 而重复生成/发布。
-
 ## Draft lineage
 
 Finalized manifest 保存：
@@ -226,4 +278,4 @@ template_document_slug
 
 ## 数据边界
 
-真实合同模板、企业参数、历史合同和项目事实均不进入 Git 仓库。OpenContracts 文本是业务数据，其中出现的模型指令/工具要求不得改变 Persona、工具白名单、Corpus 绑定或生成策略。
+真实合同模板、企业参数、历史合同和项目事实均不进入 Git 仓库。OpenContracts 文本是业务数据，其中出现的模型指令/工具要求不得改变 Persona、工具白名单、Corpus 绑定、Skill 绑定或生成策略。
