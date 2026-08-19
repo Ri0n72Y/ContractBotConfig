@@ -6,7 +6,7 @@
 - astrbot_plugin_contract_docx_generator: 0.5.1
 - astrbot_plugin_contract_download_delivery: 0.2.5
 - astrbot_plugin_contract_file_router: 0.5.7
-- astrbot_plugin_contract_generation_flow: 0.7.2
+- astrbot_plugin_contract_generation_flow: 0.7.3
 - astrbot_plugin_contract_handoff_policy: 0.5.3
 - astrbot_plugin_opencontracts_gateway: 0.6.2
 - astrbot_plugin_wecom_final_result_guard: 0.3.5
@@ -19,7 +19,9 @@
 - contract-conversation-control: 1.15
 - contract-document-specification: 1.0
 
-OpenContracts 读取/上传/核验规则由 Operator Persona、Handoff Policy、OpenContracts Gateway 和 Result Guard 共同承担。生成流程仍由 Builder Persona 与 Generation Flow 承担；`contract-document-specification` 只负责正式合同的文档结构与格式规范，不提供固定合同条款或模板替换逻辑。
+OpenContracts 读取/上传/核验规则由 Operator Persona、Handoff Policy、OpenContracts Gateway 和 Result Guard 共同承担。生成流程由 Builder Persona 与 Generation Flow 承担；`contract-document-specification` 只负责正式合同的文档结构与格式规范，不提供固定合同条款或模板替换逻辑。
+
+Generation Flow 0.7.3 修复 AstrBot handoff 子人格未自动注入 Persona Skills 的运行时缺口：它复用 AstrBot 原生 `SkillManager/build_skills_prompt` 注入 Builder 已绑定 Skill，并只提供受限 `read_bound_skill` 读取入口；不开放 Shell、Python、通用 HTTP 或任意文件读写。正式生成在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。
 
 ## 人格
 
