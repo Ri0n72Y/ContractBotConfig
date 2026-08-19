@@ -25,23 +25,55 @@ json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 对 MCP 文本先用 JSON parser 得到结构化对象，再重新序列化。不要对正常 Unicode 字符串调用 `.decode("unicode_escape")`，也不要把 `repr(payload)` 当作模型上下文。
 
-完整 traceback 只写服务日志。模型侧错误应收敛为 `status / failure_stage / error / retry_safe` 等结构化字段。
+完整 traceback 只写服务日志。模型侧错误收敛为 `status / failure_stage / error / retry_safe` 等结构化字段。
 
-## MCP 错误边界
+## MCP / ToolResult 错误边界
 
-JSON 可解析不代表 MCP 调用成功。处理 `CallToolResult` 时顺序必须是：
+处理 `CallToolResult` 的顺序：
 
 ```text
 先检查 isError / is_error
-→ error=true：详细内容写日志，模型侧只返回短结构化错误
-→ error=false：再解析 structuredContent / content[].text
+→ error=true：详细内容写日志，模型只返回短结构化错误
+→ error=false：解析 structuredContent / content[].text
 → JSON parse
 → ensure_ascii=False 紧凑序列化
 ```
 
-禁止先解析错误正文再根据 payload 猜测成功/失败。否则一个 `isError=true`、但错误正文恰好是合法 JSON 的响应可能被错误记录为 verified。
+对象形态和 dict 形态都按同一语义处理。无法解析的 ToolResult 不直接原样进入模型上下文。
 
-无法解析的 ToolResult 同样不直接原样进入模型上下文；服务日志保留诊断详情，模型只拿到稳定错误 contract。
+## 只读异常与写异常必须分开
+
+Generation Flow 0.7.2 不再把所有 executor exception 都视为 retry-safe。
+
+只读工具（模板/历史搜索、文档读取、草稿读取）的执行异常没有外部写副作用，可以收敛为短结构化错误并保持 `retry_safe=true`。
+
+DOCX 生成、HTTPS 发布、draft finalize 属于写操作。它们内部可能通过 `asyncio.to_thread()` 执行文件工作；上层 asyncio timeout/cancel 不能证明工作线程没有完成。因此：
+
+```text
+write executor exception
+→ retry_safe=false
+→ commit_unknown=true
+→ 本 generation terminal
+→ 禁止自动重试
+```
+
+如果 `generate_and_publish_contract` 本身被 timeout/cancel，Flow 先记录当前 write stage 与 commit-unknown，再保留取消语义交回 AstrBot。即使模型只看到框架的短 timeout/error，也会在下一次写工具调用被 terminal gate 阻止，避免重复生成或重复发布。
+
+这类详细 traceback 仍只保留在服务日志；模型不需要看到 Python stack 才能知道“不要重试”。
+
+## HTTPS 已发布但 draft finalize 失败
+
+这是“交付已提交、版本持久化未完成”，不是普通失败，也不能返回完整 READY：
+
+```text
+status=partial
+delivery_committed=true
+draft_saved=false
+retry_safe=false
+manual_recovery_required=true
+```
+
+模型可以把已经确认的 HTTPS 下载链接交给用户，但必须说明该版本暂时不能可靠作为下一轮 Draft Store 的“上一版”，并且不能重新执行整条生成链补救。
 
 ## 容器环境
 
@@ -83,8 +115,9 @@ UTF-8 bytes -> Base64 -> ASCII stdin -> 容器内 decode
 
 ## Generation Flow
 
-Generation Flow 0.7.0 会在 MCP wrapper 边界先尊重 `CallToolResult.isError`，再解析成功 JSON，并以真实 UTF-8 紧凑 JSON 返回 Builder。因此：
+Generation Flow 0.7.2 在模型边界执行：
 
-- OpenContracts MCP 即使在成功 JSON 中使用 Unicode escape，Builder 也不应再看到 raw `\uXXXX`；
-- MCP 错误详情和无法解析的原始 ToolResult 不会直接注入 Builder 上下文；
-- 正文读取结果不进行额外“转译”；Unicode escape 的恢复属于 JSON parse 的正常行为，不增加额外 LLM 回合。
+- 成功 MCP JSON 先解析，再以真实 UTF-8 compact JSON 返回 Builder；
+- `isError`、无法解析结果和 executor exception 不把原始 wrapper/traceback 塞入模型；
+- 正文读取不做额外“转译”；Unicode escape 的恢复属于 JSON parse 的正常行为；
+- 写异常额外携带 retry/commit 语义，避免为降低 token 而丢掉关键一致性信息。

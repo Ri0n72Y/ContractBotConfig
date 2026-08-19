@@ -1,20 +1,20 @@
 # astrbot_plugin_contract_docx_generator
 
-把 Builder 已经编制好的完整合同 Markdown 一次生成可编辑 DOCX。正式生成时，只有 HTTPS 发布成功后的 Markdown 才保存为当前会话“上一版”，供后续修改。
+把 Builder 已经编制好的完整合同 Markdown 一次生成可编辑 DOCX。正式生成时，只有 HTTPS 发布成功且 `finalize_contract_draft` 成功后的 Markdown 才保存为当前会话“上一版”，供后续修改。
 
-插件不读取合同库、不判断法律正确性、不补业务事实。Generation Flow 负责知识来源尝试、policy 和模板绑定；Generator 负责校验正式生成证据、校验 Builder 显式声明的 `generation_basis` 并确定性渲染。
+插件不读取合同库、不判断法律正确性、不补业务事实。Generation Flow 负责知识来源、policy、模板绑定和最终生成/发布组合状态；Generator 负责校验正式生成证据、校验 Builder 显式声明的 `generation_basis` 并确定性渲染。
 
 ## Generator 原生工具
 
 ```text
-get_latest_contract_draft        管理员/兼容用途，只返回最近成功交付草稿元数据
-read_latest_contract_draft       最近成功交付草稿元数据 + 首段正文
-read_contract_draft              仅在 next_offset 非空时继续读取
-generate_contract_docx           生成 DOCX；正式 Builder 由 Flow 组合调用
-finalize_contract_draft          内部工具；仅在 HTTPS 发布成功后持久化本轮草稿
+get_latest_contract_draft
+read_latest_contract_draft
+read_contract_draft
+generate_contract_docx
+finalize_contract_draft
 ```
 
-正式 Builder 不直接暴露 `generate_contract_docx` 或 `finalize_contract_draft`。Generation Flow 将 Generator、Delivery 和交付后草稿持久化组合为 `generate_and_publish_contract`。
+正式 Builder 不直接暴露 `generate_contract_docx` 或 `finalize_contract_draft`。Generation Flow 0.7.2 把 Generator、Delivery 和交付后草稿持久化组合为 `generate_and_publish_contract`。
 
 ## Generation policy
 
@@ -24,24 +24,20 @@ finalize_contract_draft          内部工具；仅在 HTTPS 发布成功后持�
 contract_generation_policy_verified = true
 ```
 
-Generation Flow 0.7.1 还要求正式 handoff 的 `generation_policy_protocol=1` 与显式 `fallback_policy` 已通过校验。旧 Master、缺失 policy、非法 JSON、未知 policy 或 strict policy 缺少 `required_template_query` 都会 fail-closed。
+当前 Master → Flow 协议为 `generation_policy_protocol=2`，并要求显式 `fallback_policy`。旧 Master、缺失/非法 policy、strict policy 缺 `required_template_query` 或非法 `reference_value_fields` 都会 fail-closed。
 
-`allow_ai_fallback` 的全新合同生成仍要求模板检索和历史检索都至少尝试过，以保持企业资料优先。
-
-修改上一版时，知识检索要求按本轮实际 basis 最小化：
+全新 `allow_ai_fallback` 合同仍要求模板和历史两类来源都至少尝试；修改上一版时按本轮 basis 最小化：
 
 ```text
 source_draft       → 不要求重新检索
-specific_template  → 要求生成资产检索；模板证据由 basis 校验继续验证
-history_reference  → 要求历史检索；实际结果由 basis 校验继续验证
-ai_scaffold        → 不机械要求重新检索两个 Corpus
+specific_template  → 要求生成资产/模板证据
+history_reference  → 要求历史检索/实际结果
+ai_scaffold        → 不机械重查两个 Corpus
 ```
-
-`require_specific_template` 只要求生成资产侧的指定模板身份解析，不要求历史检索。
 
 ## 生成依据
 
-Builder 在最终生成调用中必须显式声明：
+Builder 必须显式声明：
 
 ```text
 generation_basis = specific_template
@@ -50,80 +46,46 @@ generation_basis = specific_template
                  | source_draft
 ```
 
-Generator 不根据“搜索调用成功”自动推导 basis，而是验证声明与证据：
+Generator 验证：
 
 ```text
 specific_template
   contract_generation_template_selected_verified = true
 
 history_reference
-  没有绑定专用模板
-  contract_generation_history_search_verified = true
-  contract_generation_history_search_had_results = true
+  没有绑定模板
+  history_search_verified = true
+  history_search_had_results = true
 
 ai_scaffold
-  没有绑定专用模板
-  历史结果可以为空、不可用，或虽有候选但 Builder 判断不适配
+  没有绑定模板
 
 source_draft
-  必须有有效 source_draft_id
-  本轮不能已经明确绑定专用模板
+  有有效 source_draft_id
+  本轮没有重新绑定模板
 ```
 
-历史搜索证据是累积的：后续一次 `results=[]` 不会把本轮之前已经获得的历史结果证据清零。
+模板 search→selection 的候选约束由 Generation Flow 在设置 `contract_generation_template_selected_verified=true` 之前执行。普通模式和 strict 模式都不能把本轮未发现的任意 asset slug 直接绑定为模板。
 
-Generator 验证成功且 DOCX 渲染成功后才写入：
-
-```text
-contract_generation_basis_verified = true
-contract_generation_basis = <实际 basis>
-```
-
-## 指定模板约束
-
-如果当前 event 中：
-
-```text
-contract_generation_require_specific_template = true
-```
-
-Generator 只接受 `generation_basis=specific_template`，并要求：
+strict 模式还额外要求：
 
 ```text
 contract_generation_required_template_search_verified = true
 contract_generation_selected_template_required_match_verified = true
-contract_generation_template_selected_verified = true
 ```
 
-这里的 required match 不是普通语义相似。Generation Flow strict resolver 会先通过 `list_documents` 对 generation asset corpus 做 document slug / 标准化标题身份解析，只有身份匹配的 document slug 才能成为 strict template candidate。
+## source_draft 与 lineage
 
-## source_draft 与 generation_basis
-
-`source_draft_id` 只表示本轮从哪个已成功交付版本开始修改，不自动覆盖本轮内容依据。因此下面都合法：
+`source_draft_id` 是版本来源，不覆盖本轮 basis，因此以下组合都合法：
 
 ```text
-source_draft_id=<上一版> + generation_basis=source_draft
-source_draft_id=<上一版> + generation_basis=specific_template
-source_draft_id=<上一版> + generation_basis=history_reference
-source_draft_id=<上一版> + generation_basis=ai_scaffold
+source_draft_id=<上一版> + source_draft
+source_draft_id=<上一版> + specific_template
+source_draft_id=<上一版> + history_reference
+source_draft_id=<上一版> + ai_scaffold
 ```
 
-如果修改上一版时同时要求严格使用某个指定模板，strict policy 仍然生效，不能被 `source_draft_id` 绕过。此时 Generator 会采用新绑定模板的 render profile，而不是无条件沿用上一版 profile。
-
-普通修改上一版、没有重新采用模板/历史/AI 重构时，使用：
-
-```text
-read_latest_contract_draft(max_chars=60000)
-→ 只有 next_offset 非空时 read_contract_draft
-→ generate_and_publish_contract(
-     source_draft_id=<上一版 draft_id>,
-     generation_basis=source_draft
-   )
-```
-
-## Draft lineage
-
-成功交付后 finalized draft manifest 同时持久化：
+finalized manifest 保存：
 
 ```text
 generation_basis
@@ -132,49 +94,60 @@ template_asset_id
 template_document_slug
 ```
 
-字段语义：
+`source_draft` 可以继承上一版模板 provenance；`history_reference/ai_scaffold` 不把上一版 template slug 错记成本轮模板。
 
-- `source_draft_id`：本轮版本来源，允许为空；
-- `specific_template`：模板字段记录本轮新绑定模板；
-- `source_draft`：若上一版本身来自模板，可继承上一版模板 provenance；
-- `history_reference` / `ai_scaffold`：不会把上一版模板误记为“本轮模板”，如需追溯则沿 `source_draft_id` 查看上一版 manifest。
+## 写操作与组合状态
 
-`get_latest_contract_draft`、`read_latest_contract_draft` 和 `read_contract_draft` 都返回 `generation_basis` 与 `source_draft_id`。旧 manifest 没有这些新增字段时使用 `.get()` 读取，保持向后兼容。
+Generator 的实际 render 使用工作线程执行。上层 asyncio timeout/cancel 不能证明线程没有完成文件写入。因此 Generation Flow 0.7.2 对 `generate_contract_docx` 的 executor exception 采用：
+
+```text
+retry_safe=false
+commit_unknown=true
+generation terminal
+```
+
+不能通过重新调用整条生成链来“补救”未知提交状态。
+
+组合工具的完整 READY 现在要求：
+
+```text
+DOCX ready
++ HTTPS ready
++ finalize_contract_draft ready
++ draft_saved=true
++ draft_id 非空
+```
+
+如果 HTTPS 已发布但 finalize 失败，组合工具返回 `status=partial`，保留已发布下载链接但明确 `draft_saved=false`、`retry_safe=false`。这种版本不能声称已经进入 Draft Store，也不能自动重复生成。
 
 ## 一次生成与幂等
 
-一次生成完整 DOCX，不再使用由模型管理的 begin/chunk/finalize 草稿事务。正式顺序：
+正常顺序：
 
 ```text
 generate_contract_docx
-→ verified DOCX output
-→ pending draft 保存在当前 event
+→ verified output
+→ pending draft in event
 → publish_contract_download
-→ 发布成功后 finalize_contract_draft
+→ finalize_contract_draft
 → Draft Workspace
 ```
 
-同一 `generation_id` 已产生 verified output 且文件仍存在时再次调用会直接返回原 output，并标记 `idempotent=true`；幂等结果也保留 `source_draft_id`。
-
-## 内容边界
-
-知识来源优先级由 Builder 执行：用户本轮明确事实优先；专用模板用于结构和企业规则；历史合同用于可迁移结构、条款组合和措辞。历史合同里的当事人、项目、金额、数量、日期、比例、税率、账户、地址和工期等旧项目事实不能默认进入新合同。
-
-Renderer 不执行唯一 H1、required headings、条款数量或商业逻辑等合同内容硬校验。普通未知字段由 Builder 使用 `【待填写】`，需要双方协商的字段使用 `【待双方确认】`。
+同一 `generation_id` 已产生 verified output 且文件仍存在时 Generator 会返回原 output 并标记 `idempotent=true`。这个幂等只解决已经被 event 可靠记录的 output；对 timeout/cancel 导致的 commit-unknown，Flow 会直接锁住 generation，而不是假设幂等记录一定已经写入。
 
 ## Render profile
 
-当前支持 `standard_contract`。本轮 `generation_basis=specific_template` 时优先使用新绑定模板 profile，即使同时存在 `source_draft_id`；有 source draft 且本轮不是新模板时沿用上一版 profile；没有模板和上一版时使用 `standard_contract`。未知 profile 回退到 `standard_contract`。
+当前支持 `standard_contract`。`generation_basis=specific_template` 时使用新绑定模板 profile；有 source draft 且本轮不是新模板时沿用上一版 profile；没有模板和上一版时使用 `standard_contract`。
 
 ## Markdown 子集
 
-- `#` / `##` / `###`：标题；
-- 普通段落：正文；
-- `-` / `*` / `+`：项目符号；
-- `1.` / `1)` / `1、`：编号段落；
-- 标准 Markdown 表格；
+- `#` / `##` / `###`；
+- 普通段落；
+- 项目符号；
+- 编号段落；
+- Markdown 表格；
 - `**粗体**`；
-- `<!-- pagebreak -->`：分页。
+- `<!-- pagebreak -->`。
 
 ## 本地状态
 
@@ -184,6 +157,4 @@ Renderer 不执行唯一 H1、required headings、条款数量或商业逻辑等
 data/plugins_data/astrbot_plugin_contract_docx_generator/output
 ```
 
-其中 `*.docx` 为生成文件，`_drafts/` 保存成功交付的最终 Markdown + manifest。工作区文件操作使用 `RLock` 串行，满足当前低并发部署需求。
-
-插件依赖 `python-docx`，AstrBot 安装插件时根据 `requirements.txt` 安装依赖。
+`*.docx` 为生成文件，`_drafts/` 保存成功交付且已 finalize 的 Markdown + manifest。工作区文件操作使用 `RLock` 串行。
