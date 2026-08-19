@@ -9,6 +9,6 @@
   },
   "contract_docassemble_builder": {
     "tools": [],
-    "skills": []
+    "skills": ["contract-document-specification"]
   }
 }
