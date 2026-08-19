@@ -51,7 +51,7 @@ Skills：
 
 Operator Persona 已内置完整读取、上传、查重、分页、状态和不可重试规则，不再加载 `contract-opencontracts` 或 `contract-result-verification`。
 
-### contract_docassemble_builder 1.27
+### contract_docassemble_builder 1.28
 
 当前 Persona ID 保持为 `contract_docassemble_builder`，但正式运行不使用 Docassemble Gateway。
 
@@ -64,8 +64,10 @@ WebUI 静态 Tools：
 Skills：
 
 ```text
-[]
+contract-document-specification
 ```
+
+`contract-document-specification` 只负责正式合同的文档表达规范：封面、标题层级、编号、表格、金额/日期表达、留白、签署页、附件和分页。它不提供固定合同条款，不替代模板/历史检索，也不改变 generation basis。
 
 Generation Flow 在 handoff 时注入：
 
@@ -79,11 +81,13 @@ read_contract_draft
 generate_and_publish_contract
 ```
 
-Builder Prompt 必须包含：
+Builder Prompt 继续使用：
 
 ```text
 <contract_generation_protocol version="7">
 ```
+
+本次 Persona 版本升级不修改 Generation Flow 协议版本；v7 仍是当前代码校验的正式协议。
 
 ## 正式插件版本
 
@@ -99,6 +103,16 @@ astrbot_plugin_wecom_final_result_guard     0.3.5
 ```
 
 不安装 `astrbot_plugin_docassemble_gateway`。
+
+## 正式 Skills
+
+```text
+contract-direct-analysis          1.14
+contract-conversation-control     1.15
+contract-document-specification  1.0
+```
+
+格式规范 Skill 只绑定 Builder；Master 和 Operator 不加载它。
 
 ## Download Delivery
 
@@ -118,6 +132,7 @@ data/plugins_data/astrbot_plugin_contract_docx_generator/output
 allow_ai_fallback
 → find_generation_assets + find_similar_contracts
 → specific_template / history_reference / ai_scaffold
+→ contract-document-specification 规范最终 document_markdown
 → generate_and_publish_contract
 ```
 
@@ -180,19 +195,17 @@ contract-result-verification
 
 ## 建议部署顺序
 
-1. 升级 `astrbot_plugin_contract_download_delivery` 到 0.2.5，并把 `allowed_source_dirs` 改为只有 DOCX Generator output。
-2. 卸载 `astrbot_plugin_docassemble_gateway`。
-3. 删除四个废弃 Skill。
-4. 导入/更新 Master 1.26、Operator 1.18、Builder 1.27。
-5. 按本页重新绑定 Persona Tools/Skills。
-6. 确认 Generation Flow 0.7.2、DOCX Generator 0.5.1、Handoff Policy 0.5.3、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Router 0.5.7、Preconverter 0.1.3 均已加载。
-7. 再执行生成、读取、上传 E2E。
+1. 安装 `contract-document-specification-1.0.zip`。
+2. 导入/更新 Builder 1.28，并只绑定 `contract-document-specification` Skill；Builder 静态 Tools 仍保持空。
+3. 保持 Master 1.26、Operator 1.18 及其现有绑定不变。
+4. 确认 Generation Flow 0.7.2、DOCX Generator 0.5.1、Handoff Policy 0.5.3、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Router 0.5.7、Preconverter 0.1.3 均已加载。
+5. 再执行生成、读取、上传 E2E。
 
 ## 发布产物
 
 ```text
 plugins/*.zip  → 安装/升级插件
-skills/*.zip   → 只应出现 direct-analysis / conversation-control
+skills/*.zip   → direct-analysis / conversation-control / document-specification
 personas/*.md  → 按文件头更新 Prompt、Tools、Skills
 ```
 
