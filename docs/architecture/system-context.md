@@ -31,7 +31,8 @@ flowchart TB
     Operator[OpenContracts Operator 1.18]
     Gateway[OpenContracts Gateway]
     MCP[OpenContracts MCP]
-    Builder[Builder 1.27 / protocol v7]
+    Builder[Builder 1.28 / protocol v7]
+    DocSpec[contract-document-specification]
     Flow[Generation Flow 0.7.2]
     Generator[DOCX Generator + Draft Store]
     Delivery[Download Delivery 0.2.5]
@@ -43,6 +44,7 @@ flowchart TB
     Operator --> Gateway
     Master --> Builder
     Handoff --> Flow --> Builder
+    DocSpec --> Builder
     Builder --> Flow
     Flow --> MCP
     Flow --> Generator
@@ -56,14 +58,17 @@ flowchart TB
 
 Master 是唯一客户入口。Operator 和 Builder 只向 Master 返回结构化状态。
 
-保留 Skills 只有：
+保留 Skills：
 
 ```text
 contract-direct-analysis
 contract-conversation-control
+contract-document-specification
 ```
 
-Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.27 自包含生成规则，静态 Tools/Skills 都为空；Generation Flow 动态注入受限 ToolSet。
+Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.28 继续使用 generation protocol v7，静态 Tools 为空，绑定 `contract-document-specification`；Generation Flow 动态注入受限 ToolSet。
+
+`contract-document-specification` 只规范合同文档的封面、标题层级、编号、表格、留白、签署页、附件和分页表达。它不决定 generation basis，不提供固定合同条款，也不替代 OpenContracts 模板/历史资料。
 
 ## OpenContracts 数据面
 
@@ -133,6 +138,8 @@ Builder prompt：
 ```text
 find_generation_assets + find_similar_contracts
 → specific_template / history_reference / ai_scaffold
+→ Builder 自由组织适用条款
+→ contract-document-specification 规范最终 document_markdown
 → generate_and_publish_contract
    → generate_contract_docx
    → publish_contract_download
@@ -141,6 +148,8 @@ find_generation_assets + find_similar_contracts
 ```
 
 普通模板绑定必须来自本轮生成资产搜索候选；strict 模式按精确 slug 或唯一标准化标题做身份验证。历史项目特定值默认不迁移，只有 `reference_value_fields` 明确授权的字段才可有限参考。
+
+格式规范与内容证据链相互独立：用户事实、模板、历史合同和通用合同知识决定“写什么”；文档规范 Skill 负责“如何组织和呈现”。格式规范不得强迫 Builder 复制不适用条款。
 
 `source_draft_id` 记录版本来源；`generation_basis` 记录本轮主要依据。修改上一版时按 basis 最小化知识检索。
 
@@ -155,7 +164,7 @@ Generation Flow 对模型可见工具 JSON 使用 `ensure_ascii=False` 紧凑输
 ## 正式组件边界
 
 - Persona：角色、业务判断和工具使用契约；
-- Skill：仅两个跨场景复用的分析/会话方法；
+- Skill：跨场景复用的分析、会话控制和合同文档表达规范；
 - Plugin：确定性状态、Corpus 绑定、文件、写入、生成、交付和平台适配；
 - MCP：OpenContracts 远端只读发现/正文/语义检索；
 - Gateway：WorkerKey 历史合同写入。
