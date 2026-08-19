@@ -21,21 +21,22 @@ astrbot_plugin_wecom_final_result_guard     企业微信结果归一与长文本
 
 ### Skills
 
-只保留两个真正复用的 Skill：
+当前保留三个真正复用的 Skill：
 
 ```text
 contract-direct-analysis
 contract-conversation-control
+contract-document-specification
 ```
 
-OpenContracts 操作和状态核验已收敛到 Operator Persona + Handoff/Gateway/Result Guard；生成工作流已收敛到 Builder Persona + Generation Flow，不再用重复 Skill 叠加 prompt。
+OpenContracts 操作和状态核验已收敛到 Operator Persona + Handoff/Gateway/Result Guard；生成工作流仍由 Builder Persona + Generation Flow 保证。`contract-document-specification` 是独立的文档表达规范层，只约束封面、标题层级、编号、表格、留白、签署页、附件和分页，不提供固定合同条款，也不把生成流程变成模板变量替换。
 
 ### Personas
 
 ```text
 contract_master_orchestrator       1.26
 contract_opencontracts_operator    1.18
-contract_docassemble_builder       1.27 / generation protocol v7
+contract_docassemble_builder       1.28 / generation protocol v7
 ```
 
 `contract_docassemble_builder` 是当前 AstrBot Subagent 的既有 Persona ID；正式运行链不使用 Docassemble Gateway。
@@ -44,7 +45,7 @@ contract_docassemble_builder       1.27 / generation protocol v7
 
 - Master：Tools=`transfer_to_opencontracts_operator`,`transfer_to_docassemble_builder`；Skills=`contract-direct-analysis`,`contract-conversation-control`。
 - Operator：5 个 OpenContracts/Gateway Tools；Skills 为空。
-- Builder：静态 Tools/Skills 都为空，由 Generation Flow 注入受限运行时工具。
+- Builder：静态 Tools 为空；Skills=`contract-document-specification`；Generation Flow 在 handoff 时注入受限运行时工具。
 
 ## 合同生成
 
@@ -68,6 +69,7 @@ Builder prompt 必须包含：
 → Master → Builder
 → find_generation_assets + find_similar_contracts
 → specific_template / history_reference / ai_scaffold
+→ Builder 按 contract-document-specification 组织最终 document_markdown
 → generate_and_publish_contract
    → generate_contract_docx
    → publish_contract_download
@@ -78,6 +80,8 @@ Builder prompt 必须包含：
 没有匹配专用模板不是默认阻断。用户明确要求“只能使用指定模板”时，Flow 用 `list_documents` 按精确 document slug 或唯一标准化标题确定身份；找不到或标题歧义时 fail-closed，不转历史合同或 AI fallback。
 
 普通模式中，模板也只能从本轮 `find_generation_assets` 返回候选中绑定。历史合同只迁移适用的结构、条款组合和措辞；项目特定金额、日期、比例、税率、账户、地址、工期等默认不得继承，除非用户通过 `reference_value_fields` 明确授权具体字段。
+
+文档规范 Skill 不决定生成依据，也不改变上述证据优先级。Builder 仍按当前交易自由增删和组合条款；Skill 只负责让最终合同具有稳定的正式文档结构。
 
 完整 READY 必须同时证明：DOCX ready、HTTPS publication ready、Draft finalize ready 且 `draft_saved=true`。如果 HTTPS 已成功而 Draft Store 未可靠落盘，返回 PARTIAL 并保留下载链接，不自动重跑整条生成链。写操作 timeout/cancel/commit-unknown 一律按 `retry_safe=false` 处理。
 
@@ -138,6 +142,6 @@ dist/personas/*.md
 dist/MANIFEST.json
 ```
 
-`release_lib.py` 直接遍历当前 `plugins/` 和 `skills/` 目录，因此已删除的旧组件不会再进入 release。
+`release_lib.py` 直接遍历当前 `plugins/` 和 `skills/` 目录，因此新增 `contract-document-specification` 会自动进入 release。
 
 完整版本见 `VERSIONS.md`；部署绑定见 `docs/deployment/persona-manual-config.md`。
