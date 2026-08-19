@@ -1,0 +1,22 @@
+name: Temporary Builder Skill Runtime Validation
+
+on:
+  push:
+    branches:
+      - agent/fix-builder-skill-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python sources
+        run: python -m compileall -q plugins scripts
+      - name: Build release artifacts
+        run: python scripts/build_release.py --clean
