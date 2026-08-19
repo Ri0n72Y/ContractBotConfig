@@ -32,8 +32,9 @@ flowchart TB
     Gateway[OpenContracts Gateway]
     MCP[OpenContracts MCP]
     Builder[Builder 1.28 / protocol v7]
+    SkillMgr[AstrBot SkillManager]
     DocSpec[contract-document-specification]
-    Flow[Generation Flow 0.7.2]
+    Flow[Generation Flow 0.7.3]
     Generator[DOCX Generator + Draft Store]
     Delivery[Download Delivery 0.2.5]
     Guard[WeCom Result Guard]
@@ -44,7 +45,9 @@ flowchart TB
     Operator --> Gateway
     Master --> Builder
     Handoff --> Flow --> Builder
-    DocSpec --> Builder
+    SkillMgr --> Flow
+    DocSpec --> SkillMgr
+    Flow -->|bound Skill inventory + read_bound_skill| Builder
     Builder --> Flow
     Flow --> MCP
     Flow --> Generator
@@ -66,7 +69,11 @@ contract-conversation-control
 contract-document-specification
 ```
 
-Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.28 继续使用 generation protocol v7，静态 Tools 为空，绑定 `contract-document-specification`；Generation Flow 动态注入受限 ToolSet。
+Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.28 继续使用 generation protocol v7，静态 Tools 为空，绑定 `contract-document-specification`。
+
+AstrBot 4.23.2 主 Agent 会自动注入 Persona Skills，但 handoff 子人格的 `SubAgentOrchestrator → HandoffTool → FunctionToolExecutor` 路径不会再次调用主 Agent 的 Skill 装饰流程。Generation Flow 0.7.3 因此在 Builder handoff 边界直接复用 AstrBot 的 `PersonaManager + SkillManager + build_skills_prompt()`，把 Builder 实际绑定且启用的 Skill inventory 注入子人格。
+
+Skill 正文通过受限 `read_bound_skill(skill_name)` 读取。模型不能传文件路径，该工具也不提供 Shell、Python、通用 HTTP 或任意文件能力。
 
 `contract-document-specification` 只规范合同文档的封面、标题层级、编号、表格、留白、签署页、附件和分页表达。它不决定 generation basis，不提供固定合同条款，也不替代 OpenContracts 模板/历史资料。
 
@@ -136,7 +143,8 @@ Builder prompt：
 全新合同正常路径：
 
 ```text
-find_generation_assets + find_similar_contracts
+read_bound_skill(contract-document-specification)
+→ find_generation_assets + find_similar_contracts
 → specific_template / history_reference / ai_scaffold
 → Builder 自由组织适用条款
 → contract-document-specification 规范最终 document_markdown
@@ -147,11 +155,13 @@ find_generation_assets + find_similar_contracts
 → READY / PARTIAL / BLOCKED / FAILED
 ```
 
+`contract-document-specification` 未绑定、未启用或未在本轮成功读取时，正式生成在任何 DOCX 写操作前 BLOCKED，不允许静默跳过 Skill。
+
 普通模板绑定必须来自本轮生成资产搜索候选；strict 模式按精确 slug 或唯一标准化标题做身份验证。历史项目特定值默认不迁移，只有 `reference_value_fields` 明确授权的字段才可有限参考。
 
 格式规范与内容证据链相互独立：用户事实、模板、历史合同和通用合同知识决定“写什么”；文档规范 Skill 负责“如何组织和呈现”。格式规范不得强迫 Builder 复制不适用条款。
 
-`source_draft_id` 记录版本来源；`generation_basis` 记录本轮主要依据。修改上一版时按 basis 最小化知识检索。
+`source_draft_id` 记录版本来源；`generation_basis` 记录本轮主要依据。修改上一版时按 basis 最小化知识检索，但仍需加载正式文档规范 Skill。
 
 完整 READY 必须同时有 DOCX、HTTPS publication 和 finalized draft。HTTPS 已发布但 Draft Store 未保存时返回 PARTIAL，保留已有链接；写操作 timeout/cancel/commit-unknown 禁止自动重试。
 
@@ -163,10 +173,13 @@ Generation Flow 对模型可见工具 JSON 使用 `ensure_ascii=False` 紧凑输
 
 ## 正式组件边界
 
-- Persona：角色、业务判断和工具使用契约；
+- Persona：角色、业务判断、静态 Tool/Skill 绑定；
 - Skill：跨场景复用的分析、会话控制和合同文档表达规范；
-- Plugin：确定性状态、Corpus 绑定、文件、写入、生成、交付和平台适配；
+- Generation Flow：Builder handoff 的受限业务工具、AstrBot Skill 子人格桥接、生成证据与写入状态机；
+- 其他 Plugin：确定性状态、Corpus 绑定、文件、写入、交付和平台适配；
 - MCP：OpenContracts 远端只读发现/正文/语义检索；
 - Gateway：WorkerKey 历史合同写入。
+
+Generation Flow 不复制 Skill 正文，也不维护独立 Skill registry；Skill 绑定与启用状态仍以 AstrBot PersonaManager/SkillManager 为权威。
 
 不保留旧生成网关或重复的 OpenContracts/结果核验 Skill 作为回滚兼容层。
