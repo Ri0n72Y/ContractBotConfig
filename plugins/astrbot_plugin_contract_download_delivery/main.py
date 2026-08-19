@@ -16,10 +16,7 @@ from .services.publication_service import PublicationService
 
 
 GENERATION_HANDOFF_TOOL = "transfer_to_docassemble_builder"
-GENERATION_READY_MARKERS = (
-    "[CONTRACT_GENERATION:READY]",
-    "[CONTRACT_DOCASSEMBLE:READY]",
-)
+GENERATION_READY_MARKER = "[CONTRACT_GENERATION:READY]"
 PUBLICATION_VERIFIED_KEY = "contract_generation_download_publication_verified"
 PUBLICATION_RECORD_KEY = "contract_generation_download_publication_record"
 
@@ -41,7 +38,7 @@ class ContractDownloadDelivery(Star):
         result = await asyncio.to_thread(self.publications.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract download delivery 0.2.4 initialized: configured=%s "
+            "Contract download delivery 0.2.5 initialized: configured=%s "
             "ttl_seconds=%d cleanup_removed=%d",
             self.settings.validation_error() is None,
             self.settings.ttl_seconds,
@@ -134,11 +131,9 @@ class ContractDownloadDelivery(Star):
         source_path: str,
         filename: str,
     ) -> bool:
-        expected: Any = None
-        if event.get_extra("contract_generation_renderer_output_verified", False):
-            expected = event.get_extra("contract_generation_renderer_output", {})
-        elif event.get_extra("contract_generation_gateway_output_verified", False):
-            expected = event.get_extra("contract_generation_gateway_output", {})
+        if not event.get_extra("contract_generation_renderer_output_verified", False):
+            return False
+        expected = event.get_extra("contract_generation_renderer_output", {})
         if not isinstance(expected, dict):
             return False
 
@@ -203,14 +198,14 @@ class ContractDownloadDelivery(Star):
         *hook_args: Any,
         **hook_kwargs: Any,
     ) -> None:
-        """Remember whether the Builder handoff claimed READY."""
+        """Remember whether the current Builder handoff claimed READY."""
         tool, tool_result = self._resolve_tool_response(hook_args, hook_kwargs)
         if tool is None or str(getattr(tool, "name", "")) != GENERATION_HANDOFF_TOOL:
             return
         text = self._tool_result_text(tool_result)
         event.set_extra(
             "contract_generation_builder_ready_claimed",
-            any(marker in text for marker in GENERATION_READY_MARKERS),
+            GENERATION_READY_MARKER in text,
         )
 
     @filter.on_decorating_result(priority=950)
@@ -279,10 +274,7 @@ class ContractDownloadDelivery(Star):
         event.set_extra(PUBLICATION_VERIFIED_KEY, False)
         event.set_extra(PUBLICATION_RECORD_KEY, {})
 
-        formal_generation = bool(
-            event.get_extra("contract_generation_task", False)
-            or event.get_extra("contract_docassemble_generation_task", False)
-        )
+        formal_generation = bool(event.get_extra("contract_generation_task", False))
         if formal_generation and not self._matches_current_generation_output(
             event, source_path, filename
         ):
