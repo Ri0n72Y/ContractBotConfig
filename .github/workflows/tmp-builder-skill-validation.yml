@@ -20,3 +20,5 @@ jobs:
         run: python -m compileall -q plugins scripts
       - name: Build release artifacts
         run: python scripts/build_release.py --clean
+      - name: Confirm branch validation
+        run: echo "temporary Builder Skill runtime validation complete"
