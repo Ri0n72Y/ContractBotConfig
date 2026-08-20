@@ -4,7 +4,7 @@
 
 ## Builder Skill 运行时
 
-AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定且启用的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。
+AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
 
 正式 Builder 仍只暴露受控合同生成工具，并额外提供：
 
@@ -12,7 +12,7 @@ AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system 
 read_bound_skill(skill_name)
 ```
 
-该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、且 AstrBot `SkillManager` 判定为启用状态的 Skill 名称；文件路径由 `SkillManager` 解析，模型不能提供任意本地路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。
+该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、AstrBot `SkillManager` 判定为 active、且当前本地受限 reader 可直接读取的 Skill 名称；文件路径由 `SkillManager` 解析，模型不能提供任意本地路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。
 
 当前正式生成要求：
 
@@ -20,7 +20,7 @@ read_bound_skill(skill_name)
 contract-document-specification
 ```
 
-必须已绑定、可用并在本轮通过 `read_bound_skill` 完成 grounding。未读取时调用 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED，要求先读取 Skill；不会静默跳过格式规范后继续生成。
+必须已绑定、active、当前受限 reader 可直接读取，并在本轮通过 `read_bound_skill` 完成 grounding。Builder 1.29 的 system prompt 固定要求在开始组织最终 `document_markdown` 前先完成这一步；request-local handoff input 只携带 Skill inventory 和业务任务。未读取时调用 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED，要求先读取 Skill；不会静默跳过格式规范后继续生成。
 
 运行日志会显示：
 
@@ -30,6 +30,8 @@ document_spec_available=true
 document_spec_loaded=false|true
 tools=[read_bound_skill, ...]
 ```
+
+其中 `document_spec_available=true` 表示该 Skill 确实可由当前受限 reader grounding，而不只是出现在 SkillManager 列表中。
 
 成功读取后会记录：
 
@@ -88,7 +90,7 @@ v7 继续约束：
 2. `generate_and_publish_contract` 的 timeout/cancel/commit-unknown 不得在同一 generation 自动重试；
 3. `status=partial + delivery_committed=true` 返回 `[CONTRACT_GENERATION:PARTIAL]`，不是 READY。
 
-Flow 遇到旧 Builder prompt 时记录 protocol mismatch 并阻止正式生成。Skill runtime 修复不改变 generation protocol，因此 Builder 仍为 protocol v7。
+Flow 遇到旧 Builder prompt 时记录 protocol mismatch 并阻止正式生成。Builder 1.29 仍为 protocol v7；本次只加强 Skill grounding 顺序和可读性判定。
 
 ## 生成依据
 
@@ -165,7 +167,7 @@ DOCX / publish / finalize executor exception
 
 原因是 Generator/Delivery 的实际文件工作可能运行在线程中；asyncio 上层 timeout/cancel 不能证明线程没有完成副作用。因此写操作不能把“调用超时”解释为“什么都没发生，可以再试一次”。
 
-Skill 未 grounding 的 BLOCKED 发生在任何写工具调用之前，所以允许在读取 Skill 后再次调用 `generate_and_publish_contract`。
+Skill 未 grounding 的 BLOCKED 发生在任何写工具调用之前，所以允许先读取 Skill、重新检查最终 Markdown，再调用一次 `generate_and_publish_contract`；这不是写失败重试。
 
 ## READY 与 PARTIAL
 

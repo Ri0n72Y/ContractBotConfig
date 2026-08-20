@@ -13,7 +13,7 @@
 5. 工具 JSON 使用真实 UTF-8 紧凑表示；
 6. 写操作 timeout/cancel 不能被解释为“无副作用、可安全重试”；
 7. READY 必须同时证明 DOCX、HTTPS 和 Draft Store 三段闭环；
-8. Builder 已绑定的正式合同格式 Skill 必须在写 DOCX 前完成 grounding。
+8. Builder 已绑定的正式合同格式 Skill 必须在开始组织最终合同正文前完成 grounding，且写 DOCX 前由代码再次确认。
 
 ## 角色边界
 
@@ -22,7 +22,7 @@
   ↓
 Master Persona
   ↓ transfer_to_docassemble_builder
-Builder Persona
+Builder Persona 1.29
   ├─ read_bound_skill
   ├─ find_generation_assets
   ├─ read_generation_asset
@@ -49,7 +49,7 @@ Persona.skills
 AstrBot PersonaManager
   ↓
 AstrBot SkillManager.list_skills(active_only=true)
-  ↓
+  ↓ 仅保留当前受限 reader 可直接读取（local_exists=true）的绑定 Skill
 Generation Flow restricted Skill inventory
   ↓
 本次 handoff input（request-local）
@@ -61,19 +61,22 @@ Skill 正文仍来自 AstrBot Skills 目录。Flow 不修改共享 Handoff Agent
 read_bound_skill(skill_name)
 ```
 
-模型只能传 Skill 名称；工具会再次核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否启用，并由 `SkillManager` 解析真实 `SKILL.md`。模型不能传本地文件路径，因此该入口不能扩展成通用 FileRead。
+模型只能传 Skill 名称；工具会再次核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否 active、是否存在当前受限 reader 可直接读取的本地 `SKILL.md`，并由 `SkillManager` 解析真实路径。模型不能传本地文件路径，因此该入口不能扩展成通用 FileRead。仅存在于 sandbox 的 Skill 会进入 runtime missing，不会被标记为 available。
 
 Builder 运行时仍禁止 Shell、Python、通用 HTTP、任意文件读写以及 raw MCP 绕过。
+
+Builder 1.29 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 的 request-local inventory 负责“本轮有哪些可读 Skill”，两者不混用，也不向共享 Agent 写请求状态。
 
 当前正式生成要求 `contract-document-specification` 必须：
 
 ```text
 已绑定
 + active
++ 当前受限 reader 可直接读取
 + 本轮 read_bound_skill 成功
 ```
 
-否则 `generate_and_publish_contract` 在调用任何 Generator/Delivery 写操作前返回 retry-safe BLOCKED。读取成功后同一 generation 可以继续生成；这不属于写失败重试。
+否则 `generate_and_publish_contract` 在调用任何 Generator/Delivery 写操作前返回 retry-safe BLOCKED。若只是 `failure_stage=document_spec_skill + retry_safe=true`，说明尚未发生写副作用；完成 grounding 并重新检查最终 Markdown 后可以重新提交正式生成调用，这不属于写失败重试。
 
 ## 版本协议
 
@@ -94,7 +97,7 @@ protocol 2 要求 Master 能正确处理 `[CONTRACT_GENERATION:PARTIAL]`，不�
 <contract_generation_protocol version="7">
 ```
 
-Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Skill runtime 修复不改变 generation protocol。
+Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Builder 1.29 仍使用 protocol v7；本次变化只加强 Skill grounding 顺序，不改变 generation protocol。
 
 ## Generation basis
 
@@ -121,7 +124,7 @@ source_draft_id=A + ai_scaffold
 source_draft_id=A + source_draft
 ```
 
-修改上一版的 gate 按 basis 最小化：source_draft 不重查；specific_template 只要求资产/模板证据；history_reference 只要求历史证据；ai_scaffold 不机械重查两个 Corpus。文档规范 Skill 仍需 grounding。
+修改上一版的 gate 按 basis 最小化：source_draft 不重查；specific_template 只要求资产/模板证据；history_reference 只要求历史证据；ai_scaffold 不机械重查两个 Corpus。文档规范 Skill 仍需先 grounding。
 
 ## 普通模板证据链
 
@@ -221,6 +224,8 @@ contract_generation_document_spec_loaded
 contract_generation_skill_grounding_attempted
 contract_generation_skill_grounding_loaded
 ```
+
+其中 `contract_generation_document_spec_available=true` 表示文档规范 Skill 已绑定、active 且当前受限 reader 可直接读取；它不是单纯的 Skill 列表存在标志。
 
 主要写状态：
 

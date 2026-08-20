@@ -36,7 +36,7 @@ OpenContracts 操作和状态核验已收敛到 Operator Persona + Handoff/Gatew
 ```text
 contract_master_orchestrator       1.26
 contract_opencontracts_operator    1.18
-contract_docassemble_builder       1.28 / generation protocol v7
+contract_docassemble_builder       1.29 / generation protocol v7
 ```
 
 `contract_docassemble_builder` 是当前 AstrBot Subagent 的既有 Persona ID；正式运行链不使用 Docassemble Gateway。
@@ -56,7 +56,7 @@ PersonaManager
 SkillManager
 ```
 
-读取 Builder 当前实际绑定且启用的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff 的 input；不修改共享 `HandoffTool.agent.instructions`。Skill 正文不复制进 Persona 或 Plugin 配置。
+读取 Builder 当前实际绑定、处于 active 状态、且可由受限 reader 直接读取的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff 的 input；不修改共享 `HandoffTool.agent.instructions`。Skill 正文不复制进 Persona 或 Plugin 配置。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 不会被标记为 available，而会进入 runtime missing。
 
 Builder 额外看到一个受限工具：
 
@@ -64,7 +64,9 @@ Builder 额外看到一个受限工具：
 read_bound_skill(skill_name)
 ```
 
-它只能读取 Builder 已绑定的 Skill，模型不能提供文件路径。正式运行仍不开放 Shell、Python、通用 HTTP、任意文件读写或 raw MCP 绕过。
+它只能读取 Builder 已绑定、active 且当前受限 reader 可直接读取的 Skill；模型不能提供文件路径。正式运行仍不开放 Shell、Python、通用 HTTP、任意文件读写或 raw MCP 绕过。
+
+Builder 1.29 的 system prompt 固定要求：所有正式合同生成、重写、修改和定稿，必须先 `read_bound_skill(contract-document-specification)` 完成 grounding，再开始组织最终 `document_markdown`；request-local handoff input 只携带本轮 Skill inventory 和业务任务，不承担这条固定执行原则。
 
 当前 `contract-document-specification` 是正式合同生成必需的文档规范 Skill。Builder 在调用 `generate_and_publish_contract` 前必须已经通过 `read_bound_skill` 成功读取它；否则组合工具在任何 DOCX/发布写操作开始前返回 retry-safe BLOCKED。
 
