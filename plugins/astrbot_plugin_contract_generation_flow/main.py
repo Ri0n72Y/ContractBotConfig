@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -11,13 +12,19 @@ from astrbot.api.star import Context, Star
 import astrbot.api.message_components as Comp
 from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+from astrbot.core.skills.skill_manager import SkillInfo, SkillManager
 
 
 GENERATION_TOOL = "transfer_to_docassemble_builder"
+BUILDER_PERSONA_ID = "contract_docassemble_builder"
 BUILDER_PROTOCOL_MARKER = '<contract_generation_protocol version="7">'
 GENERATION_POLICY_PROTOCOL = "2"
 HISTORY_CORPUS_EVENT_KEY = "contract_opencontracts_corpus_slug"
 ASSET_CORPUS_EVENT_KEY = "contract_generation_asset_corpus_slug_bound"
+DOCUMENT_SPEC_SKILL_NAME = "contract-document-specification"
+SKILL_RUNTIME_BEGIN = "<contract_builder_skill_runtime>"
+SKILL_RUNTIME_END = "</contract_builder_skill_runtime>"
+MAX_BOUND_SKILL_CHARS = 128000
 SEARCH_DEFAULT_LIMIT = 3
 TEMPLATE_READ_DEFAULT_CHARS = 80000
 REFERENCE_READ_DEFAULT_CHARS = 60000
@@ -92,6 +99,17 @@ READ_DRAFT_PARAMETERS = {
     "required": ["draft_id"],
 }
 
+BOUND_SKILL_READ_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "skill_name": {
+            "type": "string",
+            "description": "要读取的、已绑定到 Builder Persona 的 Skill 名称。",
+        }
+    },
+    "required": ["skill_name"],
+}
+
 GENERATE_AND_PUBLISH_PARAMETERS = {
     "type": "object",
     "properties": {
@@ -138,7 +156,7 @@ KNOWLEDGE_TOOL_SPECS = (
         "read_generation_asset",
         "get_document_text",
         "asset",
-        "读取生成资产正文。只有已经决定采用该资产作为专用模板时才传 use_as_template=true；模板绑定必须来自本轮生成资产检索候选。",
+        "读取生成资产正文。只有已经决定采用该资产作为专用合同模板时才传 use_as_template=true；模板绑定必须来自本轮生成资产检索候选。",
         ASSET_READ_PARAMETERS,
     ),
     (
@@ -496,6 +514,124 @@ def _merge_candidate_maps(
         merged[str(slug)] = dict(metadata)
     event.set_extra(key, merged)
     return merged
+
+
+def _builder_bound_skill_names(context: Context) -> list[str]:
+    persona_manager = getattr(context, "persona_manager", None)
+    if persona_manager is None:
+        return []
+    persona = persona_manager.get_persona_v3_by_id(BUILDER_PERSONA_ID)
+    if not isinstance(persona, dict):
+        return []
+    raw = persona.get("skills")
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _runtime_name(context: Context, event: AstrMessageEvent) -> str:
+    cfg = context.get_config(umo=event.unified_msg_origin) or {}
+    provider_settings = cfg.get("provider_settings") or {}
+    runtime = str(provider_settings.get("computer_use_runtime", "local") or "local")
+    return runtime if runtime in {"local", "sandbox"} else "local"
+
+
+class _BoundSkillReadTool(FunctionTool):
+    def __init__(self, context: Context, skill_manager: SkillManager) -> None:
+        super().__init__(
+            name="read_bound_skill",
+            description=(
+                "读取当前 Builder Persona 已绑定且处于启用状态的 Skill 的完整 SKILL.md。"
+                "正式合同生成遇到匹配 Skill 时必须先调用本工具完成 grounding；"
+                "本工具不允许读取任意本地文件。"
+            ),
+            parameters=BOUND_SKILL_READ_PARAMETERS,
+        )
+        self._context = context
+        self._skill_manager = skill_manager
+
+    def _resolve_skill(
+        self,
+        event: AstrMessageEvent,
+        skill_name: str,
+    ) -> SkillInfo | None:
+        if skill_name not in _builder_bound_skill_names(self._context):
+            return None
+        runtime = _runtime_name(self._context, event)
+        active = self._skill_manager.list_skills(
+            active_only=True,
+            runtime=runtime,
+            show_sandbox_path=False,
+        )
+        return next((skill for skill in active if skill.name == skill_name), None)
+
+    async def call(self, context: Any, **tool_args: Any) -> Any:
+        event = context.context.event
+        event.set_extra("contract_generation_skill_grounding_attempted", True)
+        skill_name = str(tool_args.get("skill_name") or "").strip()
+        if not skill_name:
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error="skill_name 不能为空。",
+            )
+        try:
+            skill = self._resolve_skill(event, skill_name)
+        except Exception:
+            logger.exception(
+                "Contract generation flow: failed to resolve bound Skill %s",
+                skill_name,
+            )
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error=f"Skill {skill_name} 的运行时状态读取失败。",
+            )
+        if skill is None:
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error=f"Skill {skill_name} 未绑定到 Builder、未启用或当前不可读取。",
+            )
+        if not skill.local_exists:
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error=f"Skill {skill_name} 仅存在于隔离运行时，当前受限读取入口无法读取。",
+            )
+        try:
+            path = Path(skill.path).expanduser().resolve(strict=True)
+            if not path.is_file() or path.name != "SKILL.md":
+                raise ValueError("invalid skill path")
+            content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
+            logger.warning(
+                "Contract generation flow: failed to read bound Skill %s: %s",
+                skill_name,
+                exc,
+            )
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error=f"Skill {skill_name} 的 SKILL.md 读取失败。",
+            )
+        if not content.strip() or len(content) > MAX_BOUND_SKILL_CHARS:
+            return _normalized_tool_failure(
+                failure_stage="skill_grounding",
+                error=f"Skill {skill_name} 内容为空或超过受限读取上限。",
+            )
+        loaded = event.get_extra("contract_generation_skill_grounding_loaded", [])
+        loaded_names = list(loaded) if isinstance(loaded, list) else []
+        if skill_name not in loaded_names:
+            loaded_names.append(skill_name)
+        event.set_extra("contract_generation_skill_grounding_loaded", loaded_names)
+        if skill_name == DOCUMENT_SPEC_SKILL_NAME:
+            event.set_extra("contract_generation_document_spec_loaded", True)
+        logger.info(
+            "Contract generation flow: Builder Skill grounded: skill=%s",
+            skill_name,
+        )
+        return content
 
 
 class _DynamicRegisteredTool(FunctionTool):
@@ -1185,6 +1321,19 @@ class _GenerateAndPublishTool(FunctionTool):
         if terminal is not None:
             return terminal
 
+        if event.get_extra("contract_generation_document_spec_required", True) and not event.get_extra(
+            "contract_generation_document_spec_loaded", False
+        ):
+            return _normalized_tool_failure(
+                failure_stage="document_spec_skill",
+                error=(
+                    "正式合同生成前必须先调用 read_bound_skill 读取并应用 "
+                    f"{DOCUMENT_SPEC_SKILL_NAME} Skill。"
+                ),
+                retry_safe=True,
+                required_skill=DOCUMENT_SPEC_SKILL_NAME,
+            )
+
         generator = _resolve_registered_tool(self._context, "generate_contract_docx")
         publisher = _resolve_registered_tool(self._context, "publish_contract_download")
         finalizer = _resolve_registered_tool(self._context, "finalize_contract_draft")
@@ -1390,6 +1539,7 @@ class ContractGenerationFlow(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context, config)
         self._context = context
+        self._skill_manager = SkillManager()
         config = config or {}
         self.asset_corpus_slug = str(
             config.get("generation_asset_corpus_slug", "contract-templates")
@@ -1406,7 +1556,7 @@ class ContractGenerationFlow(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract generation flow 0.7.2 initialized: asset_corpus=%s",
+            "Contract generation flow 0.7.3 initialized: asset_corpus=%s",
             self.asset_corpus_slug or "<empty>",
         )
 
@@ -1487,6 +1637,13 @@ class ContractGenerationFlow(Star):
             "contract_generation_builder_runtime_optional_missing": [],
             "contract_generation_gateway_output_verified": False,
             "contract_generation_gateway_output": {},
+            "contract_generation_document_spec_required": True,
+            "contract_generation_document_spec_available": False,
+            "contract_generation_document_spec_loaded": False,
+            "contract_generation_skill_grounding_attempted": False,
+            "contract_generation_skill_grounding_loaded": [],
+            "contract_generation_skill_runtime_injected": False,
+            "contract_generation_skill_runtime_error": "",
             "contract_generation_write_stage": "",
             "contract_generation_write_commit_unknown": False,
             "contract_generation_write_commit_unknown_stage": "",
@@ -1581,8 +1738,116 @@ class ContractGenerationFlow(Star):
         prompt = str(getattr(agent, "instructions", "") or "").strip()
         return bool(prompt and BUILDER_PROTOCOL_MARKER in prompt)
 
+    def _bound_skill_infos(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[list[str], list[SkillInfo], list[str]]:
+        bound_names = _builder_bound_skill_names(self._context)
+        runtime = _runtime_name(self._context, event)
+        active = self._skill_manager.list_skills(
+            active_only=True,
+            runtime=runtime,
+            show_sandbox_path=False,
+        )
+        active_by_name = {skill.name: skill for skill in active}
+        selected = [
+            active_by_name[name]
+            for name in bound_names
+            if name in active_by_name and active_by_name[name].local_exists
+        ]
+        missing = [
+            name
+            for name in bound_names
+            if name not in active_by_name or not active_by_name[name].local_exists
+        ]
+        return bound_names, selected, missing
+
+    @staticmethod
+    def _restricted_skill_runtime_block(skill_infos: list[SkillInfo]) -> str:
+        inventory_lines: list[str] = []
+        for skill in skill_infos:
+            name = str(skill.name or "").strip()
+            if not name:
+                continue
+            description = " ".join(str(skill.description or "").replace("`", "").split())
+            description = description[:1000] or "Read the bound SKILL.md for details."
+            inventory_lines.append(f"- **{name}**: {description}")
+        inventory = "\n".join(inventory_lines) or "- (no active bound Skills)"
+        return (
+            f"{SKILL_RUNTIME_BEGIN}\n"
+            "### Contract Builder bound Skills\n\n"
+            "This inventory is derived from the current Builder Persona binding and "
+            "AstrBot SkillManager. It applies only to this handoff request.\n\n"
+            f"{inventory}\n\n"
+            "Restricted Skill rules:\n"
+            "1. If the task matches a listed Skill, use it; never silently skip it.\n"
+            "2. Before applying a listed Skill, call `read_bound_skill` with the exact "
+            "Skill name. That tool is the only Skill grounding path in this Builder runtime.\n"
+            "3. Do not use Shell, Python, generic HTTP, arbitrary file reads/writes, Grep, "
+            "or raw MCP to load Skill files. Those capabilities are intentionally unavailable.\n"
+            "4. If a required Skill is unavailable or cannot be grounded, do not claim READY; "
+            "the generation write gate will fail closed before DOCX publication.\n"
+            f"{SKILL_RUNTIME_END}"
+        )
+
+    @staticmethod
+    def _skill_runtime_failure_block() -> str:
+        return (
+            f"{SKILL_RUNTIME_BEGIN}\n"
+            "### Contract Builder Skill runtime unavailable\n\n"
+            "The Builder Skill inventory could not be resolved for this handoff. Do not claim "
+            "successful formal generation. The restricted generation tools remain installed and "
+            "the document-specification write gate will fail closed before any DOCX/publication "
+            "write. Do not use Shell, Python, generic HTTP or arbitrary file tools as a fallback.\n"
+            f"{SKILL_RUNTIME_END}"
+        )
+
+    def _prepare_builder_skill_runtime(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[str, list[str]]:
+        bound_names, skill_infos, missing_skills = self._bound_skill_infos(event)
+        runtime_missing: list[str] = []
+        if DOCUMENT_SPEC_SKILL_NAME not in bound_names:
+            runtime_missing.append("builder_document_spec_binding")
+        available = any(
+            skill.name == DOCUMENT_SPEC_SKILL_NAME and skill.local_exists
+            for skill in skill_infos
+        )
+        event.set_extra("contract_generation_document_spec_available", available)
+        if DOCUMENT_SPEC_SKILL_NAME in bound_names and not available:
+            runtime_missing.append("builder_document_spec_skill")
+        for name in missing_skills:
+            marker = f"builder_skill:{name}"
+            if marker not in runtime_missing:
+                runtime_missing.append(marker)
+        return self._restricted_skill_runtime_block(skill_infos), runtime_missing
+
+    @staticmethod
+    def _prepend_skill_runtime_input(
+        tool_args: dict[str, Any],
+        runtime_block: str,
+    ) -> None:
+        original = tool_args.get("input")
+        if isinstance(original, str):
+            handoff_input = original
+        elif isinstance(original, dict):
+            handoff_input = _tool_json(original)
+        elif original is None:
+            handoff_input = ""
+        else:
+            handoff_input = str(original)
+        tool_args["input"] = (
+            f"{runtime_block}\n\n"
+            "<contract_generation_handoff_input>\n"
+            f"{handoff_input}\n"
+            "</contract_generation_handoff_input>"
+        )
+
     def _build_runtime_tools(self) -> list[FunctionTool]:
-        tools: list[FunctionTool] = []
+        tools: list[FunctionTool] = [
+            _BoundSkillReadTool(self._context, self._skill_manager)
+        ]
         for public_name, source_name, role, description, parameters in KNOWLEDGE_TOOL_SPECS:
             tools.append(
                 _BoundCorpusTool(
@@ -1639,20 +1904,40 @@ class ContractGenerationFlow(Star):
         self,
         agent: Any,
         event: AstrMessageEvent,
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], str]:
+        # HandoffTool/Agent objects are shared across sessions. Only install the
+        # same runtime ToolSet on that shared Agent; never write request-specific
+        # Skill inventory into agent.instructions.
         async with self._runtime_lock:
             if agent.tools is not self._runtime_tools:
                 agent.tools = self._runtime_tools
+
+        try:
+            runtime_block, skill_missing = self._prepare_builder_skill_runtime(event)
+            event.set_extra("contract_generation_skill_runtime_error", "")
+        except Exception:
+            logger.exception(
+                "Contract generation flow: failed to prepare Builder Skill runtime"
+            )
+            event.set_extra("contract_generation_document_spec_available", False)
+            event.set_extra(
+                "contract_generation_skill_runtime_error",
+                "builder skill runtime setup failed",
+            )
+            runtime_block = self._skill_runtime_failure_block()
+            skill_missing = [
+                "builder_skill_runtime",
+                "builder_document_spec_skill",
+            ]
 
         diagnostics = self._runtime_diagnostics(event)
         event.set_extra("contract_generation_builder_runtime_optional_missing", diagnostics)
         event.set_extra(ASSET_CORPUS_EVENT_KEY, self.asset_corpus_slug)
 
+        missing = list(skill_missing)
         if not self._builder_prompt_compatible(agent):
-            return [tool.name for tool in self._runtime_tools], [
-                "builder_persona_protocol_v7"
-            ]
-        return [tool.name for tool in self._runtime_tools], []
+            missing.append("builder_persona_protocol_v7")
+        return [tool.name for tool in self._runtime_tools], missing, runtime_block
 
     async def _send_progress_once(self, event: AstrMessageEvent) -> None:
         if (
@@ -1690,9 +1975,13 @@ class ContractGenerationFlow(Star):
 
         agent = getattr(tool, "agent", None)
         if agent is None:
-            runtime_tools, missing = [], ["builder_agent"]
+            runtime_tools, missing, runtime_block = [], ["builder_agent"], ""
         else:
-            runtime_tools, missing = await self._ensure_runtime_tools(agent, event)
+            runtime_tools, missing, runtime_block = await self._ensure_runtime_tools(agent, event)
+
+        if runtime_block:
+            self._prepend_skill_runtime_input(tool_args, runtime_block)
+            event.set_extra("contract_generation_skill_runtime_injected", True)
 
         event.set_extra("contract_generation_builder_runtime_tools", runtime_tools)
         event.set_extra("contract_generation_builder_runtime_missing", missing)
@@ -1709,7 +1998,9 @@ class ContractGenerationFlow(Star):
         else:
             logger.info(
                 "Contract generation flow: Builder runtime ready: generation_id=%s "
-                "asset_corpus=%s history_corpus=%s policy_protocol=%s fallback_policy=%s diagnostics=%s tools=%s",
+                "asset_corpus=%s history_corpus=%s policy_protocol=%s fallback_policy=%s "
+                "diagnostics=%s document_spec_required=%s document_spec_available=%s "
+                "document_spec_loaded=%s skill_runtime_injected=%s tools=%s",
                 event.get_extra("contract_generation_generation_id", ""),
                 self.asset_corpus_slug,
                 event.get_extra(HISTORY_CORPUS_EVENT_KEY, ""),
@@ -1718,6 +2009,10 @@ class ContractGenerationFlow(Star):
                 event.get_extra(
                     "contract_generation_builder_runtime_optional_missing", []
                 ),
+                event.get_extra("contract_generation_document_spec_required", True),
+                event.get_extra("contract_generation_document_spec_available", False),
+                event.get_extra("contract_generation_document_spec_loaded", False),
+                event.get_extra("contract_generation_skill_runtime_injected", False),
                 runtime_tools,
             )
         await self._send_progress_once(event)
