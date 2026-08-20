@@ -50,12 +50,12 @@ AstrBot PersonaManager
   ↓
 AstrBot SkillManager.list_skills(active_only=true)
   ↓
-AstrBot build_skills_prompt()
+Generation Flow restricted Skill inventory
   ↓
-Builder instructions
+本次 handoff input（request-local）
 ```
 
-Skill 正文仍来自 AstrBot Skills 目录。Flow 只提供一个受限 grounding 工具：
+Skill 正文仍来自 AstrBot Skills 目录。Flow 不修改共享 Handoff Agent 的 `instructions`；Skill inventory 只作为本次 handoff 的 request-local input 前缀注入。Flow 只提供一个受限 grounding 工具：
 
 ```text
 read_bound_skill(skill_name)

@@ -54,10 +54,9 @@ AstrBot 4.23.2 的主 Agent 会自动处理 Persona Skills，但 handoff 子人�
 ```text
 PersonaManager
 SkillManager
-build_skills_prompt
 ```
 
-把 Builder 当前实际绑定、且启用的 Skill inventory 注入子人格。Skill 正文不复制进 Persona 或 Plugin 配置。
+读取 Builder 当前实际绑定且启用的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff 的 input；不修改共享 `HandoffTool.agent.instructions`。Skill 正文不复制进 Persona 或 Plugin 配置。
 
 Builder 额外看到一个受限工具：
 

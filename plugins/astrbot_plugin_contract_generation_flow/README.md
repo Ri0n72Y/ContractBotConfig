@@ -4,7 +4,7 @@
 
 ## Builder Skill 运行时
 
-AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界使用 AstrBot 原生 `SkillManager` 和 `build_skills_prompt()` 补齐这一层，而不是复制 Skill 内容或维护第二套 Skill 配置。
+AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定且启用的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。
 
 正式 Builder 仍只暴露受控合同生成工具，并额外提供：
 
@@ -236,6 +236,8 @@ contract_generation_document_spec_available
 contract_generation_document_spec_loaded
 contract_generation_skill_grounding_attempted
 contract_generation_skill_grounding_loaded
+contract_generation_skill_runtime_injected
+contract_generation_skill_runtime_error
 contract_generation_asset_search_attempted
 contract_generation_asset_search_verified
 contract_generation_asset_candidates

@@ -69,7 +69,7 @@ contract-document-specification
 
 `contract-document-specification` 只负责正式合同的文档表达规范：封面、标题层级、编号、表格、金额/日期表达、留白、签署页、附件和分页。它不提供固定合同条款，不替代模板/历史检索，也不改变 generation basis。
 
-AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.7.3 会在 handoff 边界复用 AstrBot 原生 `SkillManager/build_skills_prompt` 注入 Builder 已绑定 Skill，并提供受限运行时工具：
+AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.7.3 会在 handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 已绑定且启用的 Skill 元数据，把不含 Shell/任意文件读取指令的受限 inventory 注入本次 handoff input，并提供受限运行时工具：
 
 ```text
 read_bound_skill
