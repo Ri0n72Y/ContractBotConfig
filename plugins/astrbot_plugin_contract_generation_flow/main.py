@@ -156,7 +156,7 @@ KNOWLEDGE_TOOL_SPECS = (
         "read_generation_asset",
         "get_document_text",
         "asset",
-        "读取生成资产正文。只有已经决定采用该资产作为专用模板时才传 use_as_template=true；模板绑定必须来自本轮生成资产检索候选。",
+        "读取生成资产正文。只有已经决定采用该资产作为专用合同模板时才传 use_as_template=true；模板绑定必须来自本轮生成资产检索候选。",
         ASSET_READ_PARAMETERS,
     ),
     (
@@ -1753,9 +1753,13 @@ class ContractGenerationFlow(Star):
         selected = [
             active_by_name[name]
             for name in bound_names
-            if name in active_by_name
+            if name in active_by_name and active_by_name[name].local_exists
         ]
-        missing = [name for name in bound_names if name not in active_by_name]
+        missing = [
+            name
+            for name in bound_names
+            if name not in active_by_name or not active_by_name[name].local_exists
+        ]
         return bound_names, selected, missing
 
     @staticmethod
@@ -1806,7 +1810,10 @@ class ContractGenerationFlow(Star):
         runtime_missing: list[str] = []
         if DOCUMENT_SPEC_SKILL_NAME not in bound_names:
             runtime_missing.append("builder_document_spec_binding")
-        available = any(skill.name == DOCUMENT_SPEC_SKILL_NAME for skill in skill_infos)
+        available = any(
+            skill.name == DOCUMENT_SPEC_SKILL_NAME and skill.local_exists
+            for skill in skill_infos
+        )
         event.set_extra("contract_generation_document_spec_available", available)
         if DOCUMENT_SPEC_SKILL_NAME in bound_names and not available:
             runtime_missing.append("builder_document_spec_skill")
