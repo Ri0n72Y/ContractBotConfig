@@ -1,16 +1,18 @@
 name: PR20 review fixes
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/fix-builder-skill-runtime
+      - main
+    types:
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, 'fix: address PR20 review findings') }}
+    if: ${{ github.event.pull_request.head.ref == 'agent/fix-builder-skill-runtime' && github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +45,7 @@ jobs:
           text = replace_once(
               text,
               '''        skill = self._resolve_skill(event, skill_name)\n        if skill is None:\n''',
-              '''        try:\n            skill = self._resolve_skill(event, skill_name)\n        except Exception as exc:\n            logger.exception(\n                "Contract generation flow: failed to resolve bound Skill %s",\n                skill_name,\n            )\n            return _normalized_tool_failure(\n                failure_stage="skill_grounding",\n                error=f"Skill {skill_name} 的运行时状态读取失败。",\n            )\n        if skill is None:\n''',
+              '''        try:\n            skill = self._resolve_skill(event, skill_name)\n        except Exception:\n            logger.exception(\n                "Contract generation flow: failed to resolve bound Skill %s",\n                skill_name,\n            )\n            return _normalized_tool_failure(\n                failure_stage="skill_grounding",\n                error=f"Skill {skill_name} 的运行时状态读取失败。",\n            )\n        if skill is None:\n''',
               'guard read_bound_skill resolution',
           )
 
@@ -61,7 +63,7 @@ jobs:
 
           old_ensure_start = text.index('    async def _ensure_runtime_tools(\n')
           old_ensure_end = text.index('    async def _send_progress_once', old_ensure_start)
-          new_ensure = '''    async def _ensure_runtime_tools(\n        self,\n        agent: Any,\n        event: AstrMessageEvent,\n    ) -> tuple[list[str], list[str], str]:\n        # The HandoffTool/Agent object is shared across sessions. Only install the\n        # same immutable runtime ToolSet on that shared Agent; never write request-\n        # specific Skill inventory into agent.instructions.\n        async with self._runtime_lock:\n            if agent.tools is not self._runtime_tools:\n                agent.tools = self._runtime_tools\n\n        try:\n            runtime_block, skill_missing = self._prepare_builder_skill_runtime(event)\n            event.set_extra("contract_generation_skill_runtime_error", "")\n        except Exception:\n            logger.exception(\n                "Contract generation flow: failed to prepare Builder Skill runtime"\n            )\n            event.set_extra("contract_generation_document_spec_available", False)\n            event.set_extra(\n                "contract_generation_skill_runtime_error",\n                "builder skill runtime setup failed",\n            )\n            runtime_block = self._skill_runtime_failure_block()\n            skill_missing = [\n                "builder_skill_runtime",\n                "builder_document_spec_skill",\n            ]\n\n        diagnostics = self._runtime_diagnostics(event)\n        event.set_extra("contract_generation_builder_runtime_optional_missing", diagnostics)\n        event.set_extra(ASSET_CORPUS_EVENT_KEY, self.asset_corpus_slug)\n\n        missing = list(skill_missing)\n        if not self._builder_prompt_compatible(agent):\n            missing.append("builder_persona_protocol_v7")\n        return [tool.name for tool in self._runtime_tools], missing, runtime_block\n\n'''
+          new_ensure = '''    async def _ensure_runtime_tools(\n        self,\n        agent: Any,\n        event: AstrMessageEvent,\n    ) -> tuple[list[str], list[str], str]:\n        # HandoffTool/Agent objects are shared across sessions. Only install the\n        # same runtime ToolSet on that shared Agent; never write request-specific\n        # Skill inventory into agent.instructions.\n        async with self._runtime_lock:\n            if agent.tools is not self._runtime_tools:\n                agent.tools = self._runtime_tools\n\n        try:\n            runtime_block, skill_missing = self._prepare_builder_skill_runtime(event)\n            event.set_extra("contract_generation_skill_runtime_error", "")\n        except Exception:\n            logger.exception(\n                "Contract generation flow: failed to prepare Builder Skill runtime"\n            )\n            event.set_extra("contract_generation_document_spec_available", False)\n            event.set_extra(\n                "contract_generation_skill_runtime_error",\n                "builder skill runtime setup failed",\n            )\n            runtime_block = self._skill_runtime_failure_block()\n            skill_missing = [\n                "builder_skill_runtime",\n                "builder_document_spec_skill",\n            ]\n\n        diagnostics = self._runtime_diagnostics(event)\n        event.set_extra("contract_generation_builder_runtime_optional_missing", diagnostics)\n        event.set_extra(ASSET_CORPUS_EVENT_KEY, self.asset_corpus_slug)\n\n        missing = list(skill_missing)\n        if not self._builder_prompt_compatible(agent):\n            missing.append("builder_persona_protocol_v7")\n        return [tool.name for tool in self._runtime_tools], missing, runtime_block\n\n'''
           text = text[:old_ensure_start] + new_ensure + text[old_ensure_end:]
 
           text = replace_once(
