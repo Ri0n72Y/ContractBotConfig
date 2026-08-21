@@ -17,6 +17,18 @@ jobs:
         with:
           ref: agent/shrink-astrbot-runtime-ownership
           fetch-depth: 0
+      - name: Tighten mutation guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/refactor_astrbot_ownership.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '"star_map", "star_registry", "star_handlers_registry", "_remove_runtime_registrations"',
+              '"star_map.pop", "star_registry.remove", "star_handlers_registry.remove", "_remove_runtime_registrations"',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Apply ownership refactor
         run: python .github/scripts/refactor_astrbot_ownership.py
       - name: Validate ownership boundary
