@@ -21,6 +21,16 @@ jobs:
         run: python .github/scripts/patch_versioned_skill.py
       - name: Validate
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          for path in (
+              'README.md',
+              'docs/deployment/persona-manual-config.md',
+              'plugins/astrbot_plugin_contract_generation_flow/README.md',
+          ):
+              p = Path(path)
+              p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
           git diff --check
           python -m compileall -q plugins scripts
           python scripts/build_release.py --clean
