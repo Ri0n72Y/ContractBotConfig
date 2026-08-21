@@ -18,7 +18,7 @@ jobs:
         with:
           ref: agent/shrink-astrbot-runtime-ownership
           fetch-depth: 0
-      - name: Correct File Router patch
+      - name: Correct temporary refactor patch
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -52,6 +52,12 @@ jobs:
               '',
           ])
           text = text[:start] + replacement + text[end:]
+          bs = chr(92)
+          validator_old = f'raise SystemExit("{bs}n".join(errors))'
+          validator_new = f'raise SystemExit("{bs}{bs}n".join(errors))'
+          if validator_old not in text:
+              raise SystemExit('validator newline template not found')
+          text = text.replace(validator_old, validator_new, 1)
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply ownership refactor
