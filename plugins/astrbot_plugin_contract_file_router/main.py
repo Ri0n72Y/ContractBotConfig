@@ -3,51 +3,33 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.core.star import star_map, star_registry
-from astrbot.core.star.star_handler import star_handlers_registry
+from astrbot.api.star import Context, Star
 
 from .document_text import extract_staged_contract_text
 from .runtime import ContractFileRouter as RuntimeContractFileRouter
 
 
-_RUNTIME_MODULE = RuntimeContractFileRouter.__module__
 _STAGED_TEXT_EVENT_KEY = "contract_staged_document_text"
 _STAGED_TEXT_ATTACHED_EVENT_KEY = "contract_staged_document_text_attached"
 
 
-def _remove_runtime_registrations() -> None:
-    """Remove registrations created while importing the implementation module.
+class Main(Star, RuntimeContractFileRouter):
+    """Only AstrBot Star entrypoint; runtime.py is a plain implementation base."""
 
-    AstrBot binds handlers by their exact module path. The implementation class
-    lives in runtime.py, but the plugin entrypoint and decorated handlers must
-    be registered under main.py. Importing runtime.py creates temporary Star and
-    handler records, so remove those records before defining Main below.
-    """
-
-    metadata = star_map.pop(_RUNTIME_MODULE, None)
-    if metadata is not None and metadata in star_registry:
-        star_registry.remove(metadata)
-
-    for handler in list(star_handlers_registry):
-        if handler.handler_module_path == _RUNTIME_MODULE:
-            star_handlers_registry.remove(handler)
-
-
-_remove_runtime_registrations()
-
-
-class Main(RuntimeContractFileRouter):
-    """AstrBot Star entrypoint with per-session Router serialization."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        context: Context,
+        config: AstrBotConfig | None = None,
+    ) -> None:
+        Star.__init__(self, context, config)
+        RuntimeContractFileRouter.__init__(self, context, config)
         self._intake_locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.7 initialized: data_dir=%s",
+            "Contract file router 0.5.8 initialized: data_dir=%s",
             self.data_dir,
         )
 

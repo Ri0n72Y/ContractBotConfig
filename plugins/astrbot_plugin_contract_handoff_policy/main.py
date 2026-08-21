@@ -45,7 +45,7 @@ class ContractHandoffPolicy(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract handoff policy 0.5.3 initialized: default_corpus=%s",
+            "Contract handoff policy 0.5.4 initialized: default_corpus=%s",
             self.default_opencontracts_corpus_slug or "<empty>",
         )
 
@@ -346,6 +346,7 @@ class ContractHandoffPolicy(Star):
         if tool_name == GENERATION_HANDOFF_TOOL:
             corpus_slug = self._corpus_slug({}, task_context)
             event.set_extra(CORPUS_EVENT_KEY, corpus_slug)
+            tool_args["background_task"] = False
             logger.info(
                 "Contract handoff policy: bound generation corpus=%s",
                 corpus_slug or "<empty>",

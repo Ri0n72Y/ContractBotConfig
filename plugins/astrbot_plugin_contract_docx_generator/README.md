@@ -14,7 +14,7 @@ generate_contract_docx
 finalize_contract_draft
 ```
 
-正式 Builder 不直接暴露 `generate_contract_docx` 或 `finalize_contract_draft`。Generation Flow 0.7.2 把 Generator、Delivery 和交付后草稿持久化组合为 `generate_and_publish_contract`。
+正式 Builder 不直接暴露 `generate_contract_docx` 或 `finalize_contract_draft`。Generation Flow 0.8.0 把 Generator、Delivery 和交付后草稿持久化组合为 `generate_and_publish_contract`。
 
 ## Generation policy
 
@@ -98,7 +98,7 @@ template_document_slug
 
 ## 写操作与组合状态
 
-Generator 的实际 render 使用工作线程执行。上层 asyncio timeout/cancel 不能证明线程没有完成文件写入。因此 Generation Flow 0.7.2 对 `generate_contract_docx` 的 executor exception 采用：
+Generator 的实际 render 使用工作线程执行。上层 asyncio timeout/cancel 不能证明线程没有完成文件写入。因此 Generation Flow 0.8.0 对 `generate_contract_docx` 的 executor exception 采用：
 
 ```text
 retry_safe=false

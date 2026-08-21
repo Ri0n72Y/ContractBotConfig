@@ -22,7 +22,7 @@
   ↓
 Master Persona
   ↓ transfer_to_docassemble_builder
-Builder Persona 1.29
+Builder Persona 1.30
   ├─ read_bound_skill
   ├─ find_generation_assets
   ├─ read_generation_asset
@@ -35,37 +35,30 @@ Builder Persona 1.29
        └─ finalize_contract_draft
 ```
 
-Master 是唯一面向客户角色；Builder 不直接面向客户。Builder Persona 静态 Tools 为空，Generation Flow 在 handoff 时注入受限业务 wrapper ToolSet。
+Master 是唯一面向客户角色；Builder 不直接面向客户。Builder 的 8 个允许工具由 AstrBot Persona/WebUI 静态绑定；Generation Flow 只实现合同领域工具与业务状态机，不修改 Agent ToolSet。
 
 ## Builder Skill 边界
 
-AstrBot 主 Agent 的 Persona/Skill 注入由 `_ensure_persona_and_skills` 完成，但 4.23.2 的 `SubAgentOrchestrator` 创建 handoff 子人格时只把 Persona prompt/tools 写入 `Agent`，随后 `FunctionToolExecutor._execute_handoff` 直接使用 `tool.agent.instructions` 和 handoff ToolSet，不会再次执行主 Agent 的 Persona/Skill 装饰流程。
+当前运行基线只考虑 AstrBot 4.27.x 及以上。AstrBot 负责 Builder Persona 的 system prompt、Tool 绑定和 Skill 绑定；Generation Flow 不接管 `Agent` 生命周期，不覆盖 ToolSet，不改写 system prompt，也不在 handoff `input` 前拼接运行时块。
 
-因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.7.4 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
-
-```text
-Persona.skills
-  ↓
-AstrBot PersonaManager
-  ↓
-AstrBot SkillManager.list_skills(active_only=true)
-  ↓ 仅保留当前受限 reader 可直接读取（local_exists=true）的绑定 Skill
-Generation Flow restricted Skill inventory
-  ↓
-本次 handoff input（request-local）
-```
-
-Skill 正文仍来自 AstrBot Skills 目录。Flow 不修改共享 Handoff Agent 的 `instructions`；Skill inventory 只作为本次 handoff 的 request-local input 前缀注入。Flow 只提供一个受限 grounding 工具：
+正式 Builder 静态绑定：
 
 ```text
-read_bound_skill(skill_name)
+read_bound_skill
+find_generation_assets
+read_generation_asset
+find_similar_contracts
+read_reference_contract
+read_latest_contract_draft
+read_contract_draft
+generate_and_publish_contract
 ```
 
-模型只能传 Skill 名称；工具会再次核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否 active、是否存在当前受限 reader 可直接读取的本地 `SKILL.md`，并由 `SkillManager` 解析真实路径。模型不能传本地文件路径，因此该入口不能扩展成通用 FileRead。仅存在于 sandbox 的 Skill 会进入 runtime missing，不会被标记为 available。
+其中 `read_latest_contract_draft` 与 `read_contract_draft` 直接使用 DOCX Generator 已注册的只读工具；Generation Flow 不创建同名 pass-through wrapper。
 
-Builder 运行时仍禁止 Shell、Python、通用 HTTP、任意文件读写以及 raw MCP 绕过。
+AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此保留最小 `read_bound_skill(skill_name)` bridge。它会核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否 active、是否存在当前本地受限 reader 可读取的 `SKILL.md`；模型不能传文件路径。Builder 运行时仍不开放 Shell、Python、通用 HTTP、任意文件读写或 raw MCP 绕过。
 
-Builder 1.29 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 的 request-local inventory 负责“本轮有哪些可读 Skill”，两者不混用，也不向共享 Agent 写请求状态。
+Builder 1.30 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 只读取 Persona/Skill/Tool 状态做 fail-closed 校验，不生成或注入动态 Skill inventory。
 
 当前正式生成要求 `contract-document-specification` 必须：
 
@@ -97,7 +90,7 @@ protocol 2 要求 Master 能正确处理 `[CONTRACT_GENERATION:PARTIAL]`，不�
 <contract_generation_protocol version="7">
 ```
 
-Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Builder 1.29 仍使用 protocol v7；本次变化只加强 Skill grounding 顺序，不改变 generation protocol。
+Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Builder 1.30 仍使用 protocol v7；本次变化只加强 Skill grounding 顺序，不改变 generation protocol。
 
 ## Generation basis
 
@@ -179,7 +172,7 @@ Flow 验证它是字符串数组并记录到 event；Builder 只把这些字段�
 ## ToolResult / UTF-8 边界
 
 ```text
-FunctionToolExecutor
+registered FunctionTool / MCPTool
 → object/dict isError 检查
 → structuredContent/content JSON 解包
 → Python dict
@@ -187,7 +180,7 @@ FunctionToolExecutor
 → Builder
 ```
 
-详细 traceback 留服务日志。只读异常可结构化为 retry-safe error；写异常需要额外的 commit 语义。
+Generation Flow 内部只组合已知本地插件 handler 与 AstrBot 4.27.x 的 `MCPTool`；不再借用 Agent `FunctionToolExecutor` 作为第二套子人格运行时。详细 traceback 留服务日志。只读异常可结构化为 retry-safe error；写异常需要额外的 commit 语义。
 
 ## 写操作状态机
 

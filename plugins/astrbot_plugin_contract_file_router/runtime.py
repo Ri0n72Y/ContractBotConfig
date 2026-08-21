@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context
 import astrbot.api.message_components as Comp
 
 try:
@@ -131,11 +131,11 @@ ALIASES_END = (
 )
 
 
-class ContractFileRouter(Star):
+class ContractFileRouter:
     """Contract file staging and deterministic conversation state control."""
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
-        super().__init__(context, config)
+        self.context = context
         config = config or {}
         self.config = config
         self.allowed_platforms = set(config.get("allowed_platforms", ["wecom"]))
@@ -184,7 +184,7 @@ class ContractFileRouter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.7 initialized: data_dir=%s",
+            "Contract file router 0.5.8 initialized: data_dir=%s",
             self.data_dir,
         )
 
@@ -876,7 +876,6 @@ class ContractFileRouter(Star):
             return RUNNING_PROMPT
         return MENU
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
     async def intake(
         self, event: AstrMessageEvent, *_args: Any, **_kwargs: Any
     ):
@@ -1118,7 +1117,6 @@ class ContractFileRouter(Star):
         yield request
         return
 
-    @filter.on_llm_request(priority=1000)
     async def attach_context(
         self,
         event: AstrMessageEvent,
@@ -1157,7 +1155,6 @@ class ContractFileRouter(Star):
             "请严格按 contract_task_context 执行。"
         )
 
-    @filter.after_message_sent(priority=-999)
     async def clear_pending_after_result(
         self,
         event: AstrMessageEvent,
