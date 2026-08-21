@@ -50,7 +50,7 @@ class ContractDocxGenerator(Star):
         removed = await asyncio.to_thread(self.workspace.cleanup_expired)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Contract DOCX generator 0.5.1 initialized: output_dir=%s "
+            "Contract DOCX generator 0.5.2 initialized: output_dir=%s "
             "max_markdown_chars=%d cleanup_removed=%d",
             self.settings.output_dir,
             self.settings.max_markdown_chars,
@@ -489,7 +489,11 @@ class ContractDocxGenerator(Star):
         event: AstrMessageEvent,
         max_chars: int = 60000,
     ) -> str:
-        """一次取得当前会话最近成功交付合同草稿的元数据和首段正文。"""
+        """一次取得当前会话最近成功交付合同草稿的元数据和首段正文。
+
+        Args:
+            max_chars(int): 首次最多读取字符数，默认 60000。
+        """
         try:
             result = await asyncio.to_thread(
                 self.workspace.read_latest,
@@ -522,7 +526,13 @@ class ContractDocxGenerator(Star):
         char_offset: int = 0,
         max_chars: int = 60000,
     ) -> str:
-        """仅在上一版草稿有 next_offset 时继续读取后续 Markdown。"""
+        """仅在上一版草稿有 next_offset 时继续读取后续 Markdown。
+
+        Args:
+            draft_id(string): read_latest_contract_draft 返回的草稿 ID。
+            char_offset(int): 继续读取的字符起点，应使用上一段返回的 next_offset。
+            max_chars(int): 本次最多读取字符数，默认 60000。
+        """
         try:
             result = await asyncio.to_thread(
                 self.workspace.read,
