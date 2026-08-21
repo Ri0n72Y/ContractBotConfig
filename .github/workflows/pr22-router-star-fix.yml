@@ -1,15 +1,17 @@
 name: PR22 Router Star ownership fix
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/shrink-astrbot-runtime-ownership
+      - main
+    types: [synchronize]
 
 permissions:
   contents: write
 
 jobs:
   fix:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/shrink-astrbot-runtime-ownership'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,11 +77,13 @@ jobs:
           git diff --check
           python -m compileall -q plugins scripts
           python scripts/build_release.py --clean
-      - name: Commit fix and remove temporary workflow
+      - name: Commit fix and remove temporary files
         run: |
+          rm -f .pr22-router-trigger
           rm -f .github/workflows/pr22-router-star-fix.yml
           git config user.name "contractbot-ci"
           git config user.email "contractbot-ci@users.noreply.github.com"
-          git add -- plugins/astrbot_plugin_contract_file_router/runtime.py plugins/astrbot_plugin_contract_file_router/main.py .github/workflows/pr22-router-star-fix.yml
+          git add -- plugins/astrbot_plugin_contract_file_router/runtime.py plugins/astrbot_plugin_contract_file_router/main.py
+          git rm -f --ignore-unmatch .pr22-router-trigger .github/workflows/pr22-router-star-fix.yml
           git commit -m "Make File Router runtime a plain base"
           git push origin HEAD:agent/shrink-astrbot-runtime-ownership
