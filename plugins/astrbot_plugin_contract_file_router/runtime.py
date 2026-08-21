@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 import astrbot.api.message_components as Comp
@@ -876,7 +876,6 @@ class ContractFileRouter(Star):
             return RUNNING_PROMPT
         return MENU
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
     async def intake(
         self, event: AstrMessageEvent, *_args: Any, **_kwargs: Any
     ):
@@ -1118,7 +1117,6 @@ class ContractFileRouter(Star):
         yield request
         return
 
-    @filter.on_llm_request(priority=1000)
     async def attach_context(
         self,
         event: AstrMessageEvent,
@@ -1157,7 +1155,6 @@ class ContractFileRouter(Star):
             "请严格按 contract_task_context 执行。"
         )
 
-    @filter.after_message_sent(priority=-999)
     async def clear_pending_after_result(
         self,
         event: AstrMessageEvent,

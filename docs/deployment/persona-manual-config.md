@@ -69,7 +69,7 @@ contract-document-specification
 
 `contract-document-specification` 只负责正式合同的文档表达规范：封面、标题层级、编号、表格、金额/日期表达、留白、签署页、附件和分页。它不提供固定合同条款，不替代模板/历史检索，也不改变 generation basis。
 
-AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.7.4 会在 handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 已绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，把不含 Shell/任意文件读取指令的受限 inventory 注入本次 handoff input，并提供受限运行时工具：
+AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.8.0 会在 handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 已绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，把不含 Shell/任意文件读取指令的受限 inventory 注入本次 handoff input，并提供受限运行时工具：
 
 ```text
 read_bound_skill
@@ -84,7 +84,7 @@ generate_and_publish_contract
 
 `read_bound_skill` 只接受 Builder 已绑定、active 且当前本地受限 reader 可直接读取的 Skill 名称，不能传文件路径；它不会开放 Shell、Python、通用 HTTP 或任意文件读写。仅存在于 sandbox、当前受限 reader 无法读取的 Skill 会进入 runtime missing，不会标记为 `document_spec_available=True`。
 
-Builder 1.29 的 system prompt 固定要求：所有正式合同生成、重写、修改和定稿，都必须先调用 `read_bound_skill(contract-document-specification)` 并完整读取返回的 `SKILL.md`，再开始组织最终 `document_markdown`；不得先起草正文、到发布前才补 grounding。request-local handoff input 只携带本轮 Skill inventory 和业务任务。
+Builder 1.30 的 system prompt 固定要求：所有正式合同生成、重写、修改和定稿，都必须先调用 `read_bound_skill(contract-document-specification)` 并完整读取返回的 `SKILL.md`，再开始组织最终 `document_markdown`；不得先起草正文、到发布前才补 grounding。request-local handoff input 只携带本轮 Skill inventory 和业务任务。
 
 Builder Prompt 继续使用：
 
@@ -98,10 +98,10 @@ Generation Flow 协议版本不变；v7 仍是当前代码校验的正式协议�
 
 ```text
 astrbot_plugin_contract_doc_preconverter    0.1.3
-astrbot_plugin_contract_file_router         0.5.7
+astrbot_plugin_contract_file_router         0.5.8
 astrbot_plugin_contract_handoff_policy      0.5.3
 astrbot_plugin_opencontracts_gateway        0.6.2
-astrbot_plugin_contract_generation_flow     0.7.4
+astrbot_plugin_contract_generation_flow     0.8.0
 astrbot_plugin_contract_docx_generator      0.5.1
 astrbot_plugin_contract_download_delivery  0.2.5
 astrbot_plugin_wecom_final_result_guard     0.3.5
@@ -236,7 +236,7 @@ contract-result-verification
 ## 建议部署顺序
 
 1. 确认 `contract-document-specification-1.0.zip` 已安装并启用，且 AstrBot 主机侧存在可由受限 reader 读取的 `SKILL.md`。
-2. 导入/更新 Builder 1.29，并只绑定 `contract-document-specification` Skill；Builder 静态 Tools 保持空。
+2. 导入/更新 Builder 1.30，并只绑定 `contract-document-specification` Skill；Builder 静态 Tools 保持空。
 3. 升级 `astrbot_plugin_contract_generation_flow` 到 0.7.3。
 4. 保持 Master 1.26、Operator 1.18 及其现有绑定不变。
 5. 确认 DOCX Generator 0.5.1、Handoff Policy 0.5.3、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Router 0.5.7、Preconverter 0.1.3 均已加载。
@@ -254,4 +254,4 @@ release 中不包含真实合同模板、历史合同或企业业务数据。
 
 ## Skill 运行时 ID 兼容
 
-`personas/bindings.json` 和 Builder system prompt 使用稳定逻辑名 `contract-document-specification`。AstrBot WebUI 中实际绑定项如果显示为 `contract-document-specification-1.0`（或后续纯数字版本后缀），无需把 Persona prompt 改成版本号；Generation Flow 0.7.4 会解析唯一版本化绑定，并在日志中记录 `document_spec_skill_id=<实际运行时 ID>`。如果同时绑定多个版本，运行时会以 `builder_document_spec_binding_ambiguous` 阻断，必须先在 WebUI 只保留一个版本。
+`personas/bindings.json` 和 Builder system prompt 使用稳定逻辑名 `contract-document-specification`。AstrBot WebUI 中实际绑定项如果显示为 `contract-document-specification-1.0`（或后续纯数字版本后缀），无需把 Persona prompt 改成版本号；Generation Flow 0.8.0 会解析唯一版本化绑定，并在日志中记录 `document_spec_skill_id=<实际运行时 ID>`。如果同时绑定多个版本，运行时会以 `builder_document_spec_binding_ambiguous` 阻断，必须先在 WebUI 只保留一个版本。

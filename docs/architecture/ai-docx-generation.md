@@ -41,7 +41,7 @@ Master 是唯一面向客户角色；Builder 不直接面向客户。Builder Per
 
 AstrBot 主 Agent 的 Persona/Skill 注入由 `_ensure_persona_and_skills` 完成，但 4.23.2 的 `SubAgentOrchestrator` 创建 handoff 子人格时只把 Persona prompt/tools 写入 `Agent`，随后 `FunctionToolExecutor._execute_handoff` 直接使用 `tool.agent.instructions` 和 handoff ToolSet，不会再次执行主 Agent 的 Persona/Skill 装饰流程。
 
-因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.7.4 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
+因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.8.0 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
 
 ```text
 Persona.skills
@@ -65,7 +65,7 @@ read_bound_skill(skill_name)
 
 Builder 运行时仍禁止 Shell、Python、通用 HTTP、任意文件读写以及 raw MCP 绕过。
 
-Builder 1.29 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 的 request-local inventory 负责“本轮有哪些可读 Skill”，两者不混用，也不向共享 Agent 写请求状态。
+Builder 1.30 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 的 request-local inventory 负责“本轮有哪些可读 Skill”，两者不混用，也不向共享 Agent 写请求状态。
 
 当前正式生成要求 `contract-document-specification` 必须：
 
@@ -97,7 +97,7 @@ protocol 2 要求 Master 能正确处理 `[CONTRACT_GENERATION:PARTIAL]`，不�
 <contract_generation_protocol version="7">
 ```
 
-Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Builder 1.29 仍使用 protocol v7；本次变化只加强 Skill grounding 顺序，不改变 generation protocol。
+Flow 对旧 Builder prompt 记录 `builder_persona_protocol_v7` mismatch 并阻止正式生成。Builder 1.30 仍使用 protocol v7；本次变化只加强 Skill grounding 顺序，不改变 generation protocol。
 
 ## Generation basis
 
