@@ -62,6 +62,7 @@ r = r[:start] + "\\n" + r[end + len(end_marker):]
         run: python scripts/build_release.py --clean
       - name: Commit validated refactor
         run: |
+          rm -f .ownership-refactor-trigger
           rm -f .github/scripts/refactor_astrbot_ownership.py
           rm -f .github/workflows/refactor-astrbot-ownership.yml
           git config user.name "contractbot-ci"
