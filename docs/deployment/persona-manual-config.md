@@ -95,10 +95,10 @@ Generation Flow 协议版本不变；v7 仍是当前代码校验的正式协议�
 ```text
 astrbot_plugin_contract_doc_preconverter    0.1.3
 astrbot_plugin_contract_file_router         0.5.8
-astrbot_plugin_contract_handoff_policy      0.5.3
+astrbot_plugin_contract_handoff_policy      0.5.4
 astrbot_plugin_opencontracts_gateway        0.6.2
 astrbot_plugin_contract_generation_flow     0.8.0
-astrbot_plugin_contract_docx_generator      0.5.1
+astrbot_plugin_contract_docx_generator      0.5.2
 astrbot_plugin_contract_download_delivery  0.2.5
 astrbot_plugin_wecom_final_result_guard     0.3.5
 ```
@@ -230,7 +230,7 @@ contract-result-verification
 3. 导入/更新 Builder 1.30，绑定 `contract-document-specification` Skill，并按 `personas/bindings.json` 静态绑定 8 个 Builder Tools。
 4. 升级 `astrbot_plugin_contract_generation_flow` 到 0.8.0、File Router 到 0.5.8。
 5. 保持 Master 1.26、Operator 1.18 及其现有绑定不变。
-6. 确认 DOCX Generator 0.5.1、Handoff Policy 0.5.3、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Preconverter 0.1.3 均已加载。
+6. 确认 DOCX Generator 0.5.2、Handoff Policy 0.5.4、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Preconverter 0.1.3 均已加载。
 7. 执行材料采购合同生成 E2E，并按“Skill runtime 验证”检查日志和最终 DOCX 是否实际遵守文档规范。
 
 ## 发布产物
