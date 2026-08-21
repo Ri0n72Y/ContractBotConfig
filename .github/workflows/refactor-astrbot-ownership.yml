@@ -35,19 +35,20 @@ jobs:
           if start < 0 or end < 0:
               raise SystemExit('old File Router patch block not found')
           end += len(old_end)
+          bsn = chr(92) + 'n'
           replacement = '\n'.join([
               'r = once(',
               '    r,',
-              '    "_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\\\n",',
+              f'    "_RUNTIME_MODULE = RuntimeContractFileRouter.__module__{bsn}",',
               '    "",',
               '    "router runtime module marker",',
               ')',
-              'start = r.find("\\\\ndef _remove_runtime_registrations() -> None:\\\\n")',
-              'end_marker = "\\\\n\\\\n_remove_runtime_registrations()\\\\n"',
+              f'start = r.find("{bsn}def _remove_runtime_registrations() -> None:{bsn}")',
+              f'end_marker = "{bsn}{bsn}_remove_runtime_registrations(){bsn}"',
               'end = r.find(end_marker, start)',
               'if start < 0 or end < 0:',
               '    raise RuntimeError("router registry repair function not found")',
-              'r = r[:start] + "\\\\n" + r[end + len(end_marker):]',
+              f'r = r[:start] + "{bsn}" + r[end + len(end_marker):]',
               '',
           ])
           text = text[:start] + replacement + text[end:]
