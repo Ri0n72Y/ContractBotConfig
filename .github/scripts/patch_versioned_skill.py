@@ -1,0 +1,110 @@
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{path}: expected exactly one match, got {count}")
+    p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+main = "plugins/astrbot_plugin_contract_generation_flow/main.py"
+
+replace_once(
+    main,
+    "def _runtime_name(context: Context, event: AstrMessageEvent) -> str:\n",
+    '''def _skill_id_matches_logical_name(skill_id: str, logical_name: str) -> bool:\n    skill_id = str(skill_id or "").strip()\n    logical_name = str(logical_name or "").strip()\n    if not skill_id or not logical_name:\n        return False\n    if skill_id == logical_name:\n        return True\n    prefix = f"{logical_name}-"\n    if not skill_id.startswith(prefix):\n        return False\n    version = skill_id[len(prefix):]\n    parts = version.split(".")\n    return bool(parts) and all(part.isdigit() and part for part in parts)\n\n\ndef _resolve_bound_skill_id(requested_name: str, bound_names: list[str]) -> str | None:\n    requested_name = str(requested_name or "").strip()\n    if requested_name in bound_names:\n        return requested_name\n    if requested_name != DOCUMENT_SPEC_SKILL_NAME:\n        return None\n    candidates = [\n        name\n        for name in bound_names\n        if _skill_id_matches_logical_name(name, DOCUMENT_SPEC_SKILL_NAME)\n    ]\n    return candidates[0] if len(candidates) == 1 else None\n\n\ndef _skill_request_name(skill_id: str) -> str:\n    if _skill_id_matches_logical_name(skill_id, DOCUMENT_SPEC_SKILL_NAME):\n        return DOCUMENT_SPEC_SKILL_NAME\n    return str(skill_id or "").strip()\n\n\ndef _runtime_name(context: Context, event: AstrMessageEvent) -> str:\n''',
+)
+
+replace_once(
+    main,
+    '''        if skill_name not in _builder_bound_skill_names(self._context):\n            return None\n        runtime = _runtime_name(self._context, event)\n        active = self._skill_manager.list_skills(\n            active_only=True,\n            runtime=runtime,\n            show_sandbox_path=False,\n        )\n        return next((skill for skill in active if skill.name == skill_name), None)\n''',
+    '''        bound_names = _builder_bound_skill_names(self._context)\n        resolved_name = _resolve_bound_skill_id(skill_name, bound_names)\n        if resolved_name is None:\n            return None\n        runtime = _runtime_name(self._context, event)\n        active = self._skill_manager.list_skills(\n            active_only=True,\n            runtime=runtime,\n            show_sandbox_path=False,\n        )\n        return next((skill for skill in active if skill.name == resolved_name), None)\n''',
+)
+
+replace_once(
+    main,
+    '''        if skill_name == DOCUMENT_SPEC_SKILL_NAME:\n            event.set_extra("contract_generation_document_spec_loaded", True)\n        logger.info(\n            "Contract generation flow: Builder Skill grounded: skill=%s",\n            skill_name,\n        )\n''',
+    '''        if _skill_id_matches_logical_name(skill.name, DOCUMENT_SPEC_SKILL_NAME):\n            event.set_extra("contract_generation_document_spec_loaded", True)\n            event.set_extra("contract_generation_document_spec_skill_id", skill.name)\n        logger.info(\n            "Contract generation flow: Builder Skill grounded: requested=%s resolved=%s",\n            skill_name,\n            skill.name,\n        )\n''',
+)
+
+replace_once(
+    main,
+    '''            description = " ".join(str(skill.description or "").replace("`", "").split())\n            description = description[:1000] or "Read the bound SKILL.md for details."\n            inventory_lines.append(f"- **{name}**: {description}")\n''',
+    '''            description = " ".join(str(skill.description or "").replace("`", "").split())\n            description = description[:1000] or "Read the bound SKILL.md for details."\n            request_name = _skill_request_name(name)\n            if request_name != name:\n                inventory_lines.append(\n                    f"- **{request_name}** (runtime id `{name}`): {description}"\n                )\n            else:\n                inventory_lines.append(f"- **{name}**: {description}")\n''',
+)
+
+replace_once(
+    main,
+    '''        if DOCUMENT_SPEC_SKILL_NAME not in bound_names:\n            runtime_missing.append("builder_document_spec_binding")\n        available = any(\n            skill.name == DOCUMENT_SPEC_SKILL_NAME and skill.local_exists\n            for skill in skill_infos\n        )\n        event.set_extra("contract_generation_document_spec_available", available)\n        if DOCUMENT_SPEC_SKILL_NAME in bound_names and not available:\n            runtime_missing.append("builder_document_spec_skill")\n''',
+    '''        document_spec_bindings = [\n            name\n            for name in bound_names\n            if _skill_id_matches_logical_name(name, DOCUMENT_SPEC_SKILL_NAME)\n        ]\n        if not document_spec_bindings:\n            runtime_missing.append("builder_document_spec_binding")\n        elif len(document_spec_bindings) > 1:\n            runtime_missing.append("builder_document_spec_binding_ambiguous")\n\n        readable_skill_ids = {skill.name for skill in skill_infos if skill.local_exists}\n        resolved_document_spec_id = (\n            document_spec_bindings[0] if len(document_spec_bindings) == 1 else ""\n        )\n        available = bool(\n            resolved_document_spec_id\n            and resolved_document_spec_id in readable_skill_ids\n        )\n        event.set_extra("contract_generation_document_spec_available", available)\n        event.set_extra(\n            "contract_generation_document_spec_skill_id",\n            resolved_document_spec_id if available else "",\n        )\n        if len(document_spec_bindings) == 1 and not available:\n            runtime_missing.append("builder_document_spec_skill")\n''',
+)
+
+replace_once(
+    main,
+    '            "contract_generation_document_spec_loaded": False,\n',
+    '            "contract_generation_document_spec_loaded": False,\n            "contract_generation_document_spec_skill_id": "",\n',
+)
+
+replace_once(
+    main,
+    '''                "diagnostics=%s document_spec_required=%s document_spec_available=%s "\n                "document_spec_loaded=%s skill_runtime_injected=%s tools=%s",\n''',
+    '''                "diagnostics=%s document_spec_required=%s document_spec_available=%s "\n                "document_spec_skill_id=%s document_spec_loaded=%s "\n                "skill_runtime_injected=%s tools=%s",\n''',
+)
+
+replace_once(
+    main,
+    '''                event.get_extra("contract_generation_document_spec_available", False),\n                event.get_extra("contract_generation_document_spec_loaded", False),\n''',
+    '''                event.get_extra("contract_generation_document_spec_available", False),\n                event.get_extra("contract_generation_document_spec_skill_id", ""),\n                event.get_extra("contract_generation_document_spec_loaded", False),\n''',
+)
+
+replace_once(
+    main,
+    "Contract generation flow 0.7.3 initialized",
+    "Contract generation flow 0.7.4 initialized",
+)
+
+replace_once(
+    "plugins/astrbot_plugin_contract_generation_flow/metadata.yaml",
+    "version: 0.7.3",
+    "version: 0.7.4",
+)
+
+replace_once(
+    "VERSIONS.md",
+    "- astrbot_plugin_contract_generation_flow: 0.7.3",
+    "- astrbot_plugin_contract_generation_flow: 0.7.4",
+)
+
+docs = [
+    "README.md",
+    "VERSIONS.md",
+    "docs/architecture/ai-docx-generation.md",
+    "docs/architecture/system-context.md",
+    "docs/deployment/persona-manual-config.md",
+    "plugins/astrbot_plugin_contract_generation_flow/README.md",
+]
+for path in docs:
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    text = text.replace("Generation Flow 0.7.3", "Generation Flow 0.7.4")
+    text = text.replace(
+        "astrbot_plugin_contract_generation_flow     0.7.3",
+        "astrbot_plugin_contract_generation_flow     0.7.4",
+    )
+    text = text.replace(
+        "astrbot_plugin_contract_generation_flow    0.7.3",
+        "astrbot_plugin_contract_generation_flow    0.7.4",
+    )
+    p.write_text(text, encoding="utf-8")
+
+append_markers = {
+    "README.md": '''\n\n### Skill 版本化运行时 ID\n\n仓库中的 Skill 逻辑名保持 `contract-document-specification`。AstrBot 实际安装/绑定时可能使用版本化运行时 ID，例如 `contract-document-specification-1.0`。Generation Flow 0.7.4 会把唯一绑定的 `contract-document-specification` 或 `contract-document-specification-<数字版本>` 解析为同一个逻辑 Skill；Builder 仍稳定调用 `read_bound_skill(contract-document-specification)`。若同时绑定多个该 Skill 版本则 fail-closed，不自动选择。\n''',
+    "docs/deployment/persona-manual-config.md": '''\n\n## Skill 运行时 ID 兼容\n\n`personas/bindings.json` 和 Builder system prompt 使用稳定逻辑名 `contract-document-specification`。AstrBot WebUI 中实际绑定项如果显示为 `contract-document-specification-1.0`（或后续纯数字版本后缀），无需把 Persona prompt 改成版本号；Generation Flow 0.7.4 会解析唯一版本化绑定，并在日志中记录 `document_spec_skill_id=<实际运行时 ID>`。如果同时绑定多个版本，运行时会以 `builder_document_spec_binding_ambiguous` 阻断，必须先在 WebUI 只保留一个版本。\n''',
+    "plugins/astrbot_plugin_contract_generation_flow/README.md": '''\n\n## Versioned Skill ID resolution\n\n`contract-document-specification` 是稳定逻辑名。AstrBot 安装包可能把实际绑定 ID 暴露为 `contract-document-specification-1.0`。Flow 0.7.4 只接受逻辑名本身或严格的纯数字版本后缀，并要求该 family 在 Builder Persona 中唯一绑定；`read_bound_skill(contract-document-specification)` 会解析到唯一实际 ID。多个版本同时绑定时 fail-closed，不自动挑选。成功解析/grounding 的实际 ID 记录在 `contract_generation_document_spec_skill_id`。\n''',
+}
+for path, block in append_markers.items():
+    p = Path(path)
+    p.write_text(p.read_text(encoding="utf-8").rstrip() + block + "\n", encoding="utf-8")
