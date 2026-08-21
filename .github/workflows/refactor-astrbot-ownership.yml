@@ -62,6 +62,10 @@ jobs:
           if text.count(duplicate_class) != 1:
               raise SystemExit('BoundCorpusTool splice target not unique')
           text = text.replace(duplicate_class, '    "",', 1)
+          duplicate_builder = '    skill_state + "    def _build_runtime_tools",'
+          if text.count(duplicate_builder) != 1:
+              raise SystemExit('runtime builder splice target not unique')
+          text = text.replace(duplicate_builder, '    skill_state,', 1)
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply ownership refactor
