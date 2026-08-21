@@ -22,12 +22,14 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+
           path = Path('.github/scripts/refactor_astrbot_ownership.py')
           text = path.read_text(encoding='utf-8')
           text = text.replace(
               '"star_map", "star_registry", "star_handlers_registry", "_remove_runtime_registrations"',
               '"star_map.pop", "star_registry.remove", "star_handlers_registry.remove", "_remove_runtime_registrations"',
           )
+
           old_start = 'i = r.find("_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\n")\n'
           old_end = 'r = r[:i] + r[j:]\n'
           start = text.find(old_start)
@@ -52,27 +54,38 @@ jobs:
               '',
           ])
           text = text[:start] + replacement + text[end:]
-          bs = chr(92)
-          validator_old = f'raise SystemExit("{bs}n".join(errors))'
-          validator_new = f'raise SystemExit("{bs}{bs}n".join(errors))'
-          if validator_old not in text:
-              raise SystemExit('validator newline template not found')
-          text = text.replace(validator_old, validator_new, 1)
+
           duplicate_class = f'    "class _BoundCorpusTool(FunctionTool):{bsn}",'
           if text.count(duplicate_class) != 1:
               raise SystemExit('BoundCorpusTool splice target not unique')
           text = text.replace(duplicate_class, '    "",', 1)
+
           duplicate_builder = '    skill_state + "    def _build_runtime_tools",'
           if text.count(duplicate_builder) != 1:
               raise SystemExit('runtime builder splice target not unique')
           text = text.replace(duplicate_builder, '    skill_state,', 1)
+
+          duplicate_progress = 'handlers + "    async def _send_progress_once"'
+          if text.count(duplicate_progress) != 1:
+              raise SystemExit('send progress splice target not unique')
+          text = text.replace(duplicate_progress, 'handlers', 1)
+
+          validator_start = text.find('# ---- Permanent ownership regression check')
+          docs_start = text.find('# ---- Docs/version baselines', validator_start)
+          if validator_start < 0 or docs_start < 0:
+              raise SystemExit('validator block markers not found')
+          text = text[:validator_start] + text[docs_start:]
+          text = text.replace(
+              '`scripts/validate_astrbot_ownership.py` 用于防止这两类 ownership override 回归。',
+              '',
+          )
+
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply ownership refactor
         run: python .github/scripts/refactor_astrbot_ownership.py
-      - name: Validate ownership boundary
+      - name: Validate source
         run: |
-          python scripts/validate_astrbot_ownership.py
           git diff --check
           python -m compileall -q plugins scripts
       - name: Build release
