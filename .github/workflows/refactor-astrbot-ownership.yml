@@ -4,7 +4,7 @@ on:
   pull_request:
     branches:
       - main
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
         with:
           ref: agent/shrink-astrbot-runtime-ownership
           fetch-depth: 0
-      - name: Correct File Router patch guard
+      - name: Correct File Router patch
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -28,28 +28,29 @@ jobs:
               '"star_map", "star_registry", "star_handlers_registry", "_remove_runtime_registrations"',
               '"star_map.pop", "star_registry.remove", "star_handlers_registry.remove", "_remove_runtime_registrations"',
           )
-          old = '''i = r.find("_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\n")
-j = r.find("_STAGED_TEXT_EVENT_KEY =", i)
-if i < 0 or j < 0:
-    raise RuntimeError("router registry repair block not found")
-r = r[:i] + r[j:]
-'''
-          new = '''r = once(
-    r,
-    "_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\n",
-    "",
-    "router runtime module marker",
-)
-start = r.find("\\ndef _remove_runtime_registrations() -> None:\\n")
-end_marker = "\\n\\n_remove_runtime_registrations()\\n"
-end = r.find(end_marker, start)
-if start < 0 or end < 0:
-    raise RuntimeError("router registry repair function not found")
-r = r[:start] + "\\n" + r[end + len(end_marker):]
-'''
-          if old not in text:
+          old_start = 'i = r.find("_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\n")\n'
+          old_end = 'r = r[:i] + r[j:]\n'
+          start = text.find(old_start)
+          end = text.find(old_end, start)
+          if start < 0 or end < 0:
               raise SystemExit('old File Router patch block not found')
-          text = text.replace(old, new, 1)
+          end += len(old_end)
+          replacement = '\n'.join([
+              'r = once(',
+              '    r,',
+              '    "_RUNTIME_MODULE = RuntimeContractFileRouter.__module__\\\\n",',
+              '    "",',
+              '    "router runtime module marker",',
+              ')',
+              'start = r.find("\\\\ndef _remove_runtime_registrations() -> None:\\\\n")',
+              'end_marker = "\\\\n\\\\n_remove_runtime_registrations()\\\\n"',
+              'end = r.find(end_marker, start)',
+              'if start < 0 or end < 0:',
+              '    raise RuntimeError("router registry repair function not found")',
+              'r = r[:start] + "\\\\n" + r[end + len(end_marker):]',
+              '',
+          ])
+          text = text[:start] + replacement + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply ownership refactor
