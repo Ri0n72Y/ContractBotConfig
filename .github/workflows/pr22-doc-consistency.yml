@@ -1,0 +1,247 @@
+name: PR22 documentation consistency
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/shrink-astrbot-runtime-ownership'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/shrink-astrbot-runtime-ownership
+          fetch-depth: 0
+      - name: Align docs with AstrBot 4.27.x ownership model
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text.rstrip() + '\n', encoding='utf-8')
+
+          # README
+          p = 'README.md'
+          t = read(p)
+          t = t.replace(
+              '- Builder：静态 Tools 为空；Skills=`contract-document-specification`；Generation Flow 在 handoff 时注入受限运行时业务工具和 Skill grounding 入口。',
+              '- Builder：Tools=`read_bound_skill`,`find_generation_assets`,`read_generation_asset`,`find_similar_contracts`,`read_reference_contract`,`read_latest_contract_draft`,`read_contract_draft`,`generate_and_publish_contract`；Skills=`contract-document-specification`。这些绑定由 AstrBot Persona/WebUI 管理。',
+          )
+          start = t.index('## Builder Skill grounding\n')
+          end = t.index('\n## 合同生成\n', start)
+          section = '''## Builder Skill grounding
+
+当前部署基线只考虑 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 绑定和 Skill 绑定均由 AstrBot 管理；Generation Flow 0.8.0 不覆盖 `agent.tools`、不修改 `agent.instructions`，也不重写 handoff `input`。
+
+AstrBot handoff 子人格当前不会自动把 Persona Skill 正文展开给 Builder，因此保留一个最小受限桥：
+
+```text
+read_bound_skill(skill_name)
+```
+
+它只接受 Builder 实际绑定、active 且当前本地 reader 可直接读取的 Skill 名称；模型不能传文件路径，也不会获得 Shell、Python、通用 HTTP、任意文件读写或 raw MCP 能力。同一 handoff 对已经成功 grounding 的文档规范 Skill再次调用时返回 `already_grounded`，不重复返回整份 `SKILL.md`。
+
+Builder 1.30 的 system prompt 固定要求：所有正式合同生成、重写、修改和定稿，必须先 `read_bound_skill(contract-document-specification)` 完成 grounding，再开始组织最终 `document_markdown`。Generation Flow 只读取 Persona/Skill/Tool 绑定做 fail-closed 校验；不向 handoff prompt 注入动态 Skill inventory。
+
+当前 `contract-document-specification` 是正式合同生成必需的文档规范 Skill。Builder 在调用 `generate_and_publish_contract` 前必须已经成功读取它；否则组合工具在任何 DOCX/发布写操作开始前返回 retry-safe BLOCKED。
+'''
+          t = t[:start] + section.rstrip() + t[end:]
+          write(p, t)
+
+          # VERSIONS
+          p = 'VERSIONS.md'
+          t = read(p)
+          old = 'Generation Flow 0.8.0 修复 AstrBot handoff 子人格未自动注入 Persona Skills 的运行时缺口：它复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 实际绑定且启用、并且当前受限读取入口可直接 grounding 的 Skill 元数据，构造不含 Shell/任意文件路径指令的受限 inventory，并只注入本次 handoff input；Skill 正文通过受限 `read_bound_skill` 读取。Flow 不修改共享 Handoff Agent 的 system prompt，也不开放 Shell、Python、通用 HTTP 或任意文件读写。正式生成在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。'
+          new = 'Generation Flow 0.8.0 以 AstrBot 4.27.x+ 为运行基线：Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Flow 不覆盖 Agent ToolSet、不修改 system prompt、不重写 handoff input。由于 handoff 子人格当前不会自动展开 Persona Skill 正文，Flow 仅保留受限 `read_bound_skill` 作为 grounding bridge，并在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。'
+          t = t.replace(old, new)
+          t = t.replace('Builder 1.30 把“先 `read_bound_skill(contract-document-specification)`、再组织最终正文”的固定规则放在 Persona system prompt；request-local handoff input 只携带本轮 Skill inventory 和业务任务。', 'Builder 1.30 把“先 `read_bound_skill(contract-document-specification)`、再组织最终正文”的固定规则放在 Persona system prompt；Generation Flow 不向 handoff input 注入动态 Skill inventory。')
+          write(p, t)
+
+          # AI DOCX architecture: replace role/Skill boundary section wholesale.
+          p = 'docs/architecture/ai-docx-generation.md'
+          t = read(p).replace('Builder Persona 1.29', 'Builder Persona 1.30')
+          t = t.replace('Master 是唯一面向客户角色；Builder 不直接面向客户。Builder Persona 静态 Tools 为空，Generation Flow 在 handoff 时注入受限业务 wrapper ToolSet。', 'Master 是唯一面向客户角色；Builder 不直接面向客户。Builder 的 8 个允许工具由 AstrBot Persona/WebUI 静态绑定；Generation Flow 只实现合同领域工具与业务状态机，不修改 Agent ToolSet。')
+          start = t.index('## Builder Skill 边界\n')
+          end = t.index('\n## 版本协议\n', start)
+          section = '''## Builder Skill 边界
+
+当前运行基线只考虑 AstrBot 4.27.x 及以上。AstrBot 负责 Builder Persona 的 system prompt、Tool 绑定和 Skill 绑定；Generation Flow 不接管 `Agent` 生命周期，不覆盖 ToolSet，不改写 system prompt，也不在 handoff `input` 前拼接运行时块。
+
+正式 Builder 静态绑定：
+
+```text
+read_bound_skill
+find_generation_assets
+read_generation_asset
+find_similar_contracts
+read_reference_contract
+read_latest_contract_draft
+read_contract_draft
+generate_and_publish_contract
+```
+
+其中 `read_latest_contract_draft` 与 `read_contract_draft` 直接使用 DOCX Generator 已注册的只读工具；Generation Flow 不创建同名 pass-through wrapper。
+
+AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此保留最小 `read_bound_skill(skill_name)` bridge。它会核对该 Skill 是否实际绑定到 `contract_docassemble_builder`、是否 active、是否存在当前本地受限 reader 可读取的 `SKILL.md`；模型不能传文件路径。Builder 运行时仍不开放 Shell、Python、通用 HTTP、任意文件读写或 raw MCP 绕过。
+
+Builder 1.30 的固定 system prompt 负责“何时 grounding”：所有正式合同生成、重写、修改和定稿，必须先读取 `contract-document-specification`，再开始组织最终 `document_markdown`。Generation Flow 只读取 Persona/Skill/Tool 状态做 fail-closed 校验，不生成或注入动态 Skill inventory。
+
+当前正式生成要求 `contract-document-specification` 必须：
+
+```text
+已绑定
++ active
++ 当前受限 reader 可直接读取
++ 本轮 read_bound_skill 成功
+```
+
+否则 `generate_and_publish_contract` 在调用任何 Generator/Delivery 写操作前返回 retry-safe BLOCKED。若只是 `failure_stage=document_spec_skill + retry_safe=true`，说明尚未发生写副作用；完成 grounding 并重新检查最终 Markdown 后可以重新提交正式生成调用，这不属于写失败重试。
+'''
+          t = t[:start] + section.rstrip() + t[end:]
+          write(p, t)
+
+          # System context
+          p = 'docs/architecture/system-context.md'
+          t = read(p)
+          t = t.replace('    SkillMgr --> Flow\n    DocSpec --> SkillMgr\n    Flow -->|bound/readable Skill inventory + read_bound_skill| Builder\n', '    DocSpec --> SkillMgr\n    SkillMgr -->|Persona Skill binding| Builder\n    Flow -->|registered contract tools / business state| Builder\n')
+          t = t.replace('Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.30 继续使用 generation protocol v7，静态 Tools 为空，绑定 `contract-document-specification`；其 system prompt 固定要求在组织最终 `document_markdown` 前先完成文档规范 Skill grounding。', 'Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.30 继续使用 generation protocol v7，静态绑定 8 个受限合同工具，并绑定 `contract-document-specification`；其 system prompt 固定要求在组织最终 `document_markdown` 前先完成文档规范 Skill grounding。')
+          old = 'AstrBot 4.23.2 主 Agent 会自动注入 Persona Skills，但 handoff 子人格的 `SubAgentOrchestrator → HandoffTool → FunctionToolExecutor` 路径不会再次调用主 Agent 的 Skill 装饰流程。Generation Flow 0.8.0 因此在 Builder handoff 边界复用 AstrBot 的 `PersonaManager + SkillManager` 读取 Builder 实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，生成不含 Shell 指令的受限 inventory，并只注入本次 handoff input；不修改共享 Handoff Agent 的 system prompt。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。'
+          new = '当前只支持 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Generation Flow 0.8.0 只读取这些绑定状态做 fail-closed 校验，不修改共享 Agent、不覆盖 ToolSet、不向 handoff input 注入动态 Skill inventory。AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此 Skill 正文仍通过受限 `read_bound_skill(skill_name)` 读取。'
+          t = t.replace(old, new)
+          write(p, t)
+
+          # Deployment guide: replace Builder section wholesale and fix log version.
+          p = 'docs/deployment/persona-manual-config.md'
+          t = read(p)
+          start = t.index('### contract_docassemble_builder 1.29\n')
+          end = t.index('\n## 正式插件版本\n', start)
+          section = '''### contract_docassemble_builder 1.30
+
+当前 Persona ID 保持为 `contract_docassemble_builder`，但正式运行不使用 Docassemble Gateway。
+
+WebUI 静态 Tools：
+
+```text
+read_bound_skill
+find_generation_assets
+read_generation_asset
+find_similar_contracts
+read_reference_contract
+read_latest_contract_draft
+read_contract_draft
+generate_and_publish_contract
+```
+
+Skills：
+
+```text
+contract-document-specification
+```
+
+当前部署只考虑 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 和 Skill 绑定由 AstrBot WebUI 管理；Generation Flow 不覆盖 Agent ToolSet、不修改 system prompt，也不改写 handoff input。
+
+`contract-document-specification` 只负责正式合同的文档表达规范：封面、标题层级、编号、表格、金额/日期表达、留白、签署页、附件和分页。它不提供固定合同条款，不替代模板/历史检索，也不改变 generation basis。
+
+AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，所以保留 `read_bound_skill` 作为最小 grounding bridge。该工具只接受 Builder 已绑定、active 且当前本地受限 reader 可读取的 Skill 名称，不能传文件路径；它不会开放 Shell、Python、通用 HTTP 或任意文件读写。
+
+Builder 1.30 的 system prompt 固定要求：所有正式合同生成、重写、修改和定稿，都必须先调用 `read_bound_skill(contract-document-specification)` 并完整读取返回的 `SKILL.md`，再开始组织最终 `document_markdown`；不得先起草正文、到发布前才补 grounding。
+
+Builder Prompt 继续使用：
+
+```text
+<contract_generation_protocol version="7">
+```
+
+Generation Flow 协议版本不变；v7 仍是当前代码校验的正式协议。
+'''
+          t = t[:start] + section.rstrip() + t[end:]
+          t = t.replace('Contract generation flow 0.7.3 initialized', 'Contract generation flow 0.8.0 initialized')
+          write(p, t)
+
+          # Plugin README: replace Skill runtime section wholesale; update stale version reference.
+          p = 'plugins/astrbot_plugin_contract_generation_flow/README.md'
+          t = read(p)
+          start = t.index('## Builder Skill 运行时\n')
+          end = t.index('\n## 正常 fallback 生成\n', start)
+          section = '''## Builder Skill 运行时
+
+当前运行基线只考虑 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 绑定与 Skill 绑定由 AstrBot 管理；Generation Flow 0.8.0 不覆盖 `agent.tools`、不修改共享 `agent.instructions`，也不重写 `transfer_to_docassemble_builder.input`。
+
+正式 Builder 静态绑定 8 个受限工具，其中 `read_latest_contract_draft` / `read_contract_draft` 直接使用 DOCX Generator 已注册工具；Generation Flow 自己注册 `read_bound_skill`、四个受限知识工具以及唯一写入口 `generate_and_publish_contract`。
+
+AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此保留：
+
+```text
+read_bound_skill(skill_name)
+```
+
+该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、AstrBot `SkillManager` 判定为 active、且当前本地受限 reader 可直接读取的 Skill 名称；模型不能提供任意文件路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。同一 handoff 对已经成功 grounding 的 `contract-document-specification` 再次调用时返回 `already_grounded`。
+
+正式生成要求 `contract-document-specification` 已绑定、active、可读，并在本轮通过 `read_bound_skill` 完成 grounding。Builder 1.30 的 system prompt 固定要求在开始组织最终 `document_markdown` 前先完成这一步。Generation Flow 只做状态校验，不向 handoff input 注入动态 Skill inventory；未 grounding 时 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED。
+
+运行日志会显示：
+
+```text
+document_spec_required=true
+document_spec_available=true
+document_spec_loaded=false|true
+tools=[read_bound_skill, ...]
+```
+
+成功读取后会记录 Builder Skill grounded 日志。
+'''
+          t = t[:start] + section.rstrip() + t[end:]
+          t = t.replace('Flow 0.7.3 区分只读工具与写工具。', 'Flow 0.8.0 区分只读工具与写工具。')
+          write(p, t)
+
+          # Normalize Generation Flow source EOF.
+          p = 'plugins/astrbot_plugin_contract_generation_flow/main.py'
+          write(p, read(p))
+
+          stale = (
+              'AstrBot 4.23.2',
+              'Builder Persona 静态 Tools 为空',
+              'Builder：静态 Tools 为空',
+              'request-local handoff input',
+              'restricted Skill inventory',
+              '注入本次 handoff input',
+              'Generation Flow 在 handoff 时注入',
+              'scripts/validate_astrbot_ownership.py',
+          )
+          files = [
+              'README.md', 'VERSIONS.md',
+              'docs/architecture/ai-docx-generation.md',
+              'docs/architecture/system-context.md',
+              'docs/deployment/persona-manual-config.md',
+              'plugins/astrbot_plugin_contract_generation_flow/README.md',
+          ]
+          errors = []
+          for f in files:
+              text = read(f)
+              for token in stale:
+                  if token in text:
+                      errors.append(f'{f}: stale token: {token}')
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          PY
+      - name: Validate and build
+        run: |
+          git diff --check
+          python -m compileall -q plugins scripts
+          python scripts/build_release.py --clean
+      - name: Commit and remove temporary workflow
+        run: |
+          rm -f .github/workflows/pr22-doc-consistency.yml
+          git config user.name "contractbot-ci"
+          git config user.email "contractbot-ci@users.noreply.github.com"
+          git add -A
+          git commit -m "Align PR22 docs with AstrBot 4.27 ownership"
+          git push origin HEAD:agent/shrink-astrbot-runtime-ownership
