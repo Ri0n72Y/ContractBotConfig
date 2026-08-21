@@ -4,6 +4,6 @@ desc: 为 Builder 提供模板/历史检索、受限 Skill grounding、无模板
 version: 0.8.0
 author: local
 repo: ""
-astrbot_version: ">=4.23.2,<5"
+astrbot_version: ">=4.27.0,<5"
 support_platforms:
   - wecom
