@@ -534,6 +534,41 @@ def _builder_bound_skill_names(context: Context) -> list[str]:
     return names
 
 
+def _skill_id_matches_logical_name(skill_id: str, logical_name: str) -> bool:
+    skill_id = str(skill_id or "").strip()
+    logical_name = str(logical_name or "").strip()
+    if not skill_id or not logical_name:
+        return False
+    if skill_id == logical_name:
+        return True
+    prefix = f"{logical_name}-"
+    if not skill_id.startswith(prefix):
+        return False
+    version = skill_id[len(prefix):]
+    parts = version.split(".")
+    return bool(parts) and all(part.isdigit() and part for part in parts)
+
+
+def _resolve_bound_skill_id(requested_name: str, bound_names: list[str]) -> str | None:
+    requested_name = str(requested_name or "").strip()
+    if requested_name in bound_names:
+        return requested_name
+    if requested_name != DOCUMENT_SPEC_SKILL_NAME:
+        return None
+    candidates = [
+        name
+        for name in bound_names
+        if _skill_id_matches_logical_name(name, DOCUMENT_SPEC_SKILL_NAME)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _skill_request_name(skill_id: str) -> str:
+    if _skill_id_matches_logical_name(skill_id, DOCUMENT_SPEC_SKILL_NAME):
+        return DOCUMENT_SPEC_SKILL_NAME
+    return str(skill_id or "").strip()
+
+
 def _runtime_name(context: Context, event: AstrMessageEvent) -> str:
     cfg = context.get_config(umo=event.unified_msg_origin) or {}
     provider_settings = cfg.get("provider_settings") or {}
@@ -560,7 +595,9 @@ class _BoundSkillReadTool(FunctionTool):
         event: AstrMessageEvent,
         skill_name: str,
     ) -> SkillInfo | None:
-        if skill_name not in _builder_bound_skill_names(self._context):
+        bound_names = _builder_bound_skill_names(self._context)
+        resolved_name = _resolve_bound_skill_id(skill_name, bound_names)
+        if resolved_name is None:
             return None
         runtime = _runtime_name(self._context, event)
         active = self._skill_manager.list_skills(
@@ -568,7 +605,7 @@ class _BoundSkillReadTool(FunctionTool):
             runtime=runtime,
             show_sandbox_path=False,
         )
-        return next((skill for skill in active if skill.name == skill_name), None)
+        return next((skill for skill in active if skill.name == resolved_name), None)
 
     async def call(self, context: Any, **tool_args: Any) -> Any:
         event = context.context.event
@@ -625,11 +662,13 @@ class _BoundSkillReadTool(FunctionTool):
         if skill_name not in loaded_names:
             loaded_names.append(skill_name)
         event.set_extra("contract_generation_skill_grounding_loaded", loaded_names)
-        if skill_name == DOCUMENT_SPEC_SKILL_NAME:
+        if _skill_id_matches_logical_name(skill.name, DOCUMENT_SPEC_SKILL_NAME):
             event.set_extra("contract_generation_document_spec_loaded", True)
+            event.set_extra("contract_generation_document_spec_skill_id", skill.name)
         logger.info(
-            "Contract generation flow: Builder Skill grounded: skill=%s",
+            "Contract generation flow: Builder Skill grounded: requested=%s resolved=%s",
             skill_name,
+            skill.name,
         )
         return content
 
@@ -1556,7 +1595,7 @@ class ContractGenerationFlow(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract generation flow 0.7.3 initialized: asset_corpus=%s",
+            "Contract generation flow 0.7.4 initialized: asset_corpus=%s",
             self.asset_corpus_slug or "<empty>",
         )
 
@@ -1640,6 +1679,7 @@ class ContractGenerationFlow(Star):
             "contract_generation_document_spec_required": True,
             "contract_generation_document_spec_available": False,
             "contract_generation_document_spec_loaded": False,
+            "contract_generation_document_spec_skill_id": "",
             "contract_generation_skill_grounding_attempted": False,
             "contract_generation_skill_grounding_loaded": [],
             "contract_generation_skill_runtime_injected": False,
@@ -1771,7 +1811,13 @@ class ContractGenerationFlow(Star):
                 continue
             description = " ".join(str(skill.description or "").replace("`", "").split())
             description = description[:1000] or "Read the bound SKILL.md for details."
-            inventory_lines.append(f"- **{name}**: {description}")
+            request_name = _skill_request_name(name)
+            if request_name != name:
+                inventory_lines.append(
+                    f"- **{request_name}** (runtime id `{name}`): {description}"
+                )
+            else:
+                inventory_lines.append(f"- **{name}**: {description}")
         inventory = "\n".join(inventory_lines) or "- (no active bound Skills)"
         return (
             f"{SKILL_RUNTIME_BEGIN}\n"
@@ -1808,14 +1854,30 @@ class ContractGenerationFlow(Star):
     ) -> tuple[str, list[str]]:
         bound_names, skill_infos, missing_skills = self._bound_skill_infos(event)
         runtime_missing: list[str] = []
-        if DOCUMENT_SPEC_SKILL_NAME not in bound_names:
+        document_spec_bindings = [
+            name
+            for name in bound_names
+            if _skill_id_matches_logical_name(name, DOCUMENT_SPEC_SKILL_NAME)
+        ]
+        if not document_spec_bindings:
             runtime_missing.append("builder_document_spec_binding")
-        available = any(
-            skill.name == DOCUMENT_SPEC_SKILL_NAME and skill.local_exists
-            for skill in skill_infos
+        elif len(document_spec_bindings) > 1:
+            runtime_missing.append("builder_document_spec_binding_ambiguous")
+
+        readable_skill_ids = {skill.name for skill in skill_infos if skill.local_exists}
+        resolved_document_spec_id = (
+            document_spec_bindings[0] if len(document_spec_bindings) == 1 else ""
+        )
+        available = bool(
+            resolved_document_spec_id
+            and resolved_document_spec_id in readable_skill_ids
         )
         event.set_extra("contract_generation_document_spec_available", available)
-        if DOCUMENT_SPEC_SKILL_NAME in bound_names and not available:
+        event.set_extra(
+            "contract_generation_document_spec_skill_id",
+            resolved_document_spec_id if available else "",
+        )
+        if len(document_spec_bindings) == 1 and not available:
             runtime_missing.append("builder_document_spec_skill")
         for name in missing_skills:
             marker = f"builder_skill:{name}"
@@ -2000,7 +2062,8 @@ class ContractGenerationFlow(Star):
                 "Contract generation flow: Builder runtime ready: generation_id=%s "
                 "asset_corpus=%s history_corpus=%s policy_protocol=%s fallback_policy=%s "
                 "diagnostics=%s document_spec_required=%s document_spec_available=%s "
-                "document_spec_loaded=%s skill_runtime_injected=%s tools=%s",
+                "document_spec_skill_id=%s document_spec_loaded=%s "
+                "skill_runtime_injected=%s tools=%s",
                 event.get_extra("contract_generation_generation_id", ""),
                 self.asset_corpus_slug,
                 event.get_extra(HISTORY_CORPUS_EVENT_KEY, ""),
@@ -2011,6 +2074,7 @@ class ContractGenerationFlow(Star):
                 ),
                 event.get_extra("contract_generation_document_spec_required", True),
                 event.get_extra("contract_generation_document_spec_available", False),
+                event.get_extra("contract_generation_document_spec_skill_id", ""),
                 event.get_extra("contract_generation_document_spec_loaded", False),
                 event.get_extra("contract_generation_skill_runtime_injected", False),
                 runtime_tools,

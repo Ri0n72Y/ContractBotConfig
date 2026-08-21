@@ -34,7 +34,7 @@ flowchart TB
     Builder[Builder 1.29 / protocol v7]
     SkillMgr[AstrBot SkillManager]
     DocSpec[contract-document-specification]
-    Flow[Generation Flow 0.7.3]
+    Flow[Generation Flow 0.7.4]
     Generator[DOCX Generator + Draft Store]
     Delivery[Download Delivery 0.2.5]
     Guard[WeCom Result Guard]
@@ -71,7 +71,7 @@ contract-document-specification
 
 Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.29 继续使用 generation protocol v7，静态 Tools 为空，绑定 `contract-document-specification`；其 system prompt 固定要求在组织最终 `document_markdown` 前先完成文档规范 Skill grounding。
 
-AstrBot 4.23.2 主 Agent 会自动注入 Persona Skills，但 handoff 子人格的 `SubAgentOrchestrator → HandoffTool → FunctionToolExecutor` 路径不会再次调用主 Agent 的 Skill 装饰流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot 的 `PersonaManager + SkillManager` 读取 Builder 实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，生成不含 Shell 指令的受限 inventory，并只注入本次 handoff input；不修改共享 Handoff Agent 的 system prompt。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
+AstrBot 4.23.2 主 Agent 会自动注入 Persona Skills，但 handoff 子人格的 `SubAgentOrchestrator → HandoffTool → FunctionToolExecutor` 路径不会再次调用主 Agent 的 Skill 装饰流程。Generation Flow 0.7.4 因此在 Builder handoff 边界复用 AstrBot 的 `PersonaManager + SkillManager` 读取 Builder 实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，生成不含 Shell 指令的受限 inventory，并只注入本次 handoff input；不修改共享 Handoff Agent 的 system prompt。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
 
 Skill 正文通过受限 `read_bound_skill(skill_name)` 读取。模型不能传文件路径，该工具也不提供 Shell、Python、通用 HTTP 或任意文件能力。
 

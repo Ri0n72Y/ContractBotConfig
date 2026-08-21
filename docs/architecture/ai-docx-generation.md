@@ -41,7 +41,7 @@ Master 是唯一面向客户角色；Builder 不直接面向客户。Builder Per
 
 AstrBot 主 Agent 的 Persona/Skill 注入由 `_ensure_persona_and_skills` 完成，但 4.23.2 的 `SubAgentOrchestrator` 创建 handoff 子人格时只把 Persona prompt/tools 写入 `Agent`，随后 `FunctionToolExecutor._execute_handoff` 直接使用 `tool.agent.instructions` 和 handoff ToolSet，不会再次执行主 Agent 的 Persona/Skill 装饰流程。
 
-因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.7.3 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
+因此 Builder 即使在 Persona 中绑定了 Skill，子人格本身也不会自动得到 Skill inventory。Generation Flow 0.7.4 在现有 handoff 边界补这一层，但不维护第二套 Skill 配置：
 
 ```text
 Persona.skills

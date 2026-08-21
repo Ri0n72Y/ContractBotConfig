@@ -49,7 +49,7 @@ contract_docassemble_builder       1.29 / generation protocol v7
 
 ## Builder Skill grounding
 
-AstrBot 4.23.2 的主 Agent 会自动处理 Persona Skills，但 handoff 子人格不会再次经过主 Agent 的 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot 原生：
+AstrBot 4.23.2 的主 Agent 会自动处理 Persona Skills，但 handoff 子人格不会再次经过主 Agent 的 Skill 注入流程。Generation Flow 0.7.4 因此在 Builder handoff 边界复用 AstrBot 原生：
 
 ```text
 PersonaManager
@@ -169,3 +169,7 @@ dist/MANIFEST.json
 `release_lib.py` 直接遍历当前 `plugins/` 和 `skills/` 目录，因此 `contract-document-specification` 会自动进入 release。
 
 完整版本见 `VERSIONS.md`；部署绑定见 `docs/deployment/persona-manual-config.md`。
+
+### Skill 版本化运行时 ID
+
+仓库中的 Skill 逻辑名保持 `contract-document-specification`。AstrBot 实际安装/绑定时可能使用版本化运行时 ID，例如 `contract-document-specification-1.0`。Generation Flow 0.7.4 会把唯一绑定的 `contract-document-specification` 或 `contract-document-specification-<数字版本>` 解析为同一个逻辑 Skill；Builder 仍稳定调用 `read_bound_skill(contract-document-specification)`。若同时绑定多个该 Skill 版本则 fail-closed，不自动选择。
