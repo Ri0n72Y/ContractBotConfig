@@ -86,29 +86,6 @@ ASSET_READ_PARAMETERS = {
     "required": ["document_slug"],
 }
 
-READ_LATEST_DRAFT_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "max_chars": {
-            "type": "integer",
-            "description": "首次最多读取字符数，默认 60000。",
-        }
-    },
-}
-
-READ_DRAFT_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "draft_id": {"type": "string", "description": "草稿 ID。"},
-        "char_offset": {"type": "integer", "description": "字符起点。"},
-        "max_chars": {
-            "type": "integer",
-            "description": "本次最多读取字符数，默认 60000。",
-        },
-    },
-    "required": ["draft_id"],
-}
-
 BOUND_SKILL_READ_PARAMETERS = {
     "type": "object",
     "properties": {
@@ -612,12 +589,6 @@ def _resolve_bound_skill_id(requested_name: str, bound_names: list[str]) -> str 
         if _skill_id_matches_logical_name(name, DOCUMENT_SPEC_SKILL_NAME)
     ]
     return candidates[0] if len(candidates) == 1 else None
-
-
-def _skill_request_name(skill_id: str) -> str:
-    if _skill_id_matches_logical_name(skill_id, DOCUMENT_SPEC_SKILL_NAME):
-        return DOCUMENT_SPEC_SKILL_NAME
-    return str(skill_id or "").strip()
 
 
 def _runtime_name(context: Context, event: AstrMessageEvent) -> str:
@@ -1796,7 +1767,7 @@ class ContractGenerationFlow(Star):
     def _bound_skill_infos(
         self,
         event: AstrMessageEvent,
-    ) -> tuple[list[str], list[SkillInfo], list[str]]:
+    ) -> tuple[list[str], list[SkillInfo]]:
         bound_names = _builder_bound_skill_names(self._context)
         runtime = _runtime_name(self._context, event)
         active = self._skill_manager.list_skills(
@@ -1810,18 +1781,13 @@ class ContractGenerationFlow(Star):
             for name in bound_names
             if name in active_by_name and active_by_name[name].local_exists
         ]
-        missing = [
-            name
-            for name in bound_names
-            if name not in active_by_name or not active_by_name[name].local_exists
-        ]
-        return bound_names, selected, missing
+        return bound_names, selected
 
     def _prepare_builder_skill_state(
         self,
         event: AstrMessageEvent,
     ) -> list[str]:
-        bound_names, skill_infos, missing_skills = self._bound_skill_infos(event)
+        bound_names, skill_infos = self._bound_skill_infos(event)
         runtime_missing: list[str] = []
         document_spec_bindings = [
             name for name in bound_names
@@ -1838,10 +1804,6 @@ class ContractGenerationFlow(Star):
         event.set_extra("contract_generation_document_spec_skill_id", resolved_id if available else "")
         if len(document_spec_bindings) == 1 and not available:
             runtime_missing.append("builder_document_spec_skill")
-        for name in missing_skills:
-            marker = f"builder_skill:{name}"
-            if marker not in runtime_missing:
-                runtime_missing.append(marker)
         return runtime_missing
 
     def _build_business_tools(self) -> list[FunctionTool]:
