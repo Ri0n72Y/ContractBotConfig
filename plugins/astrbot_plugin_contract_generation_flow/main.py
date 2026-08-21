@@ -436,6 +436,7 @@ async def _invoke_registered_tool(
             "commit_unknown": side_effecting,
         }
 
+
 def _scalar(value: str) -> str:
     text = str(value or "").strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
@@ -735,8 +736,6 @@ class _BoundSkillReadTool(FunctionTool):
             skill.name,
         )
         return content
-
-
 
 
 class _BoundCorpusTool(FunctionTool):
@@ -1928,32 +1927,70 @@ class ContractGenerationFlow(Star):
 
     @filter.llm_tool(name="read_bound_skill")
     async def read_bound_skill(self, event: AstrMessageEvent, skill_name: str) -> Any:
-        """读取 Builder 当前实际绑定的指定 Skill。"""
+        """读取 Builder 当前实际绑定的指定 Skill。
+
+        Args:
+            skill_name(string): 要读取的、已绑定到 Builder Persona 的 Skill 逻辑名；正式合同使用 contract-document-specification。
+        """
         return await self._call_business_tool(event, "read_bound_skill", skill_name=skill_name)
 
     @filter.llm_tool(name="find_generation_assets")
     async def find_generation_assets(self, event: AstrMessageEvent, query: str, limit: int = SEARCH_DEFAULT_LIMIT, granularity: str = "passage") -> Any:
-        """在受限生成资产 Corpus 中检索合同模板、参数或规则。"""
+        """在受限生成资产 Corpus 中检索合同模板、参数或规则。
+
+        Args:
+            query(string): 检索语句；指定模板模式必须使用 handoff 的 required_template_query 原文。
+            limit(int): 最多返回结果数量，默认 3。
+            granularity(string): 检索粒度，使用 passage、block 或 both。
+        """
         return await self._call_business_tool(event, "find_generation_assets", query=query, limit=limit, granularity=granularity)
 
     @filter.llm_tool(name="read_generation_asset")
     async def read_generation_asset(self, event: AstrMessageEvent, document_slug: str, char_offset: int = 0, max_chars: int = TEMPLATE_READ_DEFAULT_CHARS, use_as_template: bool = False) -> Any:
-        """读取本轮生成资产候选；模板绑定必须来自本轮搜索证据。"""
+        """读取本轮生成资产候选；模板绑定必须来自本轮搜索证据。
+
+        Args:
+            document_slug(string): 本轮生成资产搜索返回的文档 slug。
+            char_offset(int): 字符起点，首次读取使用 0。
+            max_chars(int): 本次最多读取字符数，默认 80000。
+            use_as_template(bool): 已决定把该资产作为本轮专用合同模板时才设为 true。
+        """
         return await self._call_business_tool(event, "read_generation_asset", document_slug=document_slug, char_offset=char_offset, max_chars=max_chars, use_as_template=use_as_template)
 
     @filter.llm_tool(name="find_similar_contracts")
     async def find_similar_contracts(self, event: AstrMessageEvent, query: str, limit: int = SEARCH_DEFAULT_LIMIT, granularity: str = "passage") -> Any:
-        """在当前 handoff 绑定的历史合同 Corpus 中检索相似合同。"""
+        """在当前 handoff 绑定的历史合同 Corpus 中检索相似合同。
+
+        Args:
+            query(string): 与当前交易/合同目标相关的检索语句。
+            limit(int): 最多返回结果数量，默认 3。
+            granularity(string): 检索粒度，使用 passage、block 或 both。
+        """
         return await self._call_business_tool(event, "find_similar_contracts", query=query, limit=limit, granularity=granularity)
 
     @filter.llm_tool(name="read_reference_contract")
     async def read_reference_contract(self, event: AstrMessageEvent, document_slug: str, char_offset: int = 0, max_chars: int = REFERENCE_READ_DEFAULT_CHARS) -> Any:
-        """读取本轮历史合同候选正文。"""
+        """读取本轮历史合同候选正文。
+
+        Args:
+            document_slug(string): 本轮历史检索返回的文档 slug。
+            char_offset(int): 字符起点，首次读取使用 0。
+            max_chars(int): 本次最多读取字符数，默认 60000。
+        """
         return await self._call_business_tool(event, "read_reference_contract", document_slug=document_slug, char_offset=char_offset, max_chars=max_chars)
 
     @filter.llm_tool(name="generate_and_publish_contract")
     async def generate_and_publish_contract(self, event: AstrMessageEvent, document_title: str, document_markdown: str, generation_basis: str, output_filename: str = "", render_profile: str = "standard_contract", source_draft_id: str = "") -> Any:
-        """一次完成 DOCX 生成、HTTPS 发布和成功草稿持久化。"""
+        """一次完成 DOCX 生成、HTTPS 发布和成功草稿持久化。
+
+        Args:
+            document_title(string): 合同标题。
+            document_markdown(string): 已按文档规范整理完成的完整最终合同 Markdown。
+            generation_basis(string): 本轮实际主要依据：specific_template、history_reference、ai_scaffold 或 source_draft。
+            output_filename(string): 可选 DOCX 文件名。
+            render_profile(string): 排版 profile，通常使用 standard_contract。
+            source_draft_id(string): 修改上一版时传入已读取的 draft_id；不替代 generation_basis。
+        """
         return await self._call_business_tool(event, "generate_and_publish_contract", document_title=document_title, document_markdown=document_markdown, generation_basis=generation_basis, output_filename=output_filename, render_profile=render_profile, source_draft_id=source_draft_id)
 
     async def _send_progress_once(self, event: AstrMessageEvent) -> None:
