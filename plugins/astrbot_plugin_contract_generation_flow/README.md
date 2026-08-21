@@ -4,23 +4,19 @@
 
 ## Builder Skill 运行时
 
-AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.8.0 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
+当前运行基线只考虑 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 绑定与 Skill 绑定由 AstrBot 管理；Generation Flow 0.8.0 不覆盖 `agent.tools`、不修改共享 `agent.instructions`，也不重写 `transfer_to_docassemble_builder.input`。
 
-正式 Builder 仍只暴露受控合同生成工具，并额外提供：
+正式 Builder 静态绑定 8 个受限工具，其中 `read_latest_contract_draft` / `read_contract_draft` 直接使用 DOCX Generator 已注册工具；Generation Flow 自己注册 `read_bound_skill`、四个受限知识工具以及唯一写入口 `generate_and_publish_contract`。
+
+AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此保留：
 
 ```text
 read_bound_skill(skill_name)
 ```
 
-该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、AstrBot `SkillManager` 判定为 active、且当前本地受限 reader 可直接读取的 Skill 名称；文件路径由 `SkillManager` 解析，模型不能提供任意本地路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。
+该工具只接受当前 `contract_docassemble_builder` Persona 明确绑定、AstrBot `SkillManager` 判定为 active、且当前本地受限 reader 可直接读取的 Skill 名称；模型不能提供任意文件路径。它不开放 Shell、Python、通用 HTTP、FileRead/FileWrite/FileEdit、Grep 或 raw MCP 绕过能力。同一 handoff 对已经成功 grounding 的 `contract-document-specification` 再次调用时返回 `already_grounded`。
 
-当前正式生成要求：
-
-```text
-contract-document-specification
-```
-
-必须已绑定、active、当前受限 reader 可直接读取，并在本轮通过 `read_bound_skill` 完成 grounding。Builder 1.30 的 system prompt 固定要求在开始组织最终 `document_markdown` 前先完成这一步；request-local handoff input 只携带 Skill inventory 和业务任务。未读取时调用 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED，要求先读取 Skill；不会静默跳过格式规范后继续生成。
+正式生成要求 `contract-document-specification` 已绑定、active、可读，并在本轮通过 `read_bound_skill` 完成 grounding。Builder 1.30 的 system prompt 固定要求在开始组织最终 `document_markdown` 前先完成这一步。Generation Flow 只做状态校验，不向 handoff input 注入动态 Skill inventory；未 grounding 时 `generate_and_publish_contract` 会在任何 DOCX/发布写操作之前返回 retry-safe BLOCKED。
 
 运行日志会显示：
 
@@ -31,13 +27,7 @@ document_spec_loaded=false|true
 tools=[read_bound_skill, ...]
 ```
 
-其中 `document_spec_available=true` 表示该 Skill 确实可由当前受限 reader grounding，而不只是出现在 SkillManager 列表中。
-
-成功读取后会记录：
-
-```text
-Builder Skill grounded: skill=contract-document-specification
-```
+其中 `document_spec_available=true` 表示该 Skill 确实可由当前受限 reader grounding，而不只是出现在 SkillManager 列表中。成功读取后会记录 Builder Skill grounded 日志。
 
 ## 正常 fallback 生成
 
@@ -151,7 +141,7 @@ contract_generation_selected_template_search_match_verified=true
 
 ## 写操作 timeout / cancellation
 
-Flow 0.7.3 区分只读工具与写工具。
+Flow 0.8.0 区分只读工具与写工具。
 
 ```text
 read/search executor exception
@@ -212,7 +202,7 @@ CallToolResult
 → Builder
 ```
 
-详细异常只写服务日志；成功 JSON 不使用 `\uXXXX` 形式重新塞回模型上下文。
+Generation Flow 内部只组合已知本地插件 handler 与 AstrBot 4.27.x 的 `MCPTool`；不再借用 Agent `FunctionToolExecutor` 作为第二套子人格运行时。详细异常只写服务日志；成功 JSON 不使用 `\uXXXX` 形式重新塞回模型上下文。
 
 ## 修改上一版
 
@@ -238,7 +228,6 @@ contract_generation_document_spec_available
 contract_generation_document_spec_loaded
 contract_generation_skill_grounding_attempted
 contract_generation_skill_grounding_loaded
-contract_generation_skill_runtime_injected
 contract_generation_skill_runtime_error
 contract_generation_asset_search_attempted
 contract_generation_asset_search_verified
@@ -268,7 +257,7 @@ generation_progress_text = 正在匹配合同模板和历史参考合同，并�
 
 ## Versioned Skill ID resolution
 
-`contract-document-specification` 是稳定逻辑名。AstrBot 安装包可能把实际绑定 ID 暴露为 `contract-document-specification-1.0`。Flow 0.7.4 只接受逻辑名本身或严格的纯数字版本后缀，并要求该 family 在 Builder Persona 中唯一绑定；`read_bound_skill(contract-document-specification)` 会解析到唯一实际 ID。多个版本同时绑定时 fail-closed，不自动挑选。成功解析/grounding 的实际 ID 记录在 `contract_generation_document_spec_skill_id`。
+`contract-document-specification` 是稳定逻辑名。AstrBot 安装包可能把实际绑定 ID 暴露为 `contract-document-specification-1.0`。Flow 0.8.0 只接受逻辑名本身或严格的纯数字版本后缀，并要求该 family 在 Builder Persona 中唯一绑定；`read_bound_skill(contract-document-specification)` 会解析到唯一实际 ID。多个版本同时绑定时 fail-closed，不自动挑选。成功解析/grounding 的实际 ID 记录在 `contract_generation_document_spec_skill_id`。
 
 ## Runtime ownership
 
