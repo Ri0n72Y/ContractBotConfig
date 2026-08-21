@@ -14,7 +14,7 @@ from typing import Any
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context
 import astrbot.api.message_components as Comp
 
 try:
@@ -131,11 +131,11 @@ ALIASES_END = (
 )
 
 
-class ContractFileRouter(Star):
+class ContractFileRouter:
     """Contract file staging and deterministic conversation state control."""
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
-        super().__init__(context, config)
+        self.context = context
         config = config or {}
         self.config = config
         self.allowed_platforms = set(config.get("allowed_platforms", ["wecom"]))
@@ -184,7 +184,7 @@ class ContractFileRouter(Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.7 initialized: data_dir=%s",
+            "Contract file router 0.5.8 initialized: data_dir=%s",
             self.data_dir,
         )
 
