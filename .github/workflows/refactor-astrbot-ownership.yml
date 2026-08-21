@@ -58,6 +58,10 @@ jobs:
           if validator_old not in text:
               raise SystemExit('validator newline template not found')
           text = text.replace(validator_old, validator_new, 1)
+          duplicate_class = f'    "class _BoundCorpusTool(FunctionTool):{bsn}",'
+          if text.count(duplicate_class) != 1:
+              raise SystemExit('BoundCorpusTool splice target not unique')
+          text = text.replace(duplicate_class, '    "",', 1)
           path.write_text(text, encoding='utf-8')
           PY
       - name: Apply ownership refactor
