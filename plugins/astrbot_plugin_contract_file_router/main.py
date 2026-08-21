@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star
+
 from .document_text import extract_staged_contract_text
 from .runtime import ContractFileRouter as RuntimeContractFileRouter
 
@@ -13,13 +15,16 @@ _STAGED_TEXT_EVENT_KEY = "contract_staged_document_text"
 _STAGED_TEXT_ATTACHED_EVENT_KEY = "contract_staged_document_text_attached"
 
 
+class Main(Star, RuntimeContractFileRouter):
+    """Only AstrBot Star entrypoint; runtime.py is a plain implementation base."""
 
-
-class Main(RuntimeContractFileRouter):
-    """AstrBot Star entrypoint with per-session Router serialization."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        context: Context,
+        config: AstrBotConfig | None = None,
+    ) -> None:
+        Star.__init__(self, context, config)
+        RuntimeContractFileRouter.__init__(self, context, config)
         self._intake_locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
