@@ -3,7 +3,7 @@
 ## 插件
 
 - astrbot_plugin_contract_doc_preconverter: 0.1.3
-- astrbot_plugin_contract_docx_generator: 0.5.1
+- astrbot_plugin_contract_docx_generator: 0.5.2
 - astrbot_plugin_contract_download_delivery: 0.2.5
 - astrbot_plugin_contract_file_router: 0.5.8
 - astrbot_plugin_contract_generation_flow: 0.8.0
