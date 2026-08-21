@@ -4,6 +4,6 @@ desc: 将 Builder 的完整合同 Markdown 一次生成可编辑 DOCX，按 gene
 version: 0.5.2
 author: local
 repo: ""
-astrbot_version: ">=4.23.2,<5"
+astrbot_version: ">=4.27.0,<5"
 support_platforms:
   - wecom
