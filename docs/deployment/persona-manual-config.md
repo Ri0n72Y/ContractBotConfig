@@ -69,7 +69,7 @@ contract-document-specification
 
 `contract-document-specification` 只负责正式合同的文档表达规范：封面、标题层级、编号、表格、金额/日期表达、留白、签署页、附件和分页。它不提供固定合同条款，不替代模板/历史检索，也不改变 generation basis。
 
-AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.7.3 会在 handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 已绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，把不含 Shell/任意文件读取指令的受限 inventory 注入本次 handoff input，并提供受限运行时工具：
+AstrBot 4.23.2 的 handoff 子人格不会自动执行主 Agent 的 Persona Skill 注入流程。Generation Flow 0.7.4 会在 handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取 Builder 已绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，把不含 Shell/任意文件读取指令的受限 inventory 注入本次 handoff input，并提供受限运行时工具：
 
 ```text
 read_bound_skill
@@ -101,7 +101,7 @@ astrbot_plugin_contract_doc_preconverter    0.1.3
 astrbot_plugin_contract_file_router         0.5.7
 astrbot_plugin_contract_handoff_policy      0.5.3
 astrbot_plugin_opencontracts_gateway        0.6.2
-astrbot_plugin_contract_generation_flow     0.7.3
+astrbot_plugin_contract_generation_flow     0.7.4
 astrbot_plugin_contract_docx_generator      0.5.1
 astrbot_plugin_contract_download_delivery  0.2.5
 astrbot_plugin_wecom_final_result_guard     0.3.5
@@ -251,3 +251,7 @@ personas/*.md  → 按文件头更新 Prompt、Tools、Skills
 ```
 
 release 中不包含真实合同模板、历史合同或企业业务数据。
+
+## Skill 运行时 ID 兼容
+
+`personas/bindings.json` 和 Builder system prompt 使用稳定逻辑名 `contract-document-specification`。AstrBot WebUI 中实际绑定项如果显示为 `contract-document-specification-1.0`（或后续纯数字版本后缀），无需把 Persona prompt 改成版本号；Generation Flow 0.7.4 会解析唯一版本化绑定，并在日志中记录 `document_spec_skill_id=<实际运行时 ID>`。如果同时绑定多个版本，运行时会以 `builder_document_spec_binding_ambiguous` 阻断，必须先在 WebUI 只保留一个版本。

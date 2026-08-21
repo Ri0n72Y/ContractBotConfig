@@ -4,7 +4,7 @@
 
 ## Builder Skill 运行时
 
-AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.3 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
+AstrBot 4.23.2 的主 Agent 会自动把 Persona 绑定的 Skills 注入 system prompt，但 `SubAgentOrchestrator` 创建 handoff 子人格时只复制 Persona prompt/tools，不会自动执行同一套 Skill 注入流程。Generation Flow 0.7.4 因此在 Builder handoff 边界复用 AstrBot `PersonaManager/SkillManager` 读取实际绑定、active 且当前受限 reader 可直接读取的 Skill 元数据，构造不含 Shell/文件路径指令的受限 inventory，并只注入本次 handoff input，而不是修改共享 Handoff Agent、复制 Skill 内容或维护第二套 Skill 配置。仅存在于 sandbox、当前本地受限 reader 无法读取的 Skill 会进入 runtime missing，不会被标记为 available。
 
 正式 Builder 仍只暴露受控合同生成工具，并额外提供：
 
@@ -265,3 +265,7 @@ generation_asset_corpus_slug = contract-templates
 generation_progress_enabled = true
 generation_progress_text = 正在匹配合同模板和历史参考合同，并生成可编辑 DOCX。
 ```
+
+## Versioned Skill ID resolution
+
+`contract-document-specification` 是稳定逻辑名。AstrBot 安装包可能把实际绑定 ID 暴露为 `contract-document-specification-1.0`。Flow 0.7.4 只接受逻辑名本身或严格的纯数字版本后缀，并要求该 family 在 Builder Persona 中唯一绑定；`read_bound_skill(contract-document-specification)` 会解析到唯一实际 ID。多个版本同时绑定时 fail-closed，不自动挑选。成功解析/grounding 的实际 ID 记录在 `contract_generation_document_spec_skill_id`。

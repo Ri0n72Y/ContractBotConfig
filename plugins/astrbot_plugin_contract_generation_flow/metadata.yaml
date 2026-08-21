@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_generation_flow
 display_name: 合同生成执行与进度控制
 desc: 为 Builder 提供模板/历史检索、受限 Skill grounding、无模板 AI fallback、strict 模板身份解析、上一版草稿读取和一体化 DOCX 生成发布工具；普通模板绑定建立 search→selection 证据链，写操作超时/取消按 commit-unknown fail-closed，并区分 READY/PARTIAL。
-version: 0.7.3
+version: 0.7.4
 author: local
 repo: ""
 astrbot_version: ">=4.23.2,<5"
