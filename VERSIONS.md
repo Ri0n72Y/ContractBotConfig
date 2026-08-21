@@ -7,7 +7,7 @@
 - astrbot_plugin_contract_download_delivery: 0.2.5
 - astrbot_plugin_contract_file_router: 0.5.8
 - astrbot_plugin_contract_generation_flow: 0.8.0
-- astrbot_plugin_contract_handoff_policy: 0.5.3
+- astrbot_plugin_contract_handoff_policy: 0.5.4
 - astrbot_plugin_opencontracts_gateway: 0.6.2
 - astrbot_plugin_wecom_final_result_guard: 0.3.5
 
@@ -22,6 +22,8 @@
 OpenContracts 读取/上传/核验规则由 Operator Persona、Handoff Policy、OpenContracts Gateway 和 Result Guard 共同承担。生成流程由 Builder Persona 与 Generation Flow 承担；`contract-document-specification` 只负责正式合同的文档结构与格式规范，不提供固定合同条款或模板替换逻辑。
 
 Generation Flow 0.8.0 以 AstrBot 4.27.x+ 为运行基线：Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Flow 不覆盖 Agent ToolSet、不修改 system prompt、不重写 handoff input。由于 handoff 子人格当前不会自动展开 Persona Skill 正文，Flow 仅保留受限 `read_bound_skill` 作为 grounding bridge，并在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。
+
+Handoff Policy 0.5.4 在不接管 Agent runtime 的前提下，确定性保持 Builder 与 Operator handoff 的 `background_task=false`，确保合同结果沿当前企业微信事件同步返回，而不进入 AstrBot 的后台 handoff / 二次唤醒投递路径。
 
 ## 人格
 
