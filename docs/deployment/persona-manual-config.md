@@ -20,9 +20,9 @@ contract-direct-analysis
 contract-conversation-control
 ```
 
-Master 是唯一面向客户角色。企业微信中的当前合同分析默认简洁：先给总体判断，只列 3～6 个最高优先级风险，每点包含问题、位置和建议；自由问答只回答当前问题。当前上传合同正文优先使用 Router 注入的 `contract_task_context` / `staged_contract_text`，不要通过 Shell、Grep、Python、通用 HTTP 或通用文件搜索发现当前合同或 Skill。
+Master 是唯一面向客户角色。企业微信中的合同分析默认简洁：先给总体判断，只列 3～6 个最高优先级风险，每点包含问题、位置和建议；自由问答只回答当前问题。本轮 Router 注入的合同正文优先使用 `contract_task_context` / `staged_contract_text`，不要通过 Shell、Grep、Python、通用 HTTP 或通用文件搜索发现本轮合同或 Skill。
 
-完成当前文件的一轮分析或问答后，应提示用户可以继续处理当前合同；如已完成，回复“结束”。完整分析报告下载和独立网页版专业分析入口属于后续能力。
+完成本轮合同分析或问答后，可以简短询问是否还有其他需求；如已完成，用户可回复“结束”。Router 不维护持久化的 current-file 指针，后续用户指的是哪份合同由助手结合会话上下文判断。完整分析报告下载和独立网页版专业分析入口属于后续能力。
 
 正式生成 handoff 必须显式发送：
 
@@ -107,24 +107,29 @@ contract-document-specification  1.0
 
 `contract-direct-analysis` 只要求企微默认输出重点摘要，不主动产生长篇完整分析。
 
-## File Router 0.5.9 文件生命周期
+## File Router 0.5.9 文件与任务生命周期
 
-任务完成与文件删除分离：
+Router 不再显式维护“current file”。`pending` 只表示尚未结束的文件任务：等待选择、运行中、BLOCKED 或等待重复上传确认。
 
 ```text
 收到文件
-→ 文件成为当前合同
-→ 分析 / 问答 / 上传
-→ 任务完成后文件继续保留，可继续追问
+→ 暂存并记录 MD5 / SHA-256
+→ 本轮分析 / 问答 / 上传
+→ 任务完成后清除 pending/task 状态
+→ 暂存文件继续留在磁盘
 ```
 
 行为规则：
 
-- “结束/取消”只结束当前流程，不物理删除文件；
-- 上传下一份文件且没有运行中任务时，新文件成为当前文件，旧文件继续留存；
-- 只有明确“删除文件 / 删除当前文件 / 删除这份合同文件”才物理删除当前文件；
-- 当前不再使用 pending TTL / staging TTL 自动物理删除合同文件；
+- 普通任务完成后清除任务状态，不物理删除已接收文件；
+- “结束/取消”只结束相关任务状态，不物理删除文件；
+- 不提供用户侧“删除当前文件”入口，也不提示用户清理文件；
+- 后续用户提到哪份合同，由助手根据会话上下文判断，不由 Router 维护 current-file 指针；
+- pending TTL 只清理陈旧任务状态，不删除物理文件；
+- staging TTL 不再由业务流程用于物理删除；
 - 超过一个月未被引用文件的月度清理由后续维护任务实现。
+
+临时文件区分使用 MD5。`source_files[].md5` 用作暂存身份和短时重复判定，`source_files[].sha256` 继续保留给下游完整性/上传链使用。暂存文件名包含 MD5 前缀。
 
 ## Skill runtime 验证
 
@@ -144,6 +149,16 @@ tools=['read_bound_skill', ...]
 ```
 
 随后出现 Builder Skill grounded 日志，之后才允许 `generate_and_publish_contract` 开始写入。
+
+## Download Delivery
+
+`allowed_source_dirs` 只保留当前正式 Generator：
+
+```text
+data/plugins_data/astrbot_plugin_contract_docx_generator/output
+```
+
+不要再配置旧 Gateway output 目录。
 
 ## Generation policy
 
@@ -212,6 +227,8 @@ contract-opencontracts
 contract-result-verification
 ```
 
+同时从 Persona WebUI 解绑这些 Skill。旧插件确认不再需要其输出文件后，可清理对应配置和 `data/plugins_data/astrbot_plugin_docassemble_gateway/`。
+
 ## 建议部署顺序
 
 1. 确认 AstrBot 为 4.27.x 或更高版本。
@@ -219,8 +236,9 @@ contract-result-verification
 3. 升级 `contract-direct-analysis` 到 1.15。
 4. 导入/更新 Master 1.27，并确认正式 Tool / Skill 绑定与 `personas/bindings.json` 一致。
 5. 保持 Builder 1.30、Operator 1.18 及其他正式插件版本与上方清单一致。
-6. 重新测试：上传合同 → 快速分析 → 连续追问 → 回复“结束”；确认任务结束前文件一直可继续使用。
-7. 再执行一次正式合同生成 E2E，确认 Builder Skill grounding、DOCX、HTTPS 和 Draft finalize 正常。
+6. 重新测试：上传合同 → 快速分析/问答 → 结束；确认任务状态清理后暂存文件仍存在，且下一次文件上传不会依赖旧 current-file 状态。
+7. 验证同一文件短时重复投递按 MD5 去重，同时 `source_files[].sha256` 仍存在。
+8. 再执行一次正式合同生成 E2E，确认 Builder Skill grounding、DOCX、HTTPS 和 Draft finalize 正常。
 
 ## 发布产物
 
