@@ -46,7 +46,7 @@ class Main(Star, RuntimeContractFileRouter):
 
     @staticmethod
     def _md5(path: Path) -> str:
-        digest = hashlib.md5()
+        digest = hashlib.md5(usedforsecurity=False)
         with path.open("rb") as handle:
             for block in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(block)
@@ -102,7 +102,7 @@ class Main(Star, RuntimeContractFileRouter):
                     )
                 )
             )
-        digest = hashlib.md5()
+        digest = hashlib.md5(usedforsecurity=False)
         digest.update(f"{session}:{';'.join(sorted(parts))}".encode("utf-8"))
         return digest.hexdigest()
 
