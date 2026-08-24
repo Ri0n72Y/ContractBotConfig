@@ -8,7 +8,7 @@
 
 ```text
 astrbot_plugin_contract_doc_preconverter   .doc → PDF 预转换
-astrbot_plugin_contract_file_router        文件暂存、正文快照、会话状态
+astrbot_plugin_contract_file_router        文件暂存、正文快照、会话状态与跨轮文件保留
 astrbot_plugin_contract_handoff_policy     OpenContracts Corpus 绑定与 Operator handoff 规范化
 astrbot_plugin_opencontracts_gateway       WorkerKey 合同写入
 astrbot_plugin_contract_generation_flow    Builder 合同领域工具、Skill grounding、生成状态与证据
@@ -34,7 +34,7 @@ OpenContracts 操作和状态核验已收敛到 Operator Persona + Handoff/Gatew
 ### Personas
 
 ```text
-contract_master_orchestrator       1.26
+contract_master_orchestrator       1.27
 contract_opencontracts_operator    1.18
 contract_docassemble_builder       1.30 / generation protocol v7
 ```
@@ -46,6 +46,24 @@ contract_docassemble_builder       1.30 / generation protocol v7
 - Master：Tools=`transfer_to_opencontracts_operator`,`transfer_to_docassemble_builder`；Skills=`contract-direct-analysis`,`contract-conversation-control`。
 - Operator：5 个 OpenContracts/Gateway Tools；Skills 为空。
 - Builder：Tools=`read_bound_skill`,`find_generation_assets`,`read_generation_asset`,`find_similar_contracts`,`read_reference_contract`,`read_latest_contract_draft`,`read_contract_draft`,`generate_and_publish_contract`；Skills=`contract-document-specification`。这些绑定由 AstrBot Persona/WebUI 管理。
+
+## 当前合同分析与文件保留
+
+Master 1.27 + `contract-direct-analysis` 1.15 默认把企业微信合同快速分析压缩为最高优先级的 4–6 个风险（最多 8 个）。每个风险直接给风险点、原文位置和修改建议；不机械遍历所有条款，不重复多套总结结构。自由问答只回答当前问题。
+
+当前请求没有 Router 注入的合同正文时，Master 不使用 Shell、Python、通用文件读取或目录扫描去寻找附件/Skill 文件；用户需要先上传合同或等待文件事件进入。
+
+File Router 0.5.9 使用持久文件会话语义：
+
+```text
+本轮分析/问答/上传完成 → 当前文件继续保留
+取消                    → 只取消当前操作
+结束                    → 结束当前文件会话，文件仍保留
+删除文件                → 物理删除当前暂存文件
+上传下一份文件           → 切换当前文件，上一份退出当前上下文但仍保留
+```
+
+实时 Router 不再使用普通 pending/staging TTL 删除合同文件。长期未引用文件的定期清理由独立维护任务处理。
 
 ## Builder Skill grounding
 
@@ -169,4 +187,4 @@ dist/MANIFEST.json
 
 ### AstrBot ownership boundary
 
-Generation Flow 0.8.0 不再作为第二套 Agent runtime：不覆盖 Builder ToolSet、不改 system prompt、不包装 handoff input。Builder 的 8 个允许工具必须在 AstrBot Persona/WebUI 中静态绑定；Flow 只负责合同生成证据、状态机和写安全门槛。File Router 0.5.8 同时移除了对 AstrBot Star 全局注册表的直接修改。
+Generation Flow 0.8.0 不再作为第二套 Agent runtime：不覆盖 Builder ToolSet、不改 system prompt、不包装 handoff input。Builder 的 8 个允许工具必须在 AstrBot Persona/WebUI 中静态绑定；Flow 只负责合同生成证据、状态机和写安全门槛。File Router 0.5.9 继续保持单一 AstrBot `Star` 入口，不直接修改 AstrBot Star 全局注册表。
