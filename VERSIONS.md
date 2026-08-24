@@ -21,9 +21,9 @@
 
 OpenContracts 读取/上传/核验规则由 Operator Persona、Handoff Policy、OpenContracts Gateway 和 Result Guard 共同承担。生成流程由 Builder Persona 与 Generation Flow 承担；`contract-document-specification` 只负责正式合同的文档结构与格式规范，不提供固定合同条款或模板替换逻辑。
 
-企业微信中的直接合同分析默认保持简洁：优先给总体判断和 3～6 个最高优先级风险，不逐条复述整份合同。当前上传合同正文优先使用 Router 注入的 `contract_task_context` / `staged_contract_text`，不通过 Shell、Grep、Python 或通用文件搜索发现当前合同或 Skill。
+企业微信中的直接合同分析默认保持简洁：优先给总体判断和 3～6 个最高优先级风险，不逐条复述整份合同。本轮上传合同正文优先使用 Router 注入的 `contract_task_context` / `staged_contract_text`，不通过 Shell、Grep、Python 或通用文件搜索发现本轮合同或 Skill。
 
-File Router 0.5.9 将“任务结束”和“文件删除”分离：分析、问答或上传任务完成后保留当前文件并继续接受追问；回复“结束/取消”只结束当前流程，不物理删除暂存文件；上传下一份文件时切换当前文件但保留上一份文件；只有明确“删除当前文件”等删除指令才物理删除。长期未使用文件的月度清理由独立维护任务后续实现。
+File Router 0.5.9 不再维护持久化 current-file 指针；`pending` 只表示未完成的文件任务。普通任务完成以及“结束/取消”会清除相关任务状态，但业务流程不物理删除已接收暂存文件，也不提供用户侧删除入口。临时文件以 MD5 作为身份和短时重复判定依据，SHA-256 继续保留给下游完整性/上传链。长期未使用文件的月度清理由独立维护任务后续实现。
 
 Generation Flow 0.8.0 以 AstrBot 4.27.x+ 为运行基线：Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Flow 不覆盖 Agent ToolSet、不修改 system prompt、不重写 handoff input。由于 handoff 子人格当前不会自动展开 Persona Skill 正文，Flow 仅保留受限 `read_bound_skill` 作为 grounding bridge，并在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。
 
