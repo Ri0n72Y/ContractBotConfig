@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -13,6 +14,15 @@ from .runtime import ContractFileRouter as RuntimeContractFileRouter
 
 _STAGED_TEXT_EVENT_KEY = "contract_staged_document_text"
 _STAGED_TEXT_ATTACHED_EVENT_KEY = "contract_staged_document_text_attached"
+_DELETE_FILE_ALIASES = frozenset(
+    {
+        "删除文件",
+        "删除当前文件",
+        "删除这份文件",
+        "删除合同文件",
+        "清理当前文件",
+    }
+)
 
 
 class Main(Star, RuntimeContractFileRouter):
@@ -29,7 +39,7 @@ class Main(Star, RuntimeContractFileRouter):
 
     async def initialize(self) -> None:
         logger.info(
-            "Contract file router 0.5.8 initialized: data_dir=%s",
+            "Contract file router 0.5.9 initialized: data_dir=%s",
             self.data_dir,
         )
 
@@ -40,6 +50,120 @@ class Main(Star, RuntimeContractFileRouter):
             lock = asyncio.Lock()
             self._intake_locks[session] = lock
         return lock
+
+    def _cleanup(self) -> None:
+        """Prune transient registries without deleting retained contract files."""
+        now_mono = time.monotonic()
+        self._seen_messages = {
+            key: value
+            for key, value in self._seen_messages.items()
+            if now_mono - value <= self.dedup_ttl_seconds
+        }
+        self._recent_file_fingerprints = {
+            key: value
+            for key, value in self._recent_file_fingerprints.items()
+            if now_mono - value <= self.dedup_ttl_seconds
+        }
+        now = time.time()
+        cancelled = self._load_cancelled_tasks()
+        filtered = {
+            key: value
+            for key, value in cancelled.items()
+            if now - value <= self.cancelled_task_ttl_seconds
+        }
+        if filtered != cancelled:
+            self._save_cancelled_tasks(filtered)
+
+    @staticmethod
+    def _clear_dispatch_fields(record: dict[str, Any]) -> None:
+        for key in (
+            "dispatch_task_id",
+            "dispatch_started_at",
+            "dispatch_operation",
+            "blocked_resume_input",
+        ):
+            record.pop(key, None)
+
+    def _reset_record_for_followup(self, record: dict[str, Any]) -> None:
+        record["state"] = "awaiting_action"
+        self._clear_dispatch_fields(record)
+        for key in (
+            "blocked_reason",
+            "blocked_operation",
+            "blocked_at",
+            "duplicate_confirmation_id",
+            "duplicate_confirmed_at",
+        ):
+            record.pop(key, None)
+        record["updated_at"] = time.time()
+
+    def _end_file_session(self, session: str) -> None:
+        active = self._active_tasks.pop(session, None)
+        if isinstance(active, dict):
+            self._mark_task_cancelled(str(active.get("task_id") or ""))
+        record = self.pending.get(session)
+        if isinstance(record, dict):
+            record["state"] = "ended"
+            self._clear_dispatch_fields(record)
+            record["updated_at"] = time.time()
+            self._save_state()
+
+    def _cancel_operation_preserve_file(self, session: str) -> None:
+        active = self._active_tasks.pop(session, None)
+        if isinstance(active, dict):
+            self._mark_task_cancelled(str(active.get("task_id") or ""))
+        record = self.pending.get(session)
+        if isinstance(record, dict):
+            self._reset_record_for_followup(record)
+            self._save_state()
+
+    def _replace_current_file_context(self, session: str) -> None:
+        active = self._active_tasks.pop(session, None)
+        if isinstance(active, dict):
+            self._mark_task_cancelled(str(active.get("task_id") or ""))
+        old_record = self.pending.pop(session, None)
+        if isinstance(old_record, dict):
+            old_fingerprint = str(old_record.get("file_fingerprint") or "")
+            if old_fingerprint:
+                self._recent_file_fingerprints.pop(old_fingerprint, None)
+        if old_record is not None:
+            self._save_state()
+            logger.info(
+                "Contract file router: switched to a newly uploaded file; "
+                "previous staged file retained for maintenance cleanup."
+            )
+
+    def _build_task_context(
+        self,
+        event: AstrMessageEvent,
+        action: dict[str, Any],
+        record: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        context, dynamic = RuntimeContractFileRouter._build_task_context(
+            self,
+            event,
+            action,
+            record,
+        )
+        operation = str(context.get("operation") or "")
+        if operation == "quick_analysis":
+            dynamic += (
+                "\n快速分析默认只输出最重要的4至6个风险，最多8个。"
+                "每个风险用一条简短表述同时给出风险、原文位置和修改建议；"
+                "不要机械遍历全部条款，不重复总体结论、法律背景、待确认清单或修改优先级。"
+                "低重要度的措辞、排版和一般性提示除非会影响合同效力或履约，否则省略。"
+            )
+        elif operation == "free_question":
+            dynamic += (
+                "\n只回答用户当前问题，优先直接结论和原文位置；"
+                "除非问题本身需要，不扩展成完整合同审查。"
+            )
+        dynamic += (
+            "\n本次任务回复完成后，当前合同文件仍保留。"
+            "答复末尾用一句话询问用户是否还需要继续处理这份合同；"
+            "用户可以继续提问、要求修改、上传下一份文件，或回复“结束”。"
+        )
+        return context, dynamic
 
     async def _snapshot_staged_text(self, event: AstrMessageEvent) -> None:
         if event.get_extra(_STAGED_TEXT_EVENT_KEY) is not None:
@@ -135,15 +259,69 @@ class Main(Star, RuntimeContractFileRouter):
 
         results: list[Any] = []
         async with self._session_lock(event):
-            async for result in RuntimeContractFileRouter.intake(
-                self,
-                event,
-                *args,
-                **kwargs,
-            ):
-                results.append(result)
-            if event.get_extra("contract_explicit_request", False):
-                await self._snapshot_staged_text(event)
+            self._cleanup()
+            message_key = self._message_key(event)
+            if message_key in self._seen_messages:
+                event.stop_event()
+                return
+
+            session = self._session_key(event)
+            text = (event.message_str or "").strip()
+            normalized = self._normalize_text(text)
+            classification = self._classify_text(text)
+            existing = self.pending.get(session)
+            active = self._active_task_for_session(session)
+
+            if normalized in _DELETE_FILE_ALIASES:
+                self._seen_messages[message_key] = time.monotonic()
+                if existing or active:
+                    self._clear_session(
+                        session,
+                        delete_files=True,
+                        mark_active_cancelled=True,
+                    )
+                    message = "当前暂存合同文件已删除。"
+                else:
+                    message = "当前没有待删除的合同文件。"
+                event.stop_event()
+                results.append(event.plain_result(message))
+            elif classification == "end" and (existing or active):
+                self._seen_messages[message_key] = time.monotonic()
+                self._end_file_session(session)
+                event.stop_event()
+                results.append(
+                    event.plain_result(
+                        "当前文件会话已结束，暂存文件仍保留。"
+                        "发送新文件可开始处理下一份；如需物理删除请回复“删除文件”。"
+                    )
+                )
+            elif classification == "cancel" and (existing or active):
+                self._seen_messages[message_key] = time.monotonic()
+                self._cancel_operation_preserve_file(session)
+                event.stop_event()
+                results.append(
+                    event.plain_result(
+                        "已取消当前操作，合同文件仍保留。"
+                        "可以继续提问、选择其他操作，或回复“结束”。"
+                    )
+                )
+            else:
+                if self._has_file(event) and (existing or active):
+                    self._replace_current_file_context(session)
+                    existing = None
+                    active = None
+                elif isinstance(existing, dict) and str(existing.get("state") or "") == "ended":
+                    return
+
+                async for result in RuntimeContractFileRouter.intake(
+                    self,
+                    event,
+                    *args,
+                    **kwargs,
+                ):
+                    results.append(result)
+                if event.get_extra("contract_explicit_request", False):
+                    await self._snapshot_staged_text(event)
 
         for result in results:
             yield result
@@ -156,6 +334,14 @@ class Main(Star, RuntimeContractFileRouter):
         **kwargs: Any,
     ):
         async with self._session_lock(event):
+            session = self._session_key(event)
+            record = self.pending.get(session)
+            if (
+                isinstance(record, dict)
+                and str(record.get("state") or "") == "ended"
+                and not event.get_extra("contract_explicit_request", False)
+            ):
+                return
             await RuntimeContractFileRouter.attach_context(
                 self,
                 event,
@@ -176,11 +362,40 @@ class Main(Star, RuntimeContractFileRouter):
         **kwargs: Any,
     ):
         async with self._session_lock(event):
-            return await RuntimeContractFileRouter.clear_pending_after_result(
-                self,
-                event,
-                *args,
-                **kwargs,
+            preserve_reason = str(
+                event.get_extra("contract_preserve_pending_reason") or ""
+            )
+            if preserve_reason in {
+                "duplicate_confirmation_required",
+                "blocked",
+            }:
+                return await RuntimeContractFileRouter.clear_pending_after_result(
+                    self,
+                    event,
+                    *args,
+                    **kwargs,
+                )
+
+            session = self._session_key(event)
+            task_id = event.get_extra("contract_pending_task_id")
+            if not task_id:
+                return
+            active = self._active_tasks.get(session)
+            if (
+                not isinstance(active, dict)
+                or active.get("task_id") != task_id
+            ):
+                return
+            self._active_tasks.pop(session, None)
+            record = self.pending.get(session)
+            if not isinstance(record, dict):
+                return
+            self._reset_record_for_followup(record)
+            self._save_state()
+            logger.info(
+                "Contract file router: completed task %s; staged file retained "
+                "for follow-up.",
+                task_id,
             )
 
 
