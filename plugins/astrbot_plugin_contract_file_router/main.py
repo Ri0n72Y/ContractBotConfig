@@ -122,6 +122,7 @@ class Main(Star, RuntimeContractFileRouter):
         if isinstance(active, dict):
             self._mark_task_cancelled(str(active.get("task_id") or ""))
         old_record = self.pending.pop(session, None)
+        self._recent_file_fingerprints.clear()
         if old_record is not None:
             self._save_state()
             logger.info(
