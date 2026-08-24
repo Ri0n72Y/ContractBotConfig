@@ -1,7 +1,7 @@
 name: astrbot_plugin_contract_file_router
 display_name: 合同文件接收与路由
-desc: 合同文件暂存、本地正文快照、BLOCKED 状态保留、确定性会话控制和同步任务上下文。
-version: 0.5.8
+desc: 合同文件暂存、本地正文快照、BLOCKED 状态保留、确定性会话控制和同步任务上下文；任务结束不自动删除暂存文件，只有明确删除指令才物理删除。
+version: 0.5.9
 author: local
 repo: ""
 astrbot_version: ">=4.27.0,<5"
