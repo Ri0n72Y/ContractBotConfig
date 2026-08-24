@@ -1,40 +1,70 @@
-# 合同文件接收与路由 0.5.7
+# 合同文件接收与路由 0.5.9
 
-本插件把企业微信文件事件转换为可恢复的合同任务，在当前消息事件中启动主人格请求，并管理暂存文件生命周期。
+本插件把企业微信文件事件转换为可恢复的合同任务，在当前消息事件中启动主人格请求，并管理上传文件的暂存与任务状态。
 
 ## AstrBot 入口
 
-`main.py` 必须实际定义继承 `Star` 的插件类，并在同一模块注册事件处理器。Router 0.5.7 在 `main.py` 中定义 `Main`，把 `intake`、`attach_context` 和 `clear_pending_after_result` 三个带装饰器的入口注册到 `main` 模块；具体状态机与文件逻辑继续委托给 `runtime.py`。入口加载时会移除导入运行实现产生的临时 Star 与 Handler 注册，避免处理器留在 `runtime` 模块而无法绑定。
+`main.py:Main` 是唯一 AstrBot `Star` 入口；`runtime.py` 提供普通 Python 状态机与文件逻辑。`Main` 注册 `intake`、`attach_context` 和 `clear_pending_after_result` 三个事件入口。
 
 ## 职责
 
 - 使用 AstrBot `File.get_file()` 取得文件并复制到插件暂存目录；
-- 计算文件 SHA-256、大小和会话文件指纹；
-- 维护等待操作、运行中、阻断恢复、重复确认和结束状态；
-- 对用户已经选择的上传、快速分析或合同问答任务，从 Router 自己的 `staged_path` 本地解析 PDF/DOCX/TXT/MD 正文，并直接注入同一次 LLM 请求，不新增文件读取工具调用或额外 AI 回合；
-- 注入的合同正文使用 AstrBot `_no_save` transient context，只参与当前请求，不写入长期 conversation history；
-- PDF 与 DOCX 的正文解析都在线程中执行，避免本地文件转换阻塞 AstrBot asyncio event loop；
+- 计算临时文件 MD5 作为文件身份与短时重复上传判定依据；
+- 保留 SHA-256 作为下游上传、完整性校验和任务上下文中的稳定摘要；
+- 维护等待操作、运行中、阻断恢复和重复确认等**未完成任务状态**；
+- 从 Router 自己的 `staged_path` 本地解析 PDF/DOCX/TXT/MD 正文，并以 `_no_save` transient context 注入本轮 LLM 请求；
 - 生成不携带固定 Corpus 的 `contract_task_context`，目标 Corpus 由 Handoff Policy 统一绑定；
-- 生成当前事件内的显式 LLM 请求；
 - 从原始文件名确定性提取唯一有效日期，写入 `identity_hints.contract_date`；
 - 与 Result Guard 共享取消、重复确认和 BLOCKED 保留状态；
-- 在流程完成、失败、取消或客户明确结束后清理暂存文件；
-- 对同一 UMO 的 Router intake/context/cleanup 使用一个轻量 `asyncio.Lock` 串行状态迁移；锁不覆盖后续 LLM、Subagent 或 MCP 执行。
+- 对同一 UMO 的 Router intake/context/cleanup 使用轻量 `asyncio.Lock` 串行状态迁移。
+
+## 文件与任务生命周期
+
+0.5.9 起，Router **不维护持久化的 current-file 指针**。
+
+`pending` 只表示尚未结束的文件任务，例如等待用户选择操作、任务运行中、BLOCKED 或等待重复上传确认。普通分析、问答或上传任务完成后，pending/task 状态按正常流程清除；用户后续提到哪份合同，由助手结合会话上下文自行判断，而不是依赖 Router 的 current-file 状态。
+
+业务流程不负责清理已接收的暂存合同文件：
+
+- 普通任务完成后不物理删除已接收文件；
+- 用户回复“结束”或“取消”时只结束相关任务状态，不物理删除文件；
+- 不提供“删除当前文件”等用户侧删除入口，也不主动提示用户删除；
+- pending TTL 只清理陈旧任务状态，不删除其已接收文件；
+- staging TTL 不再作为业务流程的物理删除机制；
+- 短时重复或未被本轮任务接受的新 staged 副本也不由业务流程删除；
+- 长期未使用文件由独立维护任务统一清理，相关设计见 issue #24。
+
+## 临时文件身份
+
+每个成功暂存文件同时记录：
+
+```text
+md5      # 临时文件身份、短时重复判定
+sha256   # 下游完整性/上传链使用
+```
+
+成功暂存后，文件名以前缀形式包含 MD5：
+
+```text
+<md5>_<timestamp>_<uuid>_<original_name>
+```
+
+MD5 用于区分临时上传文件，不替代 SHA-256 的完整性用途。
 
 ## 暂存合同正文
 
-用户正常交互是两阶段的：
+正常交互：
 
 ```text
 发送合同文件
 → Router 暂存并返回菜单
 → 用户回复 1 / 2 / 直接提问
 → Router 从 staged_path 本地解析合同正文
-→ 正文快照以 _no_save transient context 进入当前 LLM 请求
-→ Agent 保存 conversation history 时跳过这份正文快照
+→ 正文快照以 _no_save transient context 进入本轮 LLM 请求
+→ 任务完成后清除 pending/task 状态，暂存文件继续保留在磁盘
 ```
 
-这条路径不依赖 AstrBot Computer Use，也不要求 Main 使用 Shell、Python 或通用 FileRead。当前直接支持：
+当前直接支持：
 
 ```text
 .pdf
@@ -43,9 +73,9 @@
 .md / .markdown
 ```
 
-`.doc` 继续由 Contract DOC Preconverter 转换后进入 Router。单次直接注入最多保留前 `120000` 个字符；超过时会在上下文中明确标记截断，但不会为了继续读取而增加一轮 AI tool call。
+`.doc` 由 Contract DOC Preconverter 转换后进入 Router。单次直接注入最多保留前 `120000` 个字符；超过时会在上下文中明确标记截断。
 
-自由提问任务还会把用户当前问题与暂存合同正文一起注入，避免显式 Router 请求覆盖原始问题文本。合同正文只在当前请求中使用；后续用户消息不会因为 history 持久化而重复携带上一份完整合同正文。
+自由提问任务还会把用户本轮问题与暂存合同正文一起注入，避免显式 Router 请求覆盖原始问题文本。正文快照只在本轮请求中使用，不写入长期 conversation history。
 
 ## 文件名日期提示
 
@@ -59,24 +89,7 @@ YYYY年M月D日
 YYYYMMDD
 ```
 
-例如：
-
-```text
-示例项目劳务合同_2025.1.7.pdf
-```
-
-任务上下文将包含：
-
-```json
-{
-  "identity_hints": {
-    "contract_date": "2025-01-07",
-    "source": "original_filename"
-  }
-}
-```
-
-正文明确日期优先。正文日期字段为空时，Master 直接采用该提示，不向客户追问。文件名出现多个不同日期时不提供提示。
+正文明确日期优先；正文日期字段为空时，Master 可以采用唯一文件名日期提示，不重复询问。文件名出现多个不同日期时不提供提示。
 
 ## 会话状态
 
@@ -88,27 +101,15 @@ stateDiagram-v2
     AwaitingAction --> TaskRunning: 分析或提问
     UploadRunning --> AwaitingBlockedResolution: BLOCKED
     AwaitingBlockedResolution --> UploadRunning: 补充信息或回复继续
-    AwaitingBlockedResolution --> Idle: 结束或取消
     UploadRunning --> AwaitingDuplicateConfirmation: 发现已有合同
     AwaitingDuplicateConfirmation --> ReuploadRunning: 回复重新上传
-    AwaitingDuplicateConfirmation --> Idle: 取消或结束
     UploadRunning --> Idle: PROCESSING / COMPLETE / MANUAL_REVIEW / FAILED
     ReuploadRunning --> Idle: PROCESSING / COMPLETE / MANUAL_REVIEW / FAILED
     TaskRunning --> Idle: 结果发送完成
+    AwaitingAction --> Idle: 结束或取消
 ```
 
-`BLOCKED` 是可恢复状态：
-
-- Router 进入 `awaiting_blocked_resolution`；
-- 保留 pending、暂存路径和文件哈希；
-- 普通 pending TTL 和孤立文件清理不会删除仍被 pending 引用的文件；
-- 客户补充日期、标题或管理员修复后回复“继续”，Router 复用同一文件重新生成任务上下文；
-- 客户回复“结束”或“取消”时删除文件并结束；
-- 后续达到 `PROCESSING`、`COMPLETE`、`MANUAL_REVIEW` 或 `FAILED` 时流程结束并清理普通暂存状态。
-
-同一会话的 Router 状态处理在进入 LLM 之前串行完成，因此快速连续发送“1”“结束”或重复选择时，不会在 ACK、conversation 创建或 staged file 解析的 await 窗口交叉修改 pending 状态。
-
-运行中的上传收到“结束”时，Router 会移除该 task 的 pending 状态并登记取消。OpenContracts Gateway 0.6.2 在真正发起 WorkerKey HTTP POST 之前再次读取同一个 Router state，只有当前 `dispatch_task_id + source SHA-256` 仍匹配才提交。因此“结束”发生在写入开始前时不会继续产生上传副作用；如果 HTTP 提交已经开始，则只能按已有传输结果处理，不能假装回滚远端写入。
+`BLOCKED` 和 duplicate confirmation 仍按原有可恢复状态处理。运行中的任务收到“结束”时会登记取消，避免旧任务结果继续影响当前会话；已经开始的远端写入不能假装回滚。
 
 ## 与 Result Guard 的事件契约
 
@@ -120,7 +121,7 @@ contract_preserve_pending_reason = blocked
 contract_blocked_reason = missing_date | missing_title | missing_identity | system
 ```
 
-Router 在 `after_message_sent` 阶段消费这些标记，决定保存还是清理当前任务。已取消的运行中 task 结果仍由 Result Guard 抑制，避免用户在收到“流程已结束”后又看到旧任务结果。
+Router 在 `after_message_sent` 阶段消费这些标记。普通任务完成后清除 pending/task 状态但不物理删除文件；BLOCKED 与 duplicate confirmation 继续进入对应恢复状态。
 
 ## 任务上下文
 
@@ -130,6 +131,7 @@ operation
 source_files[]
 source_files[].original_name
 source_files[].staged_path
+source_files[].md5
 source_files[].sha256
 identity_hints
 resume.blocked_reason
@@ -140,25 +142,13 @@ branch_tasks
 expected_outputs
 ```
 
-Router 创建上下文时把 `targets.opencontracts` 和分支 `corpus_slug` 留空；`astrbot_plugin_contract_handoff_policy.default_opencontracts_corpus_slug` 是合同库 Corpus 的唯一配置 owner，并在 handoff 时写入最终目标值。
-
-公开 MCP 上传工具契约：
-
-```text
-opencontracts_gateway_status
-list_documents
-opencontracts_upload_document
-get_document_text
-search_corpus
-```
-
-Router 不声明 `opencontracts_check_duplicate` 或 `get_corpus_info`。MCP 查重使用 Gateway 返回的 `identity.document_title`。
+Router 创建上下文时把 `targets.opencontracts` 和分支 `corpus_slug` 留空；`astrbot_plugin_contract_handoff_policy.default_opencontracts_corpus_slug` 是合同库 Corpus 的唯一配置 owner。
 
 ## 运行结构
 
 ```text
 astrbot_plugin_contract_file_router/
-├── main.py           # Main Star、会话锁、request-only 正文快照注入
+├── main.py           # Main Star、会话锁、MD5 暂存身份、物理保留策略、正文快照注入
 ├── document_text.py  # staged PDF/DOCX/TXT/MD 本地解析
-└── runtime.py        # 暂存、状态机、任务上下文与事件处理实现
+└── runtime.py        # 暂存、任务状态机、任务上下文与事件处理实现
 ```
