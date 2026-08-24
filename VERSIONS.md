@@ -5,7 +5,7 @@
 - astrbot_plugin_contract_doc_preconverter: 0.1.3
 - astrbot_plugin_contract_docx_generator: 0.5.2
 - astrbot_plugin_contract_download_delivery: 0.2.5
-- astrbot_plugin_contract_file_router: 0.5.8
+- astrbot_plugin_contract_file_router: 0.5.9
 - astrbot_plugin_contract_generation_flow: 0.8.0
 - astrbot_plugin_contract_handoff_policy: 0.5.4
 - astrbot_plugin_opencontracts_gateway: 0.6.2
@@ -15,11 +15,15 @@
 
 ## Skills
 
-- contract-direct-analysis: 1.14
+- contract-direct-analysis: 1.15
 - contract-conversation-control: 1.15
 - contract-document-specification: 1.0
 
 OpenContracts 读取/上传/核验规则由 Operator Persona、Handoff Policy、OpenContracts Gateway 和 Result Guard 共同承担。生成流程由 Builder Persona 与 Generation Flow 承担；`contract-document-specification` 只负责正式合同的文档结构与格式规范，不提供固定合同条款或模板替换逻辑。
+
+企业微信中的直接合同分析默认保持简洁：优先给总体判断和 3～6 个最高优先级风险，不逐条复述整份合同。当前上传合同正文优先使用 Router 注入的 `contract_task_context` / `staged_contract_text`，不通过 Shell、Grep、Python 或通用文件搜索发现当前合同或 Skill。
+
+File Router 0.5.9 将“任务结束”和“文件删除”分离：分析、问答或上传任务完成后保留当前文件并继续接受追问；回复“结束/取消”只结束当前流程，不物理删除暂存文件；上传下一份文件时切换当前文件但保留上一份文件；只有明确“删除当前文件”等删除指令才物理删除。长期未使用文件的月度清理由独立维护任务后续实现。
 
 Generation Flow 0.8.0 以 AstrBot 4.27.x+ 为运行基线：Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Flow 不覆盖 Agent ToolSet、不修改 system prompt、不重写 handoff input。由于 handoff 子人格当前不会自动展开 Persona Skill 正文，Flow 仅保留受限 `read_bound_skill` 作为 grounding bridge，并在任何 DOCX 写入前强制确认 `contract-document-specification` 已完成 grounding。
 
@@ -28,7 +32,7 @@ Handoff Policy 0.5.4 在不接管 Agent runtime 的前提下，确定性保持 B
 ## 人格
 
 - contract_docassemble_builder: 1.30（generation protocol v7；绑定 contract-document-specification；system prompt 强制在组织最终 document_markdown 前先 grounding）
-- contract_master_orchestrator: 1.26（generation policy protocol 2）
+- contract_master_orchestrator: 1.27（generation policy protocol 2；企微分析默认简洁并优先使用 Router 正文上下文）
 - contract_opencontracts_operator: 1.18（自包含，无 Skill）
 
 正式合同生成按“专用模板 -> 历史参考 -> AI 自组织结构”回退；没有通用合同骨架资产。正式生成 handoff 必须显式携带 generation_policy_protocol=2 与 fallback_policy。strict 指定模板按精确 document slug 或唯一标准化标题确定身份；普通模式模板绑定也必须来自本轮生成资产搜索候选。写操作 timeout/cancel 按 commit-unknown、retry_safe=false 处理；HTTPS 已发布但 draft finalize 失败返回 PARTIAL，不返回 READY。
