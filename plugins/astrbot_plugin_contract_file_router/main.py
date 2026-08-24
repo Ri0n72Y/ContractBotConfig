@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -14,17 +16,10 @@ from .runtime import ContractFileRouter as RuntimeContractFileRouter
 
 _STAGED_TEXT_EVENT_KEY = "contract_staged_document_text"
 _STAGED_TEXT_ATTACHED_EVENT_KEY = "contract_staged_document_text_attached"
-_DELETE_FILE_ALIASES = {
-    "删除文件",
-    "删除当前文件",
-    "删除这份文件",
-    "删除当前合同文件",
-    "删除这份合同文件",
-}
 
 
 class Main(Star, RuntimeContractFileRouter):
-    """Only AstrBot Star entrypoint; runtime.py is a plain implementation base."""
+    """Only AstrBot Star entrypoint; runtime.py owns the task state machine."""
 
     def __init__(
         self,
@@ -49,8 +44,75 @@ class Main(Star, RuntimeContractFileRouter):
             self._intake_locks[session] = lock
         return lock
 
+    @staticmethod
+    def _md5(path: Path) -> str:
+        digest = hashlib.md5()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    async def _stage_files(
+        self, event: AstrMessageEvent
+    ) -> list[dict[str, Any]]:
+        files = await RuntimeContractFileRouter._stage_files(self, event)
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            raw_path = str(item.get("staged_path") or "")
+            if not raw_path or item.get("staging_status") != "staged":
+                continue
+            path = Path(raw_path)
+            try:
+                if not path.is_file():
+                    continue
+                md5_value = self._md5(path)
+                item["md5"] = md5_value
+                renamed = path.with_name(f"{md5_value}_{path.name}")
+                if renamed != path and not renamed.exists():
+                    path.rename(renamed)
+                    path = renamed
+                item["staged_path"] = str(path.resolve())
+            except OSError as exc:
+                logger.warning(
+                    "Contract file router MD5 staging rename failed: %s",
+                    type(exc).__name__,
+                )
+        return files
+
+    @staticmethod
+    def _files_fingerprint(
+        session: str, files: list[dict[str, Any]]
+    ) -> str:
+        parts: list[str] = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            md5_value = str(item.get("md5") or "").strip()
+            if md5_value:
+                parts.append(md5_value)
+                continue
+            parts.append(
+                "|".join(
+                    str(value or "")
+                    for value in (
+                        item.get("original_name"),
+                        item.get("size_bytes"),
+                        item.get("staging_status"),
+                    )
+                )
+            )
+        digest = hashlib.md5()
+        digest.update(f"{session}:{';'.join(sorted(parts))}".encode("utf-8"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def _delete_record_files(record: dict[str, Any] | None) -> None:
+        """Business flows never delete retained staged files."""
+        del record
+
     def _cleanup(self) -> None:
-        """Only clean transient dedup/cancel metadata; retain staged contract files."""
+        """Expire transient task state only; physical file cleanup is maintenance work."""
         now_mono = time.monotonic()
         self._seen_messages = {
             key: value
@@ -62,7 +124,22 @@ class Main(Star, RuntimeContractFileRouter):
             for key, value in self._recent_file_fingerprints.items()
             if now_mono - value <= self.dedup_ttl_seconds
         }
+
         now = time.time()
+        expired = [
+            session
+            for session, record in self.pending.items()
+            if str(record.get("state") or "") != "awaiting_blocked_resolution"
+            and now
+            - float(record.get("updated_at", record.get("created_at", 0)))
+            > self.pending_ttl_seconds
+        ]
+        for session in expired:
+            self.pending.pop(session, None)
+            self._active_tasks.pop(session, None)
+        if expired:
+            self._save_state()
+
         cancelled = self._load_cancelled_tasks()
         filtered = {
             key: value
@@ -71,22 +148,6 @@ class Main(Star, RuntimeContractFileRouter):
         }
         if filtered != cancelled:
             self._save_cancelled_tasks(filtered)
-
-    def _clear_session(
-        self,
-        session: str,
-        *,
-        delete_files: bool,
-        mark_active_cancelled: bool = False,
-    ) -> None:
-        """End session state without deleting staged files unless explicitly requested."""
-        del delete_files
-        RuntimeContractFileRouter._clear_session(
-            self,
-            session,
-            delete_files=False,
-            mark_active_cancelled=mark_active_cancelled,
-        )
 
     async def _snapshot_staged_text(self, event: AstrMessageEvent) -> None:
         if event.get_extra(_STAGED_TEXT_EVENT_KEY) is not None:
@@ -123,13 +184,13 @@ class Main(Star, RuntimeContractFileRouter):
         if text:
             sections.append(
                 "<staged_contract_text>\n"
-                "以下内容是本轮暂存合同的正文快照，直接据此执行当前合同任务。\n"
+                "以下内容是本轮暂存合同的正文快照，直接据此执行本轮合同任务。\n"
                 f"{text}\n"
                 "</staged_contract_text>"
             )
         else:
             sections.append(
-                "<staged_contract_parse_notes>未能从当前暂存文件取得可读正文；"
+                "<staged_contract_parse_notes>未能从本轮暂存文件取得可读正文；"
                 "不得凭空推测合同标题、日期或条款。</staged_contract_parse_notes>"
             )
         errors = payload.get("errors")
@@ -151,9 +212,9 @@ class Main(Star, RuntimeContractFileRouter):
         user_query = str(payload.get("user_query") or "").strip()
         if user_query:
             sections.append(
-                "<current_contract_question>\n"
+                "<contract_question>\n"
                 f"{user_query}\n"
-                "</current_contract_question>"
+                "</contract_question>"
             )
 
         content = "\n\n".join(sections)
@@ -182,45 +243,15 @@ class Main(Star, RuntimeContractFileRouter):
 
         results: list[Any] = []
         async with self._session_lock(event):
-            session = self._session_key(event)
-            normalized = self._normalize_text(event.message_str or "")
-
-            if normalized in _DELETE_FILE_ALIASES:
-                record = self.pending.get(session)
-                active = self._active_task_for_session(session)
-                if record is not None or active is not None:
-                    RuntimeContractFileRouter._clear_session(
-                        self,
-                        session,
-                        delete_files=True,
-                        mark_active_cancelled=True,
-                    )
-                    event.stop_event()
-                    results.append(event.plain_result("当前合同文件已删除，可以开始新的任务。"))
-                else:
-                    event.stop_event()
-                    results.append(event.plain_result("当前没有可删除的合同文件。"))
-            else:
-                # A new file becomes the current file when no contract task is running.
-                # The previous staged file remains on disk until explicit deletion or
-                # the future maintenance cleanup policy removes it.
-                if self._has_file(event):
-                    existing = self.pending.get(session)
-                    active = self._active_task_for_session(session)
-                    if existing is not None and active is None:
-                        self.pending.pop(session, None)
-                        self._save_state()
-
-                if not results:
-                    async for result in RuntimeContractFileRouter.intake(
-                        self,
-                        event,
-                        *args,
-                        **kwargs,
-                    ):
-                        results.append(result)
-                    if event.get_extra("contract_explicit_request", False):
-                        await self._snapshot_staged_text(event)
+            async for result in RuntimeContractFileRouter.intake(
+                self,
+                event,
+                *args,
+                **kwargs,
+            ):
+                results.append(result)
+            if event.get_extra("contract_explicit_request", False):
+                await self._snapshot_staged_text(event)
 
         for result in results:
             yield result
@@ -253,50 +284,11 @@ class Main(Star, RuntimeContractFileRouter):
         **kwargs: Any,
     ):
         async with self._session_lock(event):
-            if not self._platform_allowed(event):
-                return
-            session = self._session_key(event)
-            task_id = event.get_extra("contract_pending_task_id")
-            if not task_id:
-                return
-            active = self._active_tasks.get(session)
-            if (
-                not isinstance(active, dict)
-                or active.get("task_id") != task_id
-            ):
-                return
-
-            preserve_reason = str(
-                event.get_extra("contract_preserve_pending_reason") or ""
-            )
-            if preserve_reason in {"duplicate_confirmation_required", "blocked"}:
-                return await RuntimeContractFileRouter.clear_pending_after_result(
-                    self,
-                    event,
-                    *args,
-                    **kwargs,
-                )
-
-            self._active_tasks.pop(session, None)
-            record = self.pending.get(session)
-            if not isinstance(record, dict):
-                return
-            record["state"] = "awaiting_action"
-            for key in (
-                "dispatch_task_id",
-                "dispatch_started_at",
-                "dispatch_operation",
-                "blocked_reason",
-                "blocked_operation",
-                "blocked_at",
-                "blocked_resume_input",
-            ):
-                record.pop(key, None)
-            record["updated_at"] = time.time()
-            self._save_state()
-            logger.info(
-                "Contract file router: completed task %s and retained current file.",
-                task_id,
+            return await RuntimeContractFileRouter.clear_pending_after_result(
+                self,
+                event,
+                *args,
+                **kwargs,
             )
 
 
