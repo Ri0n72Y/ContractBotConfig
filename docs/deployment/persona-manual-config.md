@@ -4,7 +4,7 @@
 
 绑定源数据以 `personas/bindings.json` 为准。正式环境不要额外绑定未列出的 Skill、Shell、Python、通用 HTTP 或通用文件写入工具。
 
-### contract_master_orchestrator 1.26
+### contract_master_orchestrator 1.27
 
 Tools：
 
@@ -21,6 +21,8 @@ contract-conversation-control
 ```
 
 Master 是唯一面向客户角色。合同库独立读取/分析交 Operator；最终目标是生成、起草、制作或修改合同则直接交 Builder。
+
+Master 1.27 对当前上传合同的快速分析默认只给 4–6 个最高优先级风险（最多 8 个），每项直接写风险、原文位置和修改建议；不机械遍历全部条款，不重复多套总结结构。当前请求没有 Router 合同正文时，不用 Shell、Python 或目录扫描寻找附件/Skill 文件，直接让用户上传文件或等待文件事件。
 
 正式生成 handoff 必须显式发送：
 
@@ -94,7 +96,7 @@ Generation Flow 协议版本不变；v7 仍是当前代码校验的正式协议�
 
 ```text
 astrbot_plugin_contract_doc_preconverter    0.1.3
-astrbot_plugin_contract_file_router         0.5.8
+astrbot_plugin_contract_file_router         0.5.9
 astrbot_plugin_contract_handoff_policy      0.5.4
 astrbot_plugin_opencontracts_gateway        0.6.2
 astrbot_plugin_contract_generation_flow     0.8.0
@@ -108,12 +110,28 @@ astrbot_plugin_wecom_final_result_guard     0.3.5
 ## 正式 Skills
 
 ```text
-contract-direct-analysis          1.14
-contract-conversation-control     1.15
+contract-direct-analysis          1.15
+contract-conversation-control     1.16
 contract-document-specification  1.0
 ```
 
-格式规范 Skill 只绑定 Builder；Master 和 Operator 不加载它。
+格式规范 Skill 只绑定 Builder；Master 使用 direct-analysis 与 conversation-control。
+
+## 当前文件保留语义
+
+File Router 0.5.9 不再在一次分析、问答或上传结果发送后自动删除当前文件。
+
+```text
+任务完成      → 文件继续保留，可继续追问
+取消          → 只取消当前操作，文件保留
+结束          → 结束当前文件会话，文件保留
+删除文件      → 物理删除当前暂存文件
+上传下一份文件 → 切换当前文件；上一份文件退出当前上下文但仍保留
+```
+
+当前版本关闭实时会话里的普通 pending/staging TTL 物理删除。长期未使用文件的每月清理属于独立维护任务，暂不在 File Router 实时状态机中执行。
+
+每次当前合同任务回复末尾，Master 应用一句话询问是否还需要继续处理这份合同；用户可继续提问、要求修改、上传下一份文件或回复“结束”。
 
 ## Skill runtime 验证
 
@@ -226,12 +244,12 @@ contract-result-verification
 ## 建议部署顺序
 
 1. 确认运行环境为 AstrBot 4.27.x 或更高版本。
-2. 确认 `contract-document-specification-1.0.zip` 已安装并启用，且 AstrBot 主机侧存在可由受限 reader 读取的 `SKILL.md`。
-3. 导入/更新 Builder 1.30，绑定 `contract-document-specification` Skill，并按 `personas/bindings.json` 静态绑定 8 个 Builder Tools。
-4. 升级 `astrbot_plugin_contract_generation_flow` 到 0.8.0、File Router 到 0.5.8。
-5. 保持 Master 1.26、Operator 1.18 及其现有绑定不变。
-6. 确认 DOCX Generator 0.5.2、Handoff Policy 0.5.4、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Preconverter 0.1.3 均已加载。
-7. 执行材料采购合同生成 E2E，并按“Skill runtime 验证”检查日志和最终 DOCX 是否实际遵守文档规范。
+2. 升级 File Router 到 0.5.9。
+3. 安装/升级 `contract-direct-analysis-1.15.zip` 与 `contract-conversation-control-1.16.zip`。
+4. 导入/更新 Master 1.27，保持 Tools/Skills 绑定与 `personas/bindings.json` 一致。
+5. 保持 Builder 1.30、Operator 1.18 及其现有绑定不变。
+6. 确认 Generation Flow 0.8.0、DOCX Generator 0.5.2、Handoff Policy 0.5.4、OpenContracts Gateway 0.6.2、Result Guard 0.3.5、Preconverter 0.1.3 均已加载。
+7. 用一份上传合同执行“快速分析 → 继续提问 → 结束 → 删除文件/上传下一份文件”E2E，确认分析保持简洁且文件生命周期符合预期。
 
 ## 发布产物
 
