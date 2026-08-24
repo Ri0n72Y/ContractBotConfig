@@ -111,6 +111,11 @@ class Main(Star, RuntimeContractFileRouter):
         """Business flows never delete retained staged files."""
         del record
 
+    @staticmethod
+    def _delete_new_staged_files(files: list[dict[str, Any]]) -> None:
+        """Business dedup/rejection never performs physical file cleanup."""
+        del files
+
     def _cleanup(self) -> None:
         """Expire transient task state only; physical file cleanup is maintenance work."""
         now_mono = time.monotonic()
