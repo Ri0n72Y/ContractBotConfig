@@ -101,11 +101,11 @@ astrbot_plugin_wecom_final_result_guard     0.3.5
 
 ```text
 contract-direct-analysis          1.15
-contract-conversation-control     1.15
+contract-conversation-control     1.16
 contract-document-specification  1.0
 ```
 
-`contract-direct-analysis` 只要求企微默认输出重点摘要，不主动产生长篇完整分析。
+`contract-direct-analysis` 只要求企微默认输出重点摘要，不主动产生长篇完整分析。`contract-conversation-control` 1.16 与 File Router 0.5.9 的 retained staged-file 生命周期一致：结束/取消/TTL 只清理任务状态，不物理删除暂存文件；BLOCKED 只保留恢复该未完成任务所需的文件引用和业务状态。
 
 ## File Router 0.5.9 文件与任务生命周期
 
@@ -234,11 +234,12 @@ contract-result-verification
 1. 确认 AstrBot 为 4.27.x 或更高版本。
 2. 升级 File Router 到 0.5.9。
 3. 升级 `contract-direct-analysis` 到 1.15。
-4. 导入/更新 Master 1.27，并确认正式 Tool / Skill 绑定与 `personas/bindings.json` 一致。
-5. 保持 Builder 1.30、Operator 1.18 及其他正式插件版本与上方清单一致。
-6. 重新测试：上传合同 → 快速分析/问答 → 结束；确认任务状态清理后暂存文件仍存在，且下一次文件上传不会依赖旧 current-file 状态。
-7. 验证同一文件短时重复投递按 MD5 去重，同时 `source_files[].sha256` 仍存在。
-8. 再执行一次正式合同生成 E2E，确认 Builder Skill grounding、DOCX、HTTPS 和 Draft finalize 正常。
+4. 升级 `contract-conversation-control` 到 1.16。
+5. 导入/更新 Master 1.27，并确认正式 Tool / Skill 绑定与 `personas/bindings.json` 一致。
+6. 保持 Builder 1.30、Operator 1.18 及其他正式插件版本与上方清单一致。
+7. 重新测试：上传合同 → 快速分析/问答 → 结束；确认任务状态清理后暂存文件仍存在，且下一次文件上传不会依赖旧 current-file 状态。
+8. 验证同一文件短时重复投递按 MD5 去重，同时 `source_files[].sha256` 仍存在。
+9. 再执行一次正式合同生成 E2E，确认 Builder Skill grounding、DOCX、HTTPS 和 Draft finalize 正常。
 
 ## 发布产物
 
