@@ -260,6 +260,11 @@ class Main(Star, RuntimeContractFileRouter):
         results: list[Any] = []
         async with self._session_lock(event):
             self._cleanup()
+            message_key = self._message_key(event)
+            if message_key in self._seen_messages:
+                event.stop_event()
+                return
+
             session = self._session_key(event)
             text = (event.message_str or "").strip()
             normalized = self._normalize_text(text)
@@ -268,6 +273,7 @@ class Main(Star, RuntimeContractFileRouter):
             active = self._active_task_for_session(session)
 
             if normalized in _DELETE_FILE_ALIASES:
+                self._seen_messages[message_key] = time.monotonic()
                 if existing or active:
                     self._clear_session(
                         session,
@@ -280,6 +286,7 @@ class Main(Star, RuntimeContractFileRouter):
                 event.stop_event()
                 results.append(event.plain_result(message))
             elif classification == "end" and (existing or active):
+                self._seen_messages[message_key] = time.monotonic()
                 self._end_file_session(session)
                 event.stop_event()
                 results.append(
@@ -289,6 +296,7 @@ class Main(Star, RuntimeContractFileRouter):
                     )
                 )
             elif classification == "cancel" and (existing or active):
+                self._seen_messages[message_key] = time.monotonic()
                 self._cancel_operation_preserve_file(session)
                 event.stop_event()
                 results.append(
