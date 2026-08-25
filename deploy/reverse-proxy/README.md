@@ -1,34 +1,37 @@
-# Reverse proxy for LAN OpenContracts
+# OpenContracts HTTPS choices
 
-The MVP keeps OpenContracts inside a trusted network. The reverse proxy provides HTTPS and a stable internal hostname; it does not add application authentication.
+OpenContracts has two relevant Compose modes:
 
-## Option A: use OpenContracts bundled Traefik
+## `production.yml`
 
-OpenContracts' production configuration already contains Traefik with port 80→443 redirect, HTTPS routing, and ACME/Let's Encrypt.
+`production.yml` already includes a `traefik` service and exposes host ports 80/443. The bundled Traefik configuration redirects HTTP to HTTPS and uses ACME/Let's Encrypt.
 
-The upstream checked-in configuration is written for a public DNS name and HTTP ACME challenge. Adapt its host rules and certificate resolver before using it on an internal deployment.
+Use the bundled Traefik when its certificate model fits the deployment. For a LAN-only host, the checked-in HTTP ACME challenge will not work unchanged when Let's Encrypt cannot reach the service from the Internet. In that case adapt Traefik to the organization's DNS/PKI or provide static certificates.
 
-## Option B: Caddy
+## `local.yml`
 
-`Caddyfile.example` proxies one internal HTTPS hostname to the existing OpenContracts HTTP endpoint.
+`local.yml` exposes Django directly on port 8000 and does not include an HTTPS reverse proxy.
 
-Two certificate patterns are common:
+If the current deployment uses `local.yml`, Caddy is the simplest MVP TLS wrapper:
 
 ```text
-publicly valid certificate
-  use a DNS name/certificate flow your environment can validate
-
-internal CA
-  use Caddy `tls internal`
-  install/trust Caddy's root CA on every Harness host
+Harness
+  → https://contracts.internal.example
+  → Caddy
+  → http://opencontracts-host:8000
 ```
 
-Do not solve certificate errors by disabling TLS verification in WorkBuddy/Harness.
+`Caddyfile.example` is provided for that path.
 
-## Option C: Nginx
+## Internal certificates
 
-`nginx-opencontracts.conf.example` assumes the organization already has a certificate/key from an internal or public CA. Replace the placeholders and upstream address.
+For an internal-only DNS name, use either:
 
-## Network rule
+- an organization-managed certificate/internal PKI; or
+- Caddy `tls internal` and distribute/trust the Caddy root CA on every Harness host.
 
-Regardless of proxy choice, firewall/NAT configuration must keep the service unreachable from untrusted networks. Remote Harnesses should connect through the approved LAN/VPN/network overlay first.
+Keep TLS verification enabled. Do not use `verify=False`, `-k`, or equivalent as the normal deployment configuration.
+
+## Nginx
+
+The Nginx sample remains available for environments already standardized on Nginx, but Caddy is preferred when adding a minimal TLS wrapper to a `local.yml` deployment.
