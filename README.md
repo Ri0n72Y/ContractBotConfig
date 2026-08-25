@@ -48,11 +48,19 @@ Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a
 
 ## Network / HTTPS
 
-OpenContracts `production.yml` already includes a Traefik service that exposes ports 80/443, redirects HTTP to HTTPS, and uses an ACME/Let's Encrypt resolver. Its checked-in Traefik configuration is oriented toward a publicly reachable DNS name.
+The selected MVP deployment is:
 
-OpenContracts `local.yml` exposes Django directly on port 8000 and does not include an HTTPS proxy.
+```text
+OpenContracts local.yml
++ Caddy on the OpenContracts host
++ internal DNS / trusted LAN
+```
 
-For an internal-only deployment, either adapt the bundled production Traefik certificate configuration or place a small Caddy reverse proxy in front of the existing HTTP endpoint. See `deploy/reverse-proxy/`.
+OpenContracts `local.yml` exposes Django over HTTP on port 8000 and does not include TLS. Caddy is the canonical HTTPS entrypoint for Harness MCP/API traffic and proxies to the local Django endpoint.
+
+For an internal-only hostname, the provided Caddy example uses `tls internal`. Every WorkBuddy/Harness host must trust the Caddy root CA. TLS verification stays enabled.
+
+See `deploy/reverse-proxy/`.
 
 ## Security invariants
 
