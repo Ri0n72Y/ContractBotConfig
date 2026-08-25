@@ -1,37 +1,53 @@
-# OpenContracts HTTPS choices
+# OpenContracts HTTPS for the MVP
 
-OpenContracts has two relevant Compose modes:
+The current deployment uses OpenContracts `local.yml` inside a trusted LAN/restricted network and does not use a public DNS name.
 
-## `production.yml`
+## Selected path: Caddy
 
-`production.yml` already includes a `traefik` service and exposes host ports 80/443. The bundled Traefik configuration redirects HTTP to HTTPS and uses ACME/Let's Encrypt.
-
-Use the bundled Traefik when its certificate model fits the deployment. For a LAN-only host, the checked-in HTTP ACME challenge will not work unchanged when Let's Encrypt cannot reach the service from the Internet. In that case adapt Traefik to the organization's DNS/PKI or provide static certificates.
-
-## `local.yml`
-
-`local.yml` exposes Django directly on port 8000 and does not include an HTTPS reverse proxy.
-
-If the current deployment uses `local.yml`, Caddy is the simplest MVP TLS wrapper:
+`local.yml` exposes Django on host port 8000 and does not include an HTTPS reverse proxy. The MVP therefore uses Caddy as the canonical TLS entrypoint:
 
 ```text
-Harness
+WorkBuddy / Harness
   → https://contracts.internal.example
   → Caddy
-  → http://opencontracts-host:8000
+  → http://127.0.0.1:8000
+  → OpenContracts Django / MCP / REST API
 ```
 
-`Caddyfile.example` is provided for that path.
+Use `Caddyfile.example` as the starting point.
 
-## Internal certificates
+The Harness MCP URL becomes:
 
-For an internal-only DNS name, use either:
+```text
+https://contracts.internal.example/mcp/
+```
 
-- an organization-managed certificate/internal PKI; or
-- Caddy `tls internal` and distribute/trust the Caddy root CA on every Harness host.
+Formal ingestion uses the same HTTPS origin, for example:
 
-Keep TLS verification enabled. Do not use `verify=False`, `-k`, or equivalent as the normal deployment configuration.
+```text
+https://contracts.internal.example/api/imports/documents/
+```
 
-## Nginx
+## Internal certificate
 
-The Nginx sample remains available for environments already standardized on Nginx, but Caddy is preferred when adding a minimal TLS wrapper to a `local.yml` deployment.
+Because the deployment does not use a publicly reachable domain, the example uses:
+
+```caddy
+ tls internal
+```
+
+Caddy will issue the site certificate from its own local CA. Export/install the Caddy root CA into the trust store of every WorkBuddy/Harness machine that needs to connect. Keep TLS verification enabled.
+
+If the organization later provides an internal-PKI certificate, replace `tls internal` with that certificate configuration without changing the Skill/MCP architecture.
+
+## Frontend
+
+This MVP Caddy configuration is intentionally scoped to the Django endpoint required by MCP, REST imports, GraphQL and admin APIs. OpenContracts' local frontend remains on its existing Vite/local development configuration.
+
+If a later requirement calls for one HTTPS origin for both the browser UI and API, add explicit frontend routing after confirming the exact frontend port/configuration of the deployed OpenContracts revision.
+
+## Host exposure
+
+Caddy should be the network-facing entrypoint. Where practical, bind OpenContracts' raw local HTTP port to loopback or restrict port 8000 with the host firewall so LAN clients cannot bypass Caddy and send WorkerKeys/contracts over cleartext HTTP.
+
+The old Nginx alternative is not part of the selected MVP deployment path.
