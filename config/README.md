@@ -18,20 +18,23 @@ Future deployments may move to private corpuses and `/mcp/me/` OAuth without cha
 
 ## Upload authentication
 
-Formal contract ingestion still uses a `CorpusAccessToken` / `WorkerKey` bound to the intended history corpus. Learning uploads use a second WorkerKey bound to `learning-inbox`.
+Formal contract ingestion uses a `CorpusAccessToken` / `WorkerKey` bound to the intended history corpus.
 
 Recommended policy:
 
-- keep the two write keys separate;
-- revoke/rotate keys when a host is retired or a key is exposed;
+- revoke/rotate the key when a host is retired or the key is exposed;
 - use expiry/rate limits when practical;
 - do not send `add_to_corpus_id` from the helper: the WorkerKey binding selects the destination;
 - never place real WorkerKeys in `SKILL.md` or committed configuration.
 
+Contract-learning material is not uploaded to OpenContracts in MVP and therefore requires no second WorkerKey.
+
 ## HTTPS
 
-HTTPS is still recommended on the LAN because WorkerKeys and contract contents are transmitted over the connection.
+OpenContracts `production.yml` includes a Traefik service exposing ports 80/443. The bundled Traefik config redirects HTTP to HTTPS and uses ACME/Let's Encrypt.
 
-OpenContracts' production tree includes Traefik with HTTPS and Let's Encrypt. For an internal-only hostname, a small Caddy/Nginx reverse proxy or an adapted Traefik configuration is usually simpler than using the upstream public-domain example unchanged.
+OpenContracts `local.yml` has no TLS proxy and exposes Django directly on port 8000.
 
-If using an internal CA/self-signed certificate, every Harness host must trust that CA; disabling certificate verification is not an accepted production configuration.
+For a LAN-only hostname, the upstream production Traefik example cannot be used unchanged if its HTTP ACME challenge is unreachable from the public Internet. In that case either adapt Traefik to your certificate source or put Caddy in front of the existing OpenContracts HTTP endpoint.
+
+If using an internal CA, every Harness host must trust that CA; disabling certificate verification is not an accepted production configuration.
