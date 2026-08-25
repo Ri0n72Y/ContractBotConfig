@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide a portable contract-assistant capability that can be installed into WorkBuddy or another capable Harness. The Harness owns the conversational runtime, local files, model access, and user experience. OpenContracts provides optional enterprise knowledge and controlled ingestion.
+Provide a portable contract-assistant capability that can be installed into WorkBuddy or another capable Harness. The Harness owns the conversational runtime, local files, model access, and user experience. OpenContracts provides optional enterprise knowledge and controlled formal ingestion.
 
 The MVP assumes OpenContracts is deployed inside a trusted LAN/VPN/restricted network domain. Read-side access uses public corpuses over the anonymous MCP endpoint; formal writes remain WorkerKey-authenticated.
 
@@ -14,17 +14,18 @@ flowchart LR
     H[WorkBuddy / Harness]
     S[Contract Skill Pack]
     L[Local Files / Artifacts]
+    E[Local Experience Notes]
     N[Trusted Network]
     P[HTTPS Proxy / Traefik]
     M[OpenContracts MCP /mcp/]
-    R[Public-in-deployment Corpuses]
+    R[Public-in-deployment Retrieval Corpuses]
     W[WorkerKey upload helper]
 
     U --> H --> S
     S --> L
     S -->|historical retrieval when requested/approved| N --> P --> M --> R
     S -->|explicit formal ingestion| W --> N --> P --> R
-    S -->|explicit learning consent| W
+    S -->|explicit learning consent| E
 ```
 
 ## Runtime ownership
@@ -36,6 +37,7 @@ The Harness owns:
 - local attachment access;
 - local document editing and artifact creation;
 - conversation state;
+- local experience-note output;
 - WorkBuddy WeChat/customer-service integration when used.
 
 The Skill Pack owns:
@@ -46,14 +48,14 @@ The Skill Pack owns:
 - formal ingestion consent rules;
 - contract document conventions;
 - learning-material distillation and consent;
-- safe helper scripts for deterministic remote writes.
+- safe helper scripts for deterministic formal remote writes.
 
 OpenContracts owns:
 
-- stored contracts/templates/knowledge;
+- stored contracts/templates/approved knowledge;
 - extraction and retrieval;
 - public MCP read service for the trusted-network MVP;
-- WorkerKey-bound ingestion;
+- WorkerKey-bound formal contract ingestion;
 - server-side processing/audit data available in the deployment.
 
 Infrastructure owns:
@@ -62,6 +64,13 @@ Infrastructure owns:
 - DNS;
 - HTTPS certificate termination;
 - firewall rules preventing untrusted-network access.
+
+Maintainers own:
+
+- periodic collection of experience notes;
+- review, deduplication and generalization of lessons;
+- manual updates to the relevant Skill files;
+- normal version review and release.
 
 ## Skill map
 
@@ -123,11 +132,12 @@ local/generated contract
 valuable corrections in completed session
 → suggest learning capture
 → separate user consent
-→ session facts
-→ knowledge points
-→ Learning Inbox WorkerKey
-→ later curation process
+→ local experience note
+→ periodic manual collection/review
+→ update relevant Skill
 ```
+
+No OpenContracts learning Corpus or automatic learning retrieval is part of MVP.
 
 ## Future hardening
 
