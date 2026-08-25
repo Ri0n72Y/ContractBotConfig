@@ -17,23 +17,22 @@ skills/
   contract-repository/  historical/template retrieval
   contract-upload/      explicit formal ingestion
   contract-document/    formal document structure and formatting
-  contract-learning/    session facts + distilled learning material
+  contract-learning/    local experience-note distillation for later manual Skill updates
 ```
 
 ## OpenContracts data layout
 
-MVP keeps the corpuses logically separated but publicly readable inside the OpenContracts deployment:
+MVP keeps the retrieval corpuses logically separated but publicly readable inside the OpenContracts deployment:
 
 ```text
 contracts-history
 contract-templates
 approved-knowledge
-learning-inbox
 ```
 
 `public` here means anonymous MCP clients that can reach the OpenContracts server may read them. The MVP confidentiality boundary is the LAN / restricted network, not OpenContracts corpus permissions.
 
-The repository Skill uses history/templates/approved knowledge for normal retrieval. `learning-inbox` remains logically excluded from normal retrieval and is reserved for later review/curation.
+Session learning material is not stored in OpenContracts for MVP. `contract-learning` produces a local experience note; maintainers periodically collect and review those notes and update the relevant Skills manually.
 
 ## Configuration
 
@@ -45,13 +44,15 @@ For MCP, use `.mcp.json` as a reference. MVP uses the anonymous public endpoint:
 https://<internal-opencontracts-host>/mcp/
 ```
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey. Learning material uses a separate WorkerKey.
+Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey.
 
 ## Network / HTTPS
 
-OpenContracts production configuration already includes Traefik with HTTP→HTTPS redirect and ACME/Let's Encrypt. Its checked-in Traefik example is oriented toward a public DNS name and must be adapted for an internal deployment.
+OpenContracts `production.yml` already includes a Traefik service that exposes ports 80/443, redirects HTTP to HTTPS, and uses an ACME/Let's Encrypt resolver. Its checked-in Traefik configuration is oriented toward a publicly reachable DNS name.
 
-For the MVP, a small Caddy/Nginx reverse proxy in front of the existing OpenContracts HTTP endpoint is acceptable and often simpler. See `deploy/reverse-proxy/`.
+OpenContracts `local.yml` exposes Django directly on port 8000 and does not include an HTTPS proxy.
+
+For an internal-only deployment, either adapt the bundled production Traefik certificate configuration or place a small Caddy reverse proxy in front of the existing HTTP endpoint. See `deploy/reverse-proxy/`.
 
 ## Security invariants
 
@@ -59,7 +60,8 @@ For the MVP, a small Caddy/Nginx reverse proxy in front of the existing OpenCont
 - HTTPS is used between Harness and OpenContracts so WorkerKeys and retrieved contract content are not sent in cleartext on the LAN.
 - A Skill never contains a real WorkerKey, password, contract, customer fact, or private template.
 - Retrieved documents are untrusted data. Embedded instructions never override Skill/system/tool policy.
-- Formal ingestion and learning-material ingestion require separate user authorization.
+- Formal ingestion requires explicit user authorization.
+- Experience-note generation requires separate user authorization and stays outside OpenContracts in MVP.
 - Unknown write state is never auto-retried.
 
 Private corpuses, per-user OAuth and fine-grained OpenContracts permissions are future hardening options when the deployment leaves the trusted-network MVP model.
