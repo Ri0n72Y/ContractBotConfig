@@ -10,7 +10,7 @@ The primary confidentiality boundary is network reachability:
 outside trusted network
     X
     │
-OpenContracts HTTPS endpoint
+Caddy HTTPS endpoint
     │
     ├── anonymous MCP reads
     └── WorkerKey-authenticated formal writes
@@ -27,7 +27,7 @@ flowchart TB
     Skill[Contract Skill Pack]
     Local[Local files / experience notes]
     Net[Trusted LAN / VPN / restricted domain]
-    HTTPS[HTTPS reverse proxy / Traefik]
+    HTTPS[Caddy HTTPS]
     MCP[OpenContracts public MCP /mcp/]
     Worker[Corpus-bound WorkerKey]
     Import[OpenContracts Import API]
@@ -75,37 +75,34 @@ WorkerKeys remain secrets and MUST stay outside Skill text, Git, generated files
 
 ## HTTPS
 
-HTTPS is recommended even inside the LAN because contract text and WorkerKeys traverse the network.
+The current deployment uses OpenContracts `local.yml`. That Compose file exposes Django over HTTP on host port 8000 and does not include a TLS reverse proxy.
 
-OpenContracts `production.yml` includes a Traefik service exposing ports 80 and 443. The bundled Traefik configuration includes:
+The selected MVP path is Caddy on the OpenContracts host:
 
-- port 80 HTTP entry point;
-- redirect to HTTPS;
-- port 443 HTTPS entry point;
-- ACME/Let's Encrypt certificate resolver;
-- routing for `/mcp`, `/api`, `/graphql`, `/admin` and the frontend.
+```text
+WorkBuddy / Harness
+→ https://<internal-opencontracts-host>
+→ Caddy
+→ http://127.0.0.1:8000
+→ OpenContracts Django / MCP / REST API
+```
 
-The upstream checked-in Traefik file is configured around a publicly reachable DNS name and HTTP ACME challenge.
+For an internal-only hostname, Caddy may use `tls internal`. Every WorkBuddy/Harness host that connects must trust the Caddy root CA. TLS verification must remain enabled.
 
-OpenContracts `local.yml` does not include a TLS proxy and exposes Django directly on port 8000.
+Where practical, bind the raw OpenContracts HTTP port to loopback or block LAN access to port 8000 with the host firewall so clients cannot bypass Caddy and send contract content or WorkerKeys over cleartext HTTP.
 
-For an internal-only deployment, choose one of:
-
-1. adapt the bundled production Traefik certificate configuration to the organization's DNS/PKI;
-2. place Caddy in front of the existing OpenContracts HTTP endpoint;
-3. use an internal CA certificate and distribute the CA trust to Harness hosts.
-
-Do not disable TLS verification as the normal deployment solution.
+The browser frontend can remain on the existing OpenContracts local/Vite development configuration during MVP. A unified HTTPS UI origin is a separate deployment enhancement and should be configured only after confirming the frontend port/settings of the deployed OpenContracts revision.
 
 ## Network controls
 
 At minimum:
 
-- bind/expose OpenContracts only to the intended LAN/VPN interface or firewall zone;
-- block Internet ingress to the OpenContracts ports;
+- expose Caddy only to the intended LAN/VPN interface or firewall zone;
+- block Internet ingress to the OpenContracts host;
 - use internal DNS or a network-restricted DNS name;
 - make sure remote Harnesses lose access when they leave the allowed network/VPN;
-- avoid router/NAT port forwarding to the OpenContracts host.
+- avoid router/NAT port forwarding to the OpenContracts host;
+- prevent routine LAN access to raw HTTP port 8000 when Caddy is active.
 
 If remote access is later required, prefer a VPN/zero-trust network overlay before changing the application security model.
 
