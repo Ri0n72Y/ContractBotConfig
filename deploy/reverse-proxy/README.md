@@ -33,7 +33,7 @@ https://contracts.internal.example/api/imports/documents/
 Because the deployment does not use a publicly reachable domain, the example uses:
 
 ```caddy
- tls internal
+tls internal
 ```
 
 Caddy will issue the site certificate from its own local CA. Export/install the Caddy root CA into the trust store of every WorkBuddy/Harness machine that needs to connect. Keep TLS verification enabled.
@@ -50,4 +50,4 @@ If a later requirement calls for one HTTPS origin for both the browser UI and AP
 
 Caddy should be the network-facing entrypoint. Where practical, bind OpenContracts' raw local HTTP port to loopback or restrict port 8000 with the host firewall so LAN clients cannot bypass Caddy and send WorkerKeys/contracts over cleartext HTTP.
 
-The old Nginx alternative is not part of the selected MVP deployment path.
+Nginx and bundled production Traefik are not part of the selected MVP deployment path.
