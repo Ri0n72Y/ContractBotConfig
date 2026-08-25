@@ -1,8 +1,11 @@
-# Example internal hostname. Replace with your real LAN/VPN DNS name.
+# Canonical MVP TLS entrypoint for OpenContracts local.yml.
+# Replace the hostname with the internal DNS name used by Harness clients.
 contracts.internal.example {
-    # For an internal-only name, uncomment the next line and install/trust
-    # Caddy's root CA on every WorkBuddy/Harness host.
-    # tls internal
+    # Internal-only deployment: Caddy issues the certificate from its local CA.
+    # Install/trust Caddy's root CA on every WorkBuddy/Harness host.
+    tls internal
 
-    reverse_proxy {$OPENCONTRACTS_UPSTREAM}
+    # OpenContracts local.yml exposes Django on host port 8000.
+    # This HTTPS endpoint is used by MCP, REST imports, GraphQL and admin APIs.
+    reverse_proxy 127.0.0.1:8000
 }
