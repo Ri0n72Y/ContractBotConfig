@@ -22,10 +22,11 @@ Runtime configuration identifies separate corpuses for:
 history
 templates
 approved knowledge
-learning inbox
 ```
 
-These may all be public during MVP. `contract-repository` MUST NOT intentionally discover or read Learning Inbox during normal contract work.
+These may all be public during MVP.
+
+Session-learning material is not an OpenContracts Corpus in MVP and MUST NOT be part of routine OpenContracts retrieval.
 
 ## OC-3 Minimal MCP tools
 
@@ -71,9 +72,13 @@ Authorization: WorkerKey <corpus-bound-token>
 
 The project helper MUST omit `add_to_corpus_id`; the token's server-side binding is authoritative.
 
-## OC-7 Learning ingestion
+## OC-7 Session learning
 
-Learning files use the same controlled upload helper with a different token environment variable bound to `learning-inbox`.
+Session learning is outside OpenContracts for MVP.
+
+After separate user consent, `contract-learning` MAY generate a local experience note. Collection, review, deduplication and promotion into Skill changes are manual maintenance operations.
+
+No learning WorkerKey, Learning Inbox Corpus, vectorization or automatic retrieval is required.
 
 ## OC-8 Duplicate handling
 
@@ -103,12 +108,19 @@ If this assumption changes, migrate the relevant corpuses to private and introdu
 
 Harness-to-OpenContracts traffic SHOULD use HTTPS.
 
-OpenContracts upstream production configuration already includes Traefik with HTTP→HTTPS redirect, port 443 routing and ACME/Let's Encrypt. The checked-in example is tailored to a public DNS name; internal deployments MAY instead adapt Traefik or place Caddy/Nginx in front of the existing OpenContracts HTTP endpoint.
+OpenContracts `production.yml` includes a Traefik service exposing ports 80 and 443. The bundled Traefik configuration redirects HTTP to HTTPS and uses ACME/Let's Encrypt with an HTTP challenge.
 
-Internal CA certificates are acceptable when every Harness trusts the issuing CA.
+OpenContracts `local.yml` does not include an HTTPS proxy and exposes Django directly on port 8000.
+
+For an internal-only deployment, choose one of:
+
+- adapt the bundled production Traefik certificate configuration to the organization's DNS/PKI;
+- use a small Caddy reverse proxy in front of the existing OpenContracts HTTP endpoint.
+
+Internal CA certificates are acceptable when every Harness trusts the issuing CA. TLS verification MUST remain enabled.
 
 ## OC-13 Write credentials
 
-WorkerKeys remain required for formal and learning ingestion even when the target Corpus is public.
+A corpus-bound WorkerKey remains required for formal contract ingestion even when the target Corpus is public.
 
-Formal and Learning Inbox writes MUST use different WorkerKeys and MUST keep those credentials outside Skill content and source control.
+The WorkerKey MUST remain outside Skill content and source control.
