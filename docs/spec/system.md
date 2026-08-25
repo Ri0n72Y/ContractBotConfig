@@ -1,68 +1,31 @@
 # System Specification
 
-## S-1 Contract mode
+## SYS-1 Runtime boundary
 
-A contract/tender/agreement-related request MUST load the `contract` Skill when the Harness supports automatic Skill discovery.
+The Harness owns conversation/runtime state, local files, model execution and user interaction. The Skill Pack owns contract-specific behavior and deterministic helper usage. OpenContracts owns retrievable enterprise contract data and formal ingestion processing.
 
-Covered intents include drafting, generation, modification, review, analysis, comparison, questions about uploaded contracts, historical-contract lookup, template lookup, and formal ingestion.
+## SYS-2 Trusted-network MVP
 
-## S-2 Local-first behavior
+MVP OpenContracts runs inside a trusted LAN/VPN/restricted network. Anonymous MCP reads of public corpuses are acceptable while that network boundary remains trusted.
 
-Basic analysis, Q&A, drafting, and modification MUST work without OpenContracts.
+## SYS-3 Default contract flow
 
-A user-uploaded file MUST remain local by default. The assistant MUST NOT infer formal ingestion authorization from the presence of an attachment.
+Contract-related requests SHOULD activate `contract` and use local/Harness capabilities first.
 
-## S-3 Repository assistance
+Database retrieval is optional and is invoked only when explicitly requested or when the assistant suggests it and the user accepts.
 
-The assistant MAY suggest OpenContracts retrieval when historical enterprise material can materially improve a generation, modification, review, or comparison task.
+## SYS-4 Formal ingestion
 
-If the user already requested historical/template/database material, the assistant MUST proceed to repository access without asking a redundant consent question.
+Formal ingestion is a distinct user-authorized operation and uses the OpenContracts upload helper with a corpus-bound WorkerKey.
 
-If the user did not request repository assistance, the assistant SHOULD ask before using private enterprise history when doing so changes the scope of processing.
+## SYS-5 Experience learning
 
-## S-4 Source transparency
+Session-learning material remains outside OpenContracts for MVP.
 
-When remote sources are used, the assistant MUST identify the key contracts/templates/approved knowledge actually relied on and explain their role.
+After separate user consent, the assistant MAY create a local experience note. The note is later collected and reviewed manually by maintainers. Skill updates occur through normal source-control/version-review workflow.
 
-It MUST NOT claim a source was used solely because it appeared in search results.
+No automatic self-learning loop, Learning Inbox Corpus, vectorized retrieval or remote learning upload is required.
 
-## S-5 Formal ingestion
+## SYS-6 Future hardening
 
-Formal ingestion requires explicit user intent. The assistant MAY suggest ingestion after drafting/modifying a contract.
-
-Submission acceptance MUST be reported as processing/indexing pending until document text and retrieval readiness are later verified.
-
-## S-6 Learning capture
-
-Learning capture requires separate explicit consent after the main task.
-
-The workflow produces exactly two primary learning artifacts:
-
-```text
-session-facts.txt
-knowledge-points.txt
-```
-
-Each knowledge point MUST cite the fact IDs that support it.
-
-The workflow MUST minimize irrelevant sensitive data and MUST NOT include credentials or raw debug/tool output.
-
-## S-7 Historical values
-
-Historical material MAY supply structure, clause patterns, enterprise language, and process patterns.
-
-Project-specific values MUST NOT be inherited by default, including parties, project names, contract numbers, amounts, quantities, dates, percentages, tax rates, bank accounts, addresses, and schedules.
-
-Specific historical fields MAY be referenced only when the user explicitly authorizes those fields and the source is relevant and non-conflicting.
-
-## S-8 Strict template
-
-If a user requires a specific named template and disallows fallback, the system MUST uniquely identify that template. Missing, ambiguous, or unreadable template identity MUST stop generation and be reported to the user. A merely similar template MUST NOT substitute.
-
-## S-9 Version behavior
-
-Contract modification MUST use the version explicitly identified by the user/session. Generated modifications SHOULD produce a new file by default rather than overwrite the source.
-
-## S-10 Full analysis artifact
-
-Normal analysis SHOULD stay focused. An explicit request for a full/professional/line-by-line report MAY produce a local Harness artifact according to issue #25 without requiring the old AstrBot download stack.
+When the trusted-network assumption no longer holds, OpenContracts may migrate selected corpuses to private and use authenticated `/mcp/me/` access without changing the high-level Skill map.
