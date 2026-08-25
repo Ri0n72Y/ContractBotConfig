@@ -1,7 +1,16 @@
-.DS_Store
-*.log
-*.tmp
-secrets/
-contracts/
+# Local secrets and generated runtime files
+.env
+.env.*
+!.env.example
+config/*.env
+!config/*.env.example
+.mcp.local.json
+*.secret.json
 __pycache__/
-dist/
+*.pyc
+.DS_Store
+
+# Local artifacts
+output/
+reports/
+learning-output/

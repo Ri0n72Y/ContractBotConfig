@@ -1,9 +1,0 @@
-name: astrbot_plugin_contract_file_router
-display_name: 合同文件接收与路由
-desc: 合同文件暂存、本地正文快照、BLOCKED 状态保留、确定性会话控制和同步任务上下文；不维护持久化 current-file 状态，物理文件清理由维护任务负责。
-version: 0.5.9
-author: local
-repo: ""
-astrbot_version: ">=4.27.0,<5"
-support_platforms:
-  - wecom

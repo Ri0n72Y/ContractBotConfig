@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__opencontracts__list_threads",
+      "mcp__opencontracts__get_thread_messages",
+      "mcp__opencontracts__create_thread_message",
+      "mcp__opencontracts__list_annotations",
+      "mcp__opencontracts__list_relationships"
+    ]
+  }
+}
