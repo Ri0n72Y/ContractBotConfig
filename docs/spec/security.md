@@ -23,20 +23,17 @@ Private corpuses and authenticated `/mcp/me/` access become required when any of
 - OpenContracts is reachable outside the trusted network;
 - different users require different confidentiality scopes;
 - multiple tenants share one reachable deployment;
-- compliance requires per-user read attribution;
-- raw Learning Inbox must be hidden from ordinary network users.
+- compliance requires per-user read attribution.
 
 ## SEC-4 Corpus organization
 
-MVP SHOULD keep separate corpuses for history, templates, approved knowledge and Learning Inbox even when all are public. These boundaries organize data and make later permission hardening straightforward.
+MVP SHOULD keep separate corpuses for history, templates and approved knowledge even when all are public. These boundaries organize retrievable data and make later permission hardening straightforward.
 
-Skill policy MUST NOT use `learning-inbox` for normal retrieval.
-
-This is a workflow rule, not a confidentiality control while the Corpus is public.
+Session-learning material MUST remain outside OpenContracts in MVP.
 
 ## SEC-5 WorkerKey scope
 
-Formal contract ingestion and Learning Inbox ingestion MUST use different corpus-bound WorkerKeys.
+Formal contract ingestion MUST use a corpus-bound WorkerKey.
 
 Upload clients MUST NOT allow model/user-supplied `add_to_corpus_id` to override the WorkerKey destination.
 
@@ -49,7 +46,7 @@ WorkerKeys MUST NOT appear in:
 - Skill prose/frontmatter;
 - Git commits;
 - reports/artifacts;
-- learning files;
+- experience notes;
 - user-facing errors;
 - raw logs/tool output sent to the model.
 
@@ -62,7 +59,7 @@ Harness-to-OpenContracts traffic SHOULD use HTTPS even on the LAN.
 A deployment MAY use:
 
 - OpenContracts' bundled production Traefik after adapting host/certificate configuration;
-- a Caddy/Nginx reverse proxy;
+- a Caddy reverse proxy in front of an HTTP deployment such as `local.yml`;
 - an organization-managed internal PKI certificate.
 
 If an internal CA is used, Harness hosts MUST trust that CA. TLS verification MUST NOT be routinely disabled.
@@ -93,9 +90,13 @@ Unused MCP write/discussion tools SHOULD be denied in Harness permission configu
 
 Local attachments MUST NOT be sent to OpenContracts until explicit formal-ingestion authorization is obtained.
 
-Learning-material submission requires separate consent from formal contract ingestion.
+Experience-note generation requires separate user consent and does not authorize remote ingestion.
 
-## SEC-12 Write uncertainty
+## SEC-12 Manual learning
+
+Session-learning material is stored as local/shared experience notes outside OpenContracts. It MUST NOT automatically become runtime retrieval data or modify a Skill without maintainer review.
+
+## SEC-13 Write uncertainty
 
 Remote write helpers MUST perform no automatic HTTP retries.
 
