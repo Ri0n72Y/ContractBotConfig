@@ -2,7 +2,9 @@
 
 ## Principle
 
-For the MVP, Corpus boundaries organize business data and workflow. They are not the confidentiality boundary because the OpenContracts deployment stays inside a trusted network and the corpuses remain public within that deployment.
+For the MVP, OpenContracts stores retrievable enterprise contract data. Session-learning material is intentionally kept outside OpenContracts because it is not part of runtime retrieval.
+
+Corpus boundaries organize business data and workflow. They are not the confidentiality boundary because the OpenContracts deployment stays inside a trusted network and the corpuses remain public within that deployment.
 
 ## Recommended corpuses
 
@@ -29,28 +31,31 @@ Rules:
 
 ### `approved-knowledge`
 
-Purpose: curated drafting/review knowledge suitable for routine retrieval.
+Purpose: curated drafting/review knowledge that is intentionally useful for routine retrieval.
 
 Rules:
 
 - public inside the trusted-network MVP;
 - contains reviewed, reusable knowledge;
 - content should be concise and scoped;
-- material reaches this Corpus only through a later curation/promotion process.
+- it is maintained intentionally, not automatically populated from session learning.
 
-### `learning-inbox`
+## Experience system outside OpenContracts
 
-Purpose: raw session-learning submissions awaiting review.
+`contract-learning` produces local experience notes after separate user consent. These notes are source material for maintainers, not retrieval documents.
 
-Rules:
+MVP flow:
 
-- public inside the trusted-network MVP;
-- normal Skill behavior must not query it during routine contract retrieval;
-- a separate WorkerKey accepts writes;
-- contains session facts and distilled knowledge-point materials;
-- raw learning does not automatically influence production drafting/review.
+```text
+session corrections / accepted improvements
+→ local contract-experience-note.md
+→ manual periodic collection
+→ human review / merge / generalization
+→ update the relevant Skill files
+→ normal code review and release
+```
 
-Because the Corpus is public in the MVP, this Skill-level exclusion is not a confidentiality guarantee. A technically capable client on the trusted network may query the Corpus directly.
+No Learning Inbox Corpus, vectorization, automatic retrieval, or automatic Skill self-modification is required for MVP.
 
 ## Network boundary
 
@@ -70,7 +75,7 @@ If OpenContracts becomes reachable outside this boundary, or if different intern
 
 ## Future private-corpus migration
 
-The existing logical split is intentionally compatible with future hardening. The same four corpuses can later become private without changing the Skill semantics:
+The three retrieval corpuses can later become private without changing the Skill semantics:
 
 ```text
 public MVP corpus
