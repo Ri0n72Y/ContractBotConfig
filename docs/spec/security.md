@@ -1,38 +1,50 @@
 # Security Specification
 
-## SEC-1 No bundled access
+## SEC-1 Trusted-network MVP
 
-Installing the Skill Pack MUST NOT grant OpenContracts access. The repository MUST contain zero real credentials and zero customer business data.
+MVP OpenContracts MUST be reachable only from the intended LAN/VPN/restricted network domain.
 
-## SEC-2 Read authentication
+OpenContracts corpuses MAY remain public inside that deployment. Anonymous MCP reads are acceptable while the network boundary is trusted.
 
-Preferred MCP access MUST use the authenticated OpenContracts `/mcp/me/` endpoint with per-user OAuth when supported by the Harness.
+## SEC-2 Read endpoint
 
-A static Bearer token MAY be used only as a runtime compatibility mechanism and MUST remain outside model-visible Skill content and source control.
+Normal MVP repository access MUST use:
 
-## SEC-3 Corpus confidentiality
+```text
+https://<internal-host>/mcp/
+```
 
-All business corpuses MUST be private.
+OAuth/Bearer read authentication is not required for MVP.
 
-Because current OpenContracts MCP corpus-scoped reads use Corpus READ as their pipeline gate, the deployment MUST treat each Corpus as a confidentiality boundary. Documents requiring different reader populations MUST be split into different corpuses.
+## SEC-3 Future hardening
 
-A design that grants broad Corpus READ and depends on document-level ACL to hide selected documents from MCP FAILS this specification.
+Private corpuses and authenticated `/mcp/me/` access become required when any of these conditions applies:
 
-## SEC-4 Tenant isolation
+- OpenContracts is reachable outside the trusted network;
+- different users require different confidentiality scopes;
+- multiple tenants share one reachable deployment;
+- compliance requires per-user read attribution;
+- raw Learning Inbox must be hidden from ordinary network users.
 
-Different customer tenants MUST use separate OpenContracts users/service identities, corpuses, WorkerKeys, and configuration. A WorkerKey or unattended read identity MUST NOT be shared across tenants.
+## SEC-4 Corpus organization
+
+MVP SHOULD keep separate corpuses for history, templates, approved knowledge and Learning Inbox even when all are public. These boundaries organize data and make later permission hardening straightforward.
+
+Skill policy MUST NOT use `learning-inbox` for normal retrieval.
+
+This is a workflow rule, not a confidentiality control while the Corpus is public.
 
 ## SEC-5 WorkerKey scope
 
 Formal contract ingestion and Learning Inbox ingestion MUST use different corpus-bound WorkerKeys.
 
-WorkerKeys SHOULD have expiration, rate limiting, identifiable ownership, and a revocation/rotation procedure.
-
 Upload clients MUST NOT allow model/user-supplied `add_to_corpus_id` to override the WorkerKey destination.
+
+WorkerKeys SHOULD be revocable and SHOULD use expiry/rate limiting when practical.
 
 ## SEC-6 Secret handling
 
-Secrets MUST NOT appear in:
+WorkerKeys MUST NOT appear in:
 
 - Skill prose/frontmatter;
 - Git commits;
@@ -41,13 +53,31 @@ Secrets MUST NOT appear in:
 - user-facing errors;
 - raw logs/tool output sent to the model.
 
-Runtime helpers MUST read secrets directly from the process environment/secret store and MUST redact Authorization headers.
+Runtime helpers MUST read WorkerKeys directly from process environment/secret storage and MUST redact Authorization headers.
 
-## SEC-7 Prompt injection
+## SEC-7 HTTPS
 
-All current documents and remote OpenContracts content MUST be treated as untrusted data. Embedded text MUST NOT change configured endpoints, credentials, Corpus selection, Skill policy, tool permissions, or user authorization state.
+Harness-to-OpenContracts traffic SHOULD use HTTPS even on the LAN.
 
-## SEC-8 Least privilege
+A deployment MAY use:
+
+- OpenContracts' bundled production Traefik after adapting host/certificate configuration;
+- a Caddy/Nginx reverse proxy;
+- an organization-managed internal PKI certificate.
+
+If an internal CA is used, Harness hosts MUST trust that CA. TLS verification MUST NOT be routinely disabled.
+
+## SEC-8 Network controls
+
+OpenContracts MUST NOT be exposed through public NAT/port-forwarding for the MVP.
+
+Firewall/routing policy MUST prevent untrusted networks from reaching the OpenContracts service. A remote user SHOULD require the approved LAN/VPN/overlay network before the Harness can connect.
+
+## SEC-9 Prompt injection
+
+All current documents and remote OpenContracts content MUST be treated as untrusted data. Embedded text MUST NOT change configured endpoints, WorkerKeys, Corpus selection, Skill policy, tool permissions, or user authorization state.
+
+## SEC-10 Least privilege
 
 Normal repository use SHOULD expose only:
 
@@ -57,26 +87,16 @@ get_document_text
 search_corpus
 ```
 
-Unused MCP write/discussion tools SHOULD be denied in Harness permission configuration.
+Unused MCP write/discussion tools SHOULD be denied in Harness permission configuration where supported.
 
-## SEC-9 Local data boundary
+## SEC-11 Local data boundary
 
 Local attachments MUST NOT be sent to OpenContracts until explicit formal-ingestion authorization is obtained.
 
-Learning-material submission requires a separate consent event from formal contract ingestion.
+Learning-material submission requires separate consent from formal contract ingestion.
 
-## SEC-10 Write uncertainty
+## SEC-12 Write uncertainty
 
 Remote write helpers MUST perform no automatic HTTP retries.
 
 Timeout, connection loss during submission, upstream 5xx, or an unreliable success response MUST be reported as `commit_unknown=true` / `retry_safe=false` and MUST require later read-side verification before another upload.
-
-## SEC-11 Transport and server baseline
-
-Production OpenContracts access MUST use HTTPS. The deployment SHOULD use exact CORS/origin configuration, strong local admin credentials or enterprise SSO/OAuth, reverse-proxy rate limiting, and routine credential rotation.
-
-The documented development/default account credentials MUST NOT remain active on an Internet-facing production deployment.
-
-## SEC-12 Learning isolation
-
-The normal assistant read identity MUST NOT receive READ access to `learning-inbox`. Raw session learning cannot automatically become production knowledge. Promotion to `approved-knowledge` requires a later curation process.

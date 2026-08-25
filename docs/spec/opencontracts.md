@@ -2,19 +2,21 @@
 
 ## OC-1 Endpoints
 
-The configured base URL identifies one tenant-authorized OpenContracts deployment.
+The configured base URL identifies the OpenContracts deployment reachable inside the trusted network.
 
-Preferred MCP URL:
+MVP MCP URL:
 
 ```text
-https://<host>/mcp/me/
+https://<internal-host>/mcp/
 ```
 
-The public anonymous `/mcp/` endpoint MUST NOT be used for private enterprise contract corpuses.
+The MVP keeps business corpuses public inside the OpenContracts deployment, so normal read-side MCP access is anonymous.
+
+Private corpuses and `/mcp/me/` authenticated access are a future hardening path, not an MVP requirement.
 
 ## OC-2 Retrieval corpuses
 
-Runtime configuration identifies separate private corpuses for:
+Runtime configuration identifies separate corpuses for:
 
 ```text
 history
@@ -23,7 +25,7 @@ approved knowledge
 learning inbox
 ```
 
-`contract-repository` MUST NOT discover or read Learning Inbox.
+These may all be public during MVP. `contract-repository` MUST NOT intentionally discover or read Learning Inbox during normal contract work.
 
 ## OC-3 Minimal MCP tools
 
@@ -35,7 +37,7 @@ get_document_text
 search_corpus
 ```
 
-Additional tools require an explicit product need and security review.
+Additional tools require an explicit product need.
 
 ## OC-4 Retrieval evidence
 
@@ -83,24 +85,30 @@ The system MUST NOT silently overwrite based only on a similar title.
 
 HTTP acceptance does not prove extracted text or semantic search readiness.
 
-After an accepted upload, the user MUST be told that parsing/indexing is still processing. A later read-side check MAY confirm the document is searchable.
+After an accepted upload, the user MUST be told that parsing/indexing is still processing. A later MCP read MAY confirm the document is searchable.
 
 ## OC-10 Commit-unknown
 
 Any ambiguous write outcome MUST stop automatic retries. The next safe action is read-side verification.
 
-## OC-11 Corpus security
+## OC-11 Network boundary
 
-MCP access follows OpenContracts' current corpus-as-gate semantics for pipeline-facing document reads. Deployment design MUST therefore place documents with different confidentiality requirements in separate corpuses.
+For MVP, confidentiality depends on OpenContracts being unreachable from untrusted networks.
 
-## OC-12 Server configuration
+The deployment MUST avoid public port forwarding/NAT exposure and SHOULD require the approved LAN/VPN/network overlay before a Harness can reach the service.
 
-Internet-facing production deployments SHOULD:
+If this assumption changes, migrate the relevant corpuses to private and introduce authenticated MCP access.
 
-- enable HTTPS;
-- use Auth0/OIDC/SSO where appropriate or strong non-default local credentials;
-- keep business corpuses private;
-- configure MCP public base URL and allowed origins intentionally;
-- rate-limit import endpoints at the reverse proxy;
-- create revocable, expiring, rate-limited WorkerKeys;
-- retain operational audit logs needed for incident response.
+## OC-12 HTTPS
+
+Harness-to-OpenContracts traffic SHOULD use HTTPS.
+
+OpenContracts upstream production configuration already includes Traefik with HTTP→HTTPS redirect, port 443 routing and ACME/Let's Encrypt. The checked-in example is tailored to a public DNS name; internal deployments MAY instead adapt Traefik or place Caddy/Nginx in front of the existing OpenContracts HTTP endpoint.
+
+Internal CA certificates are acceptable when every Harness trusts the issuing CA.
+
+## OC-13 Write credentials
+
+WorkerKeys remain required for formal and learning ingestion even when the target Corpus is public.
+
+Formal and Learning Inbox writes MUST use different WorkerKeys and MUST keep those credentials outside Skill content and source control.

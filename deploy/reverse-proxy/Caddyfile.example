@@ -1,0 +1,8 @@
+# Example internal hostname. Replace with your real LAN/VPN DNS name.
+contracts.internal.example {
+    # For an internal-only name, uncomment the next line and install/trust
+    # Caddy's root CA on every WorkBuddy/Harness host.
+    # tls internal
+
+    reverse_proxy {$OPENCONTRACTS_UPSTREAM}
+}

@@ -2,18 +2,17 @@
 
 ## Principle
 
-Corpus boundaries serve both business organization and MCP confidentiality. A user who can READ a Corpus through the current MCP pipeline should be assumed able to read every active document in that Corpus.
+For the MVP, Corpus boundaries organize business data and workflow. They are not the confidentiality boundary because the OpenContracts deployment stays inside a trusted network and the corpuses remain public within that deployment.
 
 ## Recommended corpuses
 
 ### `contracts-history`
 
-Purpose: formally ingested executed/draft historical contracts that may be used for retrieval and comparison.
+Purpose: formally ingested executed/draft historical contracts used for retrieval and comparison.
 
 Rules:
 
-- private;
-- only intended contract users/hosts receive READ;
+- public inside the trusted-network MVP;
 - formal ingestion uses a WorkerKey bound only to this Corpus;
 - project-specific values are data, never automatic defaults for new contracts.
 
@@ -23,18 +22,18 @@ Purpose: enterprise-approved contract templates.
 
 Rules:
 
-- private;
+- public inside the trusted-network MVP;
 - only actual templates and related template guidance belong here;
 - strict named-template requests require unique identity confirmation;
 - templates may contain business text but never credentials or operational system instructions.
 
 ### `approved-knowledge`
 
-Purpose: curated enterprise drafting/review knowledge that is safe for routine assistant retrieval.
+Purpose: curated drafting/review knowledge suitable for routine retrieval.
 
 Rules:
 
-- private;
+- public inside the trusted-network MVP;
 - contains reviewed, reusable knowledge;
 - content should be concise and scoped;
 - material reaches this Corpus only through a later curation/promotion process.
@@ -45,23 +44,37 @@ Purpose: raw session-learning submissions awaiting review.
 
 Rules:
 
-- private;
-- normal assistant MCP identity has no READ;
-- separate WorkerKey accepts writes;
-- contains `session-facts.txt` and `knowledge-points.txt` pairs;
+- public inside the trusted-network MVP;
+- normal Skill behavior must not query it during routine contract retrieval;
+- a separate WorkerKey accepts writes;
+- contains session facts and distilled knowledge-point materials;
 - raw learning does not automatically influence production drafting/review.
 
-## Confidentiality groups
+Because the Corpus is public in the MVP, this Skill-level exclusion is not a confidentiality guarantee. A technically capable client on the trusted network may query the Corpus directly.
 
-If a tenant has different populations such as legal, procurement, executive, or project teams and those populations must not see one another's documents, create separate corpuses per confidentiality group, for example:
+## Network boundary
+
+The deployment assumes:
 
 ```text
-contracts-history-procurement
-contracts-history-executive
+trusted LAN / VPN / restricted network
+    ├── Harness users
+    ├── WorkBuddy host
+    └── OpenContracts
+
+Internet / untrusted network
+    X OpenContracts
 ```
 
-Do not rely on private individual documents inside a broadly readable Corpus for MCP isolation.
+If OpenContracts becomes reachable outside this boundary, or if different internal users require different confidentiality scopes, migrate the affected corpuses to private and introduce authenticated MCP access.
 
-## Cross-tenant rule
+## Future private-corpus migration
 
-A shared OpenContracts server may host multiple tenants only when users/service accounts, corpuses, WorkerKeys, and permissions are separated per tenant. Configuration for one tenant must never contain another tenant's corpus slugs or credentials.
+The existing logical split is intentionally compatible with future hardening. The same four corpuses can later become private without changing the Skill semantics:
+
+```text
+public MVP corpus
+→ private corpus
+→ explicit OpenContracts user/service permissions
+→ /mcp/me/ authenticated access
+```

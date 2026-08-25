@@ -4,6 +4,8 @@
 
 Provide a portable contract-assistant capability that can be installed into WorkBuddy or another capable Harness. The Harness owns the conversational runtime, local files, model access, and user experience. OpenContracts provides optional enterprise knowledge and controlled ingestion.
 
+The MVP assumes OpenContracts is deployed inside a trusted LAN/VPN/restricted network domain. Read-side access uses public corpuses over the anonymous MCP endpoint; formal writes remain WorkerKey-authenticated.
+
 ## Context
 
 ```mermaid
@@ -12,14 +14,16 @@ flowchart LR
     H[WorkBuddy / Harness]
     S[Contract Skill Pack]
     L[Local Files / Artifacts]
-    M[MCP /mcp/me/]
-    R[OpenContracts private corpuses]
+    N[Trusted Network]
+    P[HTTPS Proxy / Traefik]
+    M[OpenContracts MCP /mcp/]
+    R[Public-in-deployment Corpuses]
     W[WorkerKey upload helper]
 
     U --> H --> S
     S --> L
-    S -->|historical retrieval when requested/approved| M --> R
-    S -->|explicit formal ingestion| W --> R
+    S -->|historical retrieval when requested/approved| N --> P --> M --> R
+    S -->|explicit formal ingestion| W --> N --> P --> R
     S -->|explicit learning consent| W
 ```
 
@@ -46,12 +50,18 @@ The Skill Pack owns:
 
 OpenContracts owns:
 
-- authenticated identities;
-- Corpus permissions;
-- stored contracts/templates/approved knowledge;
+- stored contracts/templates/knowledge;
 - extraction and retrieval;
+- public MCP read service for the trusted-network MVP;
 - WorkerKey-bound ingestion;
-- server-side audit/logging available in the deployment.
+- server-side processing/audit data available in the deployment.
+
+Infrastructure owns:
+
+- LAN/VPN/restricted-domain reachability;
+- DNS;
+- HTTPS certificate termination;
+- firewall rules preventing untrusted-network access.
 
 ## Skill map
 
@@ -88,6 +98,7 @@ user asks to draft
 → optionally suggest enterprise history/template retrieval
 → user agrees or already requested it
 → contract-repository
+→ anonymous MCP over trusted network
 → Reference Pack
 → draft
 → contract-document
@@ -112,10 +123,20 @@ local/generated contract
 valuable corrections in completed session
 → suggest learning capture
 → separate user consent
-→ session-facts.txt
-→ knowledge-points.txt
+→ session facts
+→ knowledge points
 → Learning Inbox WorkerKey
-→ later human/curation process
+→ later curation process
+```
+
+## Future hardening
+
+When the trusted-network assumption no longer holds, keep the same Skill architecture and harden OpenContracts separately:
+
+```text
+public corpuses + /mcp/
+→ private corpuses + /mcp/me/
+→ per-user/service OAuth/Bearer permissions
 ```
 
 ## Removed architecture
