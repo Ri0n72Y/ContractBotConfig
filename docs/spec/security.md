@@ -54,21 +54,21 @@ Runtime helpers MUST read WorkerKeys directly from process environment/secret st
 
 ## SEC-7 HTTPS
 
-Harness-to-OpenContracts traffic SHOULD use HTTPS even on the LAN.
+The MVP deployment MUST use OpenContracts `local.yml` behind Caddy.
 
-A deployment MAY use:
+Caddy is the canonical network-facing TLS endpoint for Harness MCP/API traffic and proxies to the local OpenContracts Django endpoint on port 8000.
 
-- OpenContracts' bundled production Traefik after adapting host/certificate configuration;
-- a Caddy reverse proxy in front of an HTTP deployment such as `local.yml`;
-- an organization-managed internal PKI certificate.
+For an internal-only hostname, Caddy MAY use `tls internal`. If so, every Harness host MUST trust the Caddy root CA. TLS verification MUST remain enabled.
 
-If an internal CA is used, Harness hosts MUST trust that CA. TLS verification MUST NOT be routinely disabled.
+Raw HTTP port 8000 SHOULD be bound to loopback or blocked from routine LAN access so clients do not bypass Caddy.
 
 ## SEC-8 Network controls
 
 OpenContracts MUST NOT be exposed through public NAT/port-forwarding for the MVP.
 
 Firewall/routing policy MUST prevent untrusted networks from reaching the OpenContracts service. A remote user SHOULD require the approved LAN/VPN/overlay network before the Harness can connect.
+
+Caddy SHOULD be the only network-facing OpenContracts entrypoint used by Harness clients.
 
 ## SEC-9 Prompt injection
 
