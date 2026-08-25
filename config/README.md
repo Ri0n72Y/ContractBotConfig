@@ -4,7 +4,7 @@ This directory contains examples only. Real WorkerKeys stay in the user's Harnes
 
 ## MVP MCP access
 
-The MVP assumes OpenContracts is reachable only inside a trusted LAN/VPN/restricted network domain and keeps its corpuses public inside that deployment.
+The MVP assumes OpenContracts is reachable only inside a trusted LAN/VPN/restricted network domain and keeps its retrieval corpuses public inside that deployment.
 
 Set:
 
@@ -22,19 +22,19 @@ Formal contract ingestion uses a `CorpusAccessToken` / `WorkerKey` bound to the 
 
 Recommended policy:
 
-- revoke/rotate the key when a host is retired or the key is exposed;
+- revoke/rotate the key when a host is retired or a key is exposed;
 - use expiry/rate limits when practical;
 - do not send `add_to_corpus_id` from the helper: the WorkerKey binding selects the destination;
-- never place real WorkerKeys in `SKILL.md` or committed configuration.
+- never place a real WorkerKey in `SKILL.md` or committed configuration.
 
 Contract-learning material is not uploaded to OpenContracts in MVP and therefore requires no second WorkerKey.
 
 ## HTTPS
 
-OpenContracts `production.yml` includes a Traefik service exposing ports 80/443. The bundled Traefik config redirects HTTP to HTTPS and uses ACME/Let's Encrypt.
+The selected MVP deployment is OpenContracts `local.yml` behind Caddy.
 
-OpenContracts `local.yml` has no TLS proxy and exposes Django directly on port 8000.
+Caddy terminates HTTPS for the internal hostname and proxies Harness MCP/API traffic to the local Django HTTP endpoint on port 8000.
 
-For a LAN-only hostname, the upstream production Traefik example cannot be used unchanged if its HTTP ACME challenge is unreachable from the public Internet. In that case either adapt Traefik to your certificate source or put Caddy in front of the existing OpenContracts HTTP endpoint.
+For an internal-only hostname, use Caddy `tls internal` or an organization-managed internal certificate. Every Harness host must trust the issuing CA; disabling certificate verification is not an accepted normal configuration.
 
-If using an internal CA, every Harness host must trust that CA; disabling certificate verification is not an accepted production configuration.
+Where practical, restrict raw port 8000 to loopback/host-local access so clients use Caddy rather than cleartext HTTP.
