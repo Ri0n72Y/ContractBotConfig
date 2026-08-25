@@ -1,209 +1,184 @@
-# 合同上传时序
+# 合同文件与归档时序
 
-## 新合同
+## 1. 原则
 
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant R as Router
-    participant M as Master
-    participant H as Handoff Policy
-    participant O as OpenContracts Operator
-    participant MCP as OpenContracts Public MCP
-    participant G as Upload Gateway
-    participant OC as OpenContracts
-    participant RG as Result Guard
+WorkBuddy/Harness 方案下，文件首先属于客户端工作目录。分析、修改、生成都优先在本地完成；只有用户明确需要进入企业合同库时才归档到 OpenContracts。
 
-    U->>R: 上传合同文件
-    R->>R: 暂存文件 + 计算 SHA-256
-    R->>R: 从原文件名提取唯一日期提示
-    R-->>U: 返回 1/2/提问菜单
-    U->>R: 回复 1
-    R->>R: 从 staged_path 本地解析合同正文
-    R->>M: contract_task_context + identity_hints + transient staged 正文
-    M->>M: 从正文提取标题/日期；正文日期为空时使用 filename hint
-    M->>H: transfer_to_opencontracts_operator（不传 corpus_slug）
-    H->>H: 使用 default_opencontracts_corpus_slug
-    H->>O: canonical context + targets.opencontracts
-    O->>G: opencontracts_gateway_status
-    G-->>O: normalized identity
-    O->>MCP: list_documents(corpus_slug, search=document_title)
-    MCP-->>O: 无标题完全一致文档
-    O->>G: date + title + staged_path + sha256
-    G->>G: WorkerKey POST 前复核 Router task_id + source SHA
-    G->>OC: WorkerKey + YYYY-MM-DD_合同标题.扩展名
-    OC-->>G: created
-    G-->>O: processing
-    O->>MCP: list_documents + get_document_text + search_corpus
-    MCP-->>O: processing 或 verified
-    O-->>M: 标准状态标记
-    M->>RG: 最终结果
-    RG-->>U: 客户回复
-```
+不再使用 AstrBot File Router、transient context 或 pending task state 管理所有文件。
 
-Router 的 staged 正文解析发生在用户选择操作之后、真正 LLM 请求之前，正文以 AstrBot `_no_save` transient context 直接加入同一次请求，不增加 FileRead tool call 或额外 AI 回合，也不写入长期 conversation history。PDF 和 DOCX 解析都在线程中执行；TXT/MD 直接本地解码。`.doc` 先由 DOC Preconverter 转换。
-
-公开 MCP 地址由 AstrBot 配置为 `/mcp/`。所有读取工具使用 Handoff Policy 写入的 `targets.opencontracts` 作为 `corpus_slug`；流程不调用 `get_corpus_info`、`opencontracts_check_duplicate` 或不存在的 corpus-scoped URL。`default_opencontracts_corpus_slug` 是唯一权威 Corpus 配置，Master handoff 和 Router task context 不覆盖它。
-
-## 原文件名日期
+## 2. 本地分析
 
 ```mermaid
 sequenceDiagram
-    participant R as Router
-    participant M as Master
-    participant U as 用户
+    participant U as User
+    participant H as WorkBuddy/Harness
+    participant S as Contract Skill
+    participant MCP as OpenContracts MCP
 
-    R->>R: 解析 original_name
-    alt 唯一有效日期
-        R->>M: identity_hints.contract_date=YYYY-MM-DD
-        M->>M: 正文日期为空，直接采用提示
-        Note over M,U: 不向用户追问日期
-    else 无日期或多个不同日期
-        R->>M: identity_hints 为空
-        M-->>U: BLOCKED，询问缺失日期
+    U->>H: 提供本地合同文件
+    H->>H: 读取/解析本地文件
+    H->>S: 执行分析规则
+    opt 需要企业背景
+        H->>MCP: search/list/read
+        MCP-->>H: 企业合同/模板证据
     end
+    H-->>U: 风险摘要/问答
 ```
 
-支持 `YYYY-M-D`、`YYYY.M.D`、`YYYY_M_D`、中文年月日和 `YYYYMMDD`。
+本地分析不自动把文件上传到 OpenContracts。
 
-## 同会话状态串行
-
-Router 对同一 UMO 的 intake/context/cleanup 使用一个轻量 `asyncio.Lock`。文件暂存、ACK、conversation 创建、任务登记和 staged 正文快照在同一会话内按顺序完成；锁在 LLM 请求真正进入 Agent 执行前释放，不串行不同用户，也不覆盖后续 Operator/MCP 网络执行。
-
-因此用户快速连续发送“1”“结束”或重复选择时，第二条消息不会插入第一条消息尚未登记 active task 的 await 窗口。
-
-## 运行中“结束”
+## 3. 本地修改
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant R as Router
-    participant O as OpenContracts Operator
-    participant G as Upload Gateway
-    participant OC as OpenContracts
-    participant RG as Result Guard
+    participant U as User
+    participant H as Harness
+    participant MCP as OpenContracts MCP
+    participant R as Local Renderer
 
-    R->>R: pending 中保存 dispatch_task_id
-    O->>O: 正在处理上传任务
-    U->>R: 结束
-    R->>R: 删除当前 pending task + 登记 cancelled task
-    alt Gateway 尚未开始 WorkerKey POST
-        O->>G: opencontracts_upload_document
-        G->>G: 读取 Router state 并复核 task_id + source SHA
-        G-->>O: blocked / task_cancelled
-        Note over G,OC: 不发起写入
-    else HTTP POST 已经开始
-        G->>OC: 已在传输中的请求继续按实际结果处理
+    U->>H: 修改这份合同
+    H->>H: 解析源文件并确认修改目标
+    opt 需要企业参考
+        H->>MCP: search/read references
+        MCP-->>H: evidence
     end
-    O-->>RG: 迟到结果
-    RG-->>RG: 抑制已取消 task 的客户回复
+    H->>R: render revised document
+    R-->>H: new DOCX/PDF + hash
+    H-->>U: 修订文件 + 修改摘要
 ```
 
-取消保证的边界是“写入开始前”。已经开始的 HTTP 请求不能假装回滚；若提交状态未知，继续使用原有 MANUAL_REVIEW 语义。
+原文件默认不覆盖。
 
-## 远端合同已存在
+## 4. 归档到 OpenContracts
+
+### 4.1 前置条件
+
+归档前必须至少得到：
+
+```text
+source_path
+source_hash
+contract_title
+contract_date（有明确日期时）
+target logical corpus
+```
+
+如果企业命名规范要求日期但正文无法确定日期，Skill 应询问用户或允许明确的“未知日期”策略；不得伪造日期。
+
+### 4.2 新文档
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant R as Router
-    participant M as Master
-    participant O as OpenContracts Operator
-    participant MCP as OpenContracts Public MCP
-    participant RG as Result Guard
+    participant U as User
+    participant H as Harness + Skill
+    participant MCP as OpenContracts MCP
+    participant API as OpenContracts Upload API
 
-    U->>R: 选择上传
-    R->>M: transient staged 正文 + contract_task_context
-    M->>O: 规范化合同身份
-    O->>MCP: list_documents(corpus_slug, search=document_title)
-    MCP-->>O: 标题完全一致
-    O-->>M: DUPLICATE_CONFIRMATION_REQUIRED
-    M->>RG: 最终状态
-    RG->>R: preserve=duplicate_confirmation_required
-    RG-->>U: 询问重新上传或取消
-```
-
-## BLOCKED 后恢复
-
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant R as Router
-    participant M as Master
-    participant O as OpenContracts Operator
-    participant RG as Result Guard
-
-    M-->>RG: CONTRACT_UPLOAD:BLOCKED + 原因
-    RG->>RG: 分类 missing_date / missing_title / system
-    RG->>R: preserve=blocked + blocked_reason
-    R->>R: state=awaiting_blocked_resolution
-    R->>R: 保留 staged_path、SHA-256 和 pending
-    RG-->>U: 文件已保留；补充信息或修复后回复继续
-    U->>R: 日期 / 标题 / 继续
-    R->>R: 重新从 staged_path 取得 transient 正文快照
-    R->>M: 原文件任务上下文 + 正文 + resume.user_input
-    M->>O: 继续上传流程
-```
-
-`BLOCKED` 尚未写入，因此允许复用原暂存文件。客户回复“结束”或“取消”时 Router 清理；客户发送新文件时 Router 要求先结束当前保留任务。
-
-即使模型漏写显式 BLOCKED 标记，只要最终文本明确说明日期或标题缺失，Result Guard 仍将其识别为可恢复阻断。
-
-## 客户确认重新上传
-
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant R as Router
-    participant M as Master
-    participant O as OpenContracts Operator
-    participant G as Upload Gateway
-    participant OC as OpenContracts
-
-    U->>R: 重新上传
-    R->>R: 记录 confirmation_id 和时间
-    R->>R: 复用 staged_path 取得 transient 正文快照
-    R->>M: reupload task context + staged 正文
-    M->>O: 同步重新上传任务
-    O->>G: date + title + confirmation_id
-    G->>G: 校验会话、哈希、确认编号和有效期
-    G->>G: WorkerKey POST 前复核当前 task
-    G->>OC: WorkerKey 文档导入
-    OC-->>G: updated
-    G-->>O: processing
-```
-
-## 提交状态未知
-
-```mermaid
-sequenceDiagram
-    participant O as OpenContracts Operator
-    participant G as Upload Gateway
-    participant OC as OpenContracts
-    participant RG as Result Guard
-    participant U as 用户
-
-    O->>G: opencontracts_upload_document
-    G->>OC: POST /api/imports/documents/
-    alt timeout / connection error
-        OC--xG: 响应未知
-        G-->>O: transport_commit_unknown
-    else 5xx
-        OC-->>G: server error
-        G-->>O: upstream_commit_unknown
-    else unexpected 2xx body
-        OC-->>G: success status + invalid contract
-        G-->>O: unexpected_success_response
-    else updated without confirmation
-        OC-->>G: updated
-        G-->>O: unexpected_unconfirmed_update
+    U->>H: 归档
+    H->>H: hash + identity
+    H->>MCP: list_documents/search_corpus
+    MCP-->>H: no exact match
+    H->>API: authenticated multipart upload
+    API-->>H: accepted
+    loop until terminal or bounded timeout
+        H->>MCP: list_documents/get_document_text/search_corpus
+        MCP-->>H: remote state
     end
-    O-->>RG: MANUAL_REVIEW
-    RG-->>U: 已记录审计，请勿重复上传
+    H-->>U: COMPLETE / PROCESSING / MANUAL_REVIEW / FAILED
 ```
 
-这些路径可能已经写入，不属于可恢复 BLOCKED。Gateway 追加 receipt，Operator 禁止再次调用上传工具。
+### 4.3 已存在文档
 
-## 写入前路径冲突
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant H as Harness + Skill
+    participant MCP as OpenContracts MCP
+    participant API as OpenContracts Upload API
 
-只有能够确认尚未提交的路径冲突才转换为 `DUPLICATE_CONFIRMATION_REQUIRED`，并保留当前文件等待客户确认。
+    H->>MCP: search exact identity
+    MCP-->>H: existing document
+    H-->>U: 已存在；是否作为新版本/新文档归档？
+    U->>H: confirm
+    H->>API: version/update operation
+    API-->>H: accepted/result
+    H->>MCP: verify remote fact
+    MCP-->>H: current document/version
+    H-->>U: result
+```
+
+没有用户确认时，不对已存在合同进行覆盖/版本写入。
+
+## 5. Commit unknown
+
+以下场景不得自动重试写入：
+
+```text
+request body 已发送后连接断开
+server timeout 但不知道是否提交
+返回成功状态但响应结构无法确认
+客户端被取消但服务端可能已接收
+```
+
+统一返回：
+
+```text
+MANUAL_REVIEW
+retry_safe=false
+request_id=<if available>
+source_hash=<hash>
+```
+
+后续先通过 MCP/管理端核查远端事实，再决定是否继续。
+
+## 6. 文件生命周期
+
+### 办公室用户
+
+由客户 harness 的工作空间策略管理。Skill 不维护隐藏的 current-file 指针；模型根据当前任务引用的显式路径/附件工作。
+
+### WorkBuddy 微信宿主
+
+使用 WorkBuddy 助理专属工作目录。Skill 应把输入、临时文件和产物放在各自子目录，并使用 request/session 标识避免混淆。
+
+建议：
+
+```text
+workspace/
+  inbox/
+  work/
+  output/
+  metadata/
+```
+
+## 7. 文件身份
+
+本地阶段使用 SHA-256 作为完整性事实；如需短时去重可附加更快 hash，但任何远端写入确认均以 SHA-256 和远端 document/version 身份为准。
+
+建议 sidecar：
+
+```json
+{
+  "source_name": "合同.docx",
+  "sha256": "...",
+  "contract_title": "...",
+  "contract_date": "...",
+  "remote_document_id": null,
+  "status": "local|processing|archived|manual_review"
+}
+```
+
+## 8. 不再保留的旧状态
+
+以下 AstrBot 专有状态不进入新架构：
+
+```text
+Router pending
+awaiting_blocked_resolution
+contract_preserve_pending_reason
+contract_task_context
+staged_contract_text
+WeCom Result Guard late-result suppression
+```
+
+需要的安全语义改由 Skill 的显式步骤、OpenContracts 远端事实和本地 sidecar metadata 表达。

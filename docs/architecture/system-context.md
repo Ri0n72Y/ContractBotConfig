@@ -1,195 +1,238 @@
-# ContractBot 系统上下文
+# ContractBot 目标系统上下文（WorkBuddy / Harness 架构）
 
-## 目标
+> 状态：`workbuddy-refactor` 分支的目标架构。旧 AstrBot 方案冻结在 `astrbot-solution` 分支，不再作为本分支的设计基线。
 
-ContractBot 把企业微信中的合同上传、读取分析和合同生成转为受限的 AstrBot 工作流。OpenContracts 保存历史合同和生成资产；代码仓库不保存真实合同模板、企业参数、历史合同或项目事实。
+## 1. 目标
 
-## Context
+ContractBot 不再充当独立 Agent 平台，而收敛为两类交付物：
+
+1. **OpenContracts 能力面**：保存企业合同、模板、历史资料和结构化知识，通过 HTTPS MCP 与必要的文件导入接口提供受权限约束的业务数据能力；
+2. **Contract Skill Pack**：安装到 WorkBuddy 或客户自己的 MCP-capable harness 中，负责合同分析、修改、生成、检索和归档流程的 Agent 侧规范与本地脚本。
+
+模型、会话、工具调度和多数 token 成本由客户选择的 WorkBuddy / harness 承担。
+
+## 2. 两个客户场景
+
+### 2.1 办公室用户
 
 ```mermaid
 flowchart LR
-    User[企业合同用户]
-    WeCom[企业微信]
-    AstrBot[ContractBot / AstrBot]
-    OpenContracts[OpenContracts]
-    Download[HTTPS Download]
+    U[办公室员工]
+    H[WorkBuddy / 客户自有 Harness]
+    S[Contract Skill Pack]
+    MCP[OpenContracts HTTPS MCP]
+    API[OpenContracts 文件导入 API]
+    OC[(OpenContracts)]
+    L[本地合同/产物]
 
-    User --> WeCom --> AstrBot
-    AstrBot -->|公开 MCP 读取/检索| OpenContracts
-    AstrBot -->|WorkerKey 导入| OpenContracts
-    AstrBot -->|发布 DOCX| Download
-    AstrBot --> WeCom
+    U --> H
+    S --> H
+    H -->|读取、检索、讨论、领域工具| MCP --> OC
+    H -->|需归档时上传文件| API --> OC
+    H <--> L
 ```
 
-## AstrBot 组件
+办公室用户直接在自己的工作环境内处理合同；Skill Pack 只规定合同工作流和提供确定性脚本，不提供第二套聊天 UI 或 Agent runtime。
+
+### 2.2 一线 / 微信用户
+
+```mermaid
+flowchart LR
+    W[微信用户]
+    WB[宿主机 WorkBuddy 助理]
+    S[Contract Skill Pack]
+    MCP[OpenContracts HTTPS MCP]
+    API[OpenContracts 文件导入 API]
+    OC[(OpenContracts)]
+    WS[助理专属工作目录]
+
+    W -->|微信客服号/微信助理| WB
+    S --> WB
+    WB --> MCP --> OC
+    WB --> API --> OC
+    WB <--> WS
+```
+
+WorkBuddy 运行在客户或我方受控宿主机上，宿主机保持在线。微信只是远程控制入口，实际文件、Skill、MCP 凭证和执行环境都在宿主机。
+
+## 3. 核心架构原则
+
+### 3.1 Agent Runtime 与业务能力彻底分离
+
+- WorkBuddy / harness：模型调用、会话、规划、工具调度、本地文件操作、渠道接入；
+- Skill Pack：合同领域规则、工作流、输出规范、脚本；
+- OpenContracts：合同事实、企业模板、历史合同、检索、权限、讨论和归档；
+- ContractBotConfig：Skill、OpenContracts 调整脚本、部署说明和验收规范。
+
+本分支不再维护 Master / Operator / Builder Persona 体系。
+
+### 3.2 MCP 是主要远端能力面，不承担大文件二进制运输
+
+OpenContracts MCP 用于：
+
+```text
+list_documents
+get_document_text
+search_corpus
+list_annotations
+list_relationships
+list_threads
+get_thread_messages
+create_thread_message
+以及后续经过审计的合同领域扩展工具
+```
+
+本地 PDF/DOCX 等文件由 harness 本地读取；需要归档进 OpenContracts 时，Skill 中的确定性上传脚本调用 OpenContracts HTTPS 文件导入接口。不要为二进制上传重新造一层 Agent Gateway。
+
+### 3.3 公网暴露的是受认证的 OpenContracts 服务，不是内部数据库
+
+生产环境仅通过 TLS 反向代理暴露必要路径。企业私有数据必须使用 OpenContracts 认证与对象权限；匿名 MCP 只允许公开语料，生产部署可以在边缘层直接禁用匿名入口。
+
+### 3.4 不再维持独立 Contract Gateway
+
+旧 `astrbot_plugin_opencontracts_gateway` 的职责拆分为：
+
+- 能由 OpenContracts 原生认证 / 权限 / API 完成的，直接使用上游能力；
+- 缺失但通用的能力，通过一组可重复应用的 OpenContracts patch / migration 脚本补到 OpenContracts 内部；
+- 仅属于客户端工作流的能力，进入 Skill Pack；
+- 不再长期维护一个夹在 Agent 与 OpenContracts 之间的第二业务服务。
+
+### 3.5 客户 token 与服务端 AI 解耦
+
+默认合同分析、修改和起草由客户 harness 中的模型执行。OpenContracts 主要负责数据与检索，不应隐式把请求转成由平台承担的大模型费用。
+
+## 4. 数据与信任边界
 
 ```mermaid
 flowchart TB
-    Router[File Router]
-    Master[Master Persona 1.26]
-    Handoff[Handoff Policy]
-    Operator[OpenContracts Operator 1.18]
-    Gateway[OpenContracts Gateway]
-    MCP[OpenContracts MCP]
-    Builder[Builder 1.30 / protocol v7]
-    SkillMgr[AstrBot SkillManager]
-    DocSpec[contract-document-specification]
-    Flow[Generation Flow 0.8.0]
-    Generator[DOCX Generator + Draft Store]
-    Delivery[Download Delivery 0.2.5]
-    Guard[WeCom Result Guard]
+    subgraph Client[客户执行边界]
+        Agent[WorkBuddy / Harness]
+        Skill[Contract Skill Pack]
+        Files[本地合同与产物]
+        Cred[MCP / API 凭证]
+    end
 
-    Router --> Master
-    Master --> Handoff --> Operator
-    Operator --> MCP
-    Operator --> Gateway
-    Master --> Builder
-    Handoff --> Flow --> Builder
-    DocSpec --> SkillMgr
-    SkillMgr -->|Persona Skill binding| Builder
-    Flow -->|registered contract tools / business state| Builder
-    Builder --> Flow
-    Flow --> MCP
-    Flow --> Generator
-    Flow --> Delivery
-    Master --> Guard
+    subgraph Internet[公网边界]
+        TLS[TLS Reverse Proxy]
+    end
+
+    subgraph Server[OpenContracts 服务边界]
+        Auth[OpenContracts Auth + Permission]
+        MCP[MCP]
+        Upload[File Import]
+        Data[(Corpus / Documents / Metadata)]
+        Audit[(Server Audit)]
+    end
+
+    Skill --> Agent
+    Files <--> Agent
+    Cred --> Agent
+    Agent --> TLS
+    TLS --> Auth
+    Auth --> MCP --> Data
+    Auth --> Upload --> Data
+    MCP --> Audit
+    Upload --> Audit
 ```
 
-正式发行没有 Docassemble Gateway。
+规则：
 
-## Persona 与 Skill
+- Skill 包不得包含真实客户 token、WorkerKey、用户 JWT、真实合同或企业秘密；
+- 凭证放在 harness/宿主机自己的 secret 配置中；
+- OpenContracts 权限是租户隔离的最终事实来源；
+- Skill 不根据自然语言猜测 corpus 权限；
+- 服务端不得因为请求来自某个 Skill 而绕过用户权限。
 
-Master 是唯一客户入口。Operator 和 Builder 只向 Master 返回结构化状态。
+## 5. 合同业务流
 
-保留 Skills：
+### 快速分析
 
 ```text
-contract-direct-analysis
-contract-conversation-control
-contract-document-specification
+本地文件 / OpenContracts 文档
+→ Skill 读取合同正文
+→ 必要时 MCP 检索企业历史与模板
+→ 客户自己的模型完成风险分析
+→ 本地输出 Markdown / DOCX / PDF（按需）
 ```
 
-Operator 1.18 自包含 OpenContracts 读取/上传/核验规则，不绑定 Skill。Builder 1.30 继续使用 generation protocol v7，静态绑定 8 个受限合同工具，并绑定 `contract-document-specification`；其 system prompt 固定要求在组织最终 `document_markdown` 前先完成文档规范 Skill grounding。
-
-当前只支持 AstrBot 4.27.x 及以上。Builder 的 Persona prompt、Tool 绑定和 Skill 绑定由 AstrBot 管理；Generation Flow 0.8.0 只读取这些绑定状态做 fail-closed 校验，不修改共享 Agent、不覆盖 ToolSet、不向 handoff input 注入动态 Skill inventory。AstrBot handoff 子人格当前不会自动展开 Persona Skill 正文，因此 Skill 正文仍通过受限 `read_bound_skill(skill_name)` 读取。
-
-`read_bound_skill` 只接受 Builder 已绑定、active 且当前本地受限 reader 可读取的 Skill 名称。模型不能传文件路径，该工具也不提供 Shell、Python、通用 HTTP 或任意文件能力。同一 handoff 对已经完成 grounding 的文档规范 Skill 再次调用时返回 `already_grounded`。
-
-`contract-document-specification` 只规范合同文档的封面、标题层级、编号、表格、留白、签署页、附件和分页表达。它不决定 generation basis，不提供固定合同条款，也不替代 OpenContracts 模板/历史资料。
-
-## OpenContracts 数据面
-
-历史合同 Corpus：
+### 修改合同
 
 ```text
-astrbot_plugin_contract_handoff_policy.default_opencontracts_corpus_slug
+本地合同
+→ 读取原文
+→ Skill 确定修改目标与约束
+→ MCP 查企业条款/历史（按需）
+→ 模型生成修订内容
+→ 本地确定性脚本输出新文件/差异
+→ 用户确认后可归档 OpenContracts
 ```
 
-生成资产 Corpus：
+### 新合同生成
 
 ```text
-astrbot_plugin_contract_generation_flow.generation_asset_corpus_slug
-```
-
-两者都是外部受控业务数据。Master handoff、Router task context 和模型输出不得覆盖权威 corpus 配置。
-
-## 上传链
-
-```text
-WeCom 文件
-→ DOC Preconverter（仅 .doc）
-→ File Router 暂存 / transient 正文
-→ Master
-→ Handoff Policy
-→ Operator
-→ opencontracts_gateway_status
-→ list_documents 精确查重
-→ opencontracts_upload_document / WorkerKey
-→ list_documents + get_document_text + search_corpus 核验
-→ CONTRACT_UPLOAD:*
-→ Result Guard
-```
-
-传输/上游提交状态未知时进入 MANUAL_REVIEW，禁止自动重试。
-
-## 读取链
-
-```text
-Master
-→ Operator
-→ list_documents
-→ get_document_text(offset=0 → next_offset=null)
-→ search_corpus（按需补充）
-→ CONTRACT_READ:READY/PARTIAL/PENDING/FAILED
-```
-
-正文为空不能用 search、历史记忆或本地文件代替。
-
-## 生成链
-
-Master → Flow generation policy：
-
-```text
-generation_policy_protocol=2
-fallback_policy=allow_ai_fallback | require_specific_template
-```
-
-Builder prompt：
-
-```text
-<contract_generation_protocol version="7">
-```
-
-全新合同正常路径：
-
-```text
-read_bound_skill(contract-document-specification)
-→ find_generation_assets + find_similar_contracts
+用户事实
+→ MCP 搜索专用模板与历史合同
 → specific_template / history_reference / ai_scaffold
-→ Builder 自由组织适用条款
-→ contract-document-specification 规范最终 document_markdown
-→ generate_and_publish_contract
-   → generate_contract_docx
-   → publish_contract_download
-   → finalize_contract_draft
-→ READY / PARTIAL / BLOCKED / FAILED
+→ Skill 文档规范约束最终正文
+→ 本地 DOCX/PDF renderer
+→ 用户验收
+→ 可选归档 OpenContracts
 ```
 
-Builder 1.30 的固定 system 规则要求先 grounding，再开始组织最终正文。Generation Flow 不向 handoff input 注入动态 Skill inventory；`contract-document-specification` 未绑定、未启用、当前本地受限 reader 不可读或未在本轮成功读取时，正式生成在任何 DOCX 写操作前 BLOCKED，不允许静默跳过 Skill。
+### 合同库查询
 
-普通模板绑定必须来自本轮生成资产搜索候选；strict 模式按精确 slug 或唯一标准化标题做身份验证。历史项目特定值默认不迁移，只有 `reference_value_fields` 明确授权的字段才可有限参考。
+```text
+用户问题
+→ Skill 判断是否需要企业事实
+→ MCP list/search/read
+→ 回答中区分合同原文、企业历史与模型判断
+```
 
-格式规范与内容证据链相互独立：用户事实、模板、历史合同和通用合同知识决定“写什么”；文档规范 Skill 负责“如何组织和呈现”。格式规范不得强迫 Builder 复制不适用条款。
+## 6. WorkBuddy 已验证的能力边界（2026-08-25）
 
-`source_draft_id` 记录版本来源；`generation_basis` 记录本轮主要依据。修改上一版时按 basis 最小化知识检索，但仍需加载正式文档规范 Skill。
+公开文档已经确认：
 
-完整 READY 必须同时有 DOCX、HTTPS publication 和 finalized draft。HTTPS 已发布但 Draft Store 未保存时返回 PARTIAL，保留已有链接；写操作 timeout/cancel/commit-unknown 禁止自动重试。
+- 支持用户级和项目级 MCP 配置；
+- MCP 可配置 URL 与认证，支持标准 OAuth；
+- Skill 可从本地导入，并可包含脚本与工作流；
+- WorkBuddy 可绑定微信客服号，远程任务实际在本地电脑执行；
+- 微信远程模式要求宿主机在线，使用助理专属文件夹；
+- 当前文档描述一台 WorkBuddy 与微信账号的一对一绑定。
 
-## 平台与结果
+因此首版微信方案按“每个客户/入口一个受控 WorkBuddy Host”设计，不假设单个本地会话天然具备 SaaS 多租户能力。
 
-WeCom Final Result Guard 负责上传/读取结果归一、长文本按 UTF-8 字节分段和迟到结果抑制。生成 READY 的真实性还由 Download Delivery 校验当前 generation publication。
+## 7. OpenContracts 已验证的能力边界（2026-08-25）
 
-Generation Flow 对模型可见工具 JSON 使用 `ensure_ascii=False` 紧凑输出；详细 traceback 只写服务日志。
+上游公开文档确认：
 
-## 正式组件边界
+- 内建 MCP server；
+- `/mcp/` 面向匿名可见的公开 corpuses；
+- `/mcp/me/` 面向已认证用户；
+- MCP 可执行 corpus 检索、文档读取、标注/关系/讨论等能力；
+- OpenContracts 同时提供 GraphQL / REST 文件与应用 API；
+- WorkerKey / CorpusAccessToken 是 corpus-scoped 的导入凭证机制之一；
+- 对象可见性与权限由 OpenContracts 服务层控制。
 
-- Persona：角色、业务判断、静态 Tool/Skill 绑定，以及不随请求变化的固定执行契约；
-- Skill：跨场景复用的分析、会话控制和合同文档表达规范；
-- Generation Flow：合同领域工具、AstrBot handoff Skill 正文的最小受限桥、生成证据与写入状态机；
-- 其他 Plugin：确定性状态、Corpus 绑定、文件、写入、交付和平台适配；
-- MCP：OpenContracts 远端只读发现/正文/语义检索；
-- Gateway：WorkerKey 历史合同写入。
+生产环境原则是：**公网可达 ≠ 匿名可读**。企业合同必须走认证用户或受控 corpus-scoped 凭证。
 
-Generation Flow 不复制 Skill 正文、不维护独立 Skill registry，也不接管 Agent runtime；Skill 绑定与启用状态仍以 AstrBot PersonaManager/SkillManager 为权威，受限 grounding 可读性由 Flow 在本轮运行时确认。
+## 8. 本分支不再承担的职责
 
-不保留旧生成网关或重复的 OpenContracts/结果核验 Skill 作为回滚兼容层。
+```text
+AstrBot Persona 生命周期
+Master / Operator / Builder handoff
+AstrBot ToolSet / SkillManager bridge
+WeCom Result Guard
+AstrBot File Router
+AstrBot Star registry / event hooks
+独立 Download Delivery（除非微信 PoC 证明仍有必要）
+```
 
-## AstrBot runtime ownership boundary
+这些实现保留在 `astrbot-solution` 作为历史方案，不进入 WorkBuddy 目标架构。
 
-ContractBot 插件不接管 AstrBot 的 Agent runtime。Builder 的 system prompt、ToolSet 和 Persona Skill 绑定由 AstrBot Persona/WebUI 管理；Generation Flow 只注册合同业务工具并校验绑定，不修改 `agent.tools`、`agent.instructions` 或 handoff `input`。
+## 9. 待 PoC 验证事项
 
-当前保留的 `read_bound_skill` 是最小兼容桥：AstrBot handoff 子人格尚未自动展开 Persona Skill 正文，因此该工具只验证 Builder 当前真实 Skill 绑定并读取对应 `SKILL.md`。它不生成动态 Skill inventory、不注入 handoff prompt，也不开放任意文件读取。同一 handoff 对同一文档规范 Skill 的重复读取返回 `already_grounded`。
-
-File Router 的事件处理只通过 `main.py` 中的官方 decorators 注册；实现基类不再直接修改 `star_map`、`star_registry` 或 `star_handlers_registry`。
-
-本轮同时审计 Handoff Policy、DOC Preconverter、DOCX Generator、Download Delivery、OpenContracts Gateway 和 WeCom Result Guard：这些组件通过 AstrBot 官方事件/工具 hooks 执行业务策略、消息预处理、工具实现或结果规范化，没有发现同类 Agent/Persona/ToolSet/Star registry 接管。
+1. WorkBuddy 对远端 OpenContracts MCP 的实际认证配置格式和 token 刷新行为；
+2. 微信客服号是否能直接回传 DOCX/PDF 附件，还是只同步文本结果并在桌面端查看产物；
+3. 普通办公 harness 对 Skill 包结构的兼容程度，需要多少 adapter；
+4. OpenContracts 原生 MCP 是否已覆盖我们需要的归档/元数据写能力；未覆盖部分再决定 patch，而不是预先复制整个 Gateway；
+5. 微信远程会话在多人客服场景的隔离方式和容量上限。
