@@ -16,7 +16,7 @@ Private corpuses and `/mcp/me/` authenticated access are a future hardening path
 
 ## OC-2 Retrieval corpuses
 
-Runtime configuration identifies separate corpuses for:
+Runtime configuration identifies separate retrieval corpuses for:
 
 ```text
 history
@@ -26,7 +26,7 @@ approved knowledge
 
 These may all be public during MVP.
 
-Session-learning material is not an OpenContracts Corpus in MVP and MUST NOT be part of routine OpenContracts retrieval.
+Session-learning material is not stored in OpenContracts for MVP.
 
 ## OC-3 Minimal MCP tools
 
@@ -72,31 +72,23 @@ Authorization: WorkerKey <corpus-bound-token>
 
 The project helper MUST omit `add_to_corpus_id`; the token's server-side binding is authoritative.
 
-## OC-7 Session learning
-
-Session learning is outside OpenContracts for MVP.
-
-After separate user consent, `contract-learning` MAY generate a local experience note. Collection, review, deduplication and promotion into Skill changes are manual maintenance operations.
-
-No learning WorkerKey, Learning Inbox Corpus, vectorization or automatic retrieval is required.
-
-## OC-8 Duplicate handling
+## OC-7 Duplicate handling
 
 Before formal contract ingestion, the Skill SHOULD search for a likely existing document. A likely duplicate MUST be surfaced to the user before a replacement/new-version submission.
 
 The system MUST NOT silently overwrite based only on a similar title.
 
-## OC-9 Processing state
+## OC-8 Processing state
 
 HTTP acceptance does not prove extracted text or semantic search readiness.
 
 After an accepted upload, the user MUST be told that parsing/indexing is still processing. A later MCP read MAY confirm the document is searchable.
 
-## OC-10 Commit-unknown
+## OC-9 Commit-unknown
 
 Any ambiguous write outcome MUST stop automatic retries. The next safe action is read-side verification.
 
-## OC-11 Network boundary
+## OC-10 Network boundary
 
 For MVP, confidentiality depends on OpenContracts being unreachable from untrusted networks.
 
@@ -104,23 +96,18 @@ The deployment MUST avoid public port forwarding/NAT exposure and SHOULD require
 
 If this assumption changes, migrate the relevant corpuses to private and introduce authenticated MCP access.
 
-## OC-12 HTTPS
+## OC-11 HTTPS
 
-Harness-to-OpenContracts traffic SHOULD use HTTPS.
+The current OpenContracts deployment uses `local.yml`, which exposes Django over HTTP on port 8000 and includes no TLS reverse proxy.
 
-OpenContracts `production.yml` includes a Traefik service exposing ports 80 and 443. The bundled Traefik configuration redirects HTTP to HTTPS and uses ACME/Let's Encrypt with an HTTP challenge.
+The MVP MUST place Caddy in front of that endpoint and use the Caddy HTTPS origin for Harness MCP and REST ingestion traffic.
 
-OpenContracts `local.yml` does not include an HTTPS proxy and exposes Django directly on port 8000.
+For an internal-only hostname, Caddy MAY use `tls internal`; every Harness host MUST trust the issuing Caddy root CA. TLS verification MUST remain enabled.
 
-For an internal-only deployment, choose one of:
+Raw port 8000 SHOULD be restricted to loopback/host-local access or blocked from routine LAN clients so Caddy is the normal network-facing entrypoint.
 
-- adapt the bundled production Traefik certificate configuration to the organization's DNS/PKI;
-- use a small Caddy reverse proxy in front of the existing OpenContracts HTTP endpoint.
+## OC-12 Write credentials
 
-Internal CA certificates are acceptable when every Harness trusts the issuing CA. TLS verification MUST remain enabled.
+A corpus-bound WorkerKey remains required for formal ingestion even when the target Corpus is public.
 
-## OC-13 Write credentials
-
-A corpus-bound WorkerKey remains required for formal contract ingestion even when the target Corpus is public.
-
-The WorkerKey MUST remain outside Skill content and source control.
+The WorkerKey MUST stay outside Skill content and source control.
