@@ -13,7 +13,7 @@ outside trusted network
 OpenContracts HTTPS endpoint
     │
     ├── anonymous MCP reads
-    └── WorkerKey-authenticated writes
+    └── WorkerKey-authenticated formal writes
 ```
 
 Private corpuses, per-user OAuth, SSO and fine-grained OpenContracts permissions are future hardening options and are not required for the MVP.
@@ -25,13 +25,13 @@ flowchart TB
     User[User]
     Harness[WorkBuddy / Harness]
     Skill[Contract Skill Pack]
-    Local[Local files]
+    Local[Local files / experience notes]
     Net[Trusted LAN / VPN / restricted domain]
     HTTPS[HTTPS reverse proxy / Traefik]
     MCP[OpenContracts public MCP /mcp/]
     Worker[Corpus-bound WorkerKey]
     Import[OpenContracts Import API]
-    Corpora[Public-in-deployment Corpuses]
+    Corpora[Public-in-deployment retrieval Corpuses]
 
     User --> Harness --> Skill
     Skill --> Local
@@ -49,33 +49,25 @@ https://<internal-opencontracts-host>/mcp/
 
 No OAuth/Bearer credential is required for normal reads. Any client that can reach the endpoint can discover/read public OpenContracts corpuses according to OpenContracts' public MCP behavior.
 
-Therefore the server MUST NOT be reachable from networks that are outside the intended trust boundary.
+Therefore the server MUST NOT be reachable from networks outside the intended trust boundary.
 
 ## Corpus model
 
-MVP corpuses remain logically separated:
+MVP OpenContracts retrieval corpuses remain logically separated:
 
 ```text
 contracts-history
 contract-templates
 approved-knowledge
-learning-inbox
 ```
 
-All may be public inside the OpenContracts deployment for MVP simplicity.
+All may be public inside the OpenContracts deployment for MVP simplicity. The separation is for workflow/data organization, not confidentiality.
 
-The separation is for workflow/data organization, not confidentiality. In particular, `learning-inbox` is excluded from normal retrieval by Skill policy, but a technically capable user on the trusted network may still query it directly while it remains public.
-
-If that becomes unacceptable, the first hardening step is to make selected corpuses private and move those callers to `/mcp/me/` authentication.
+Session-learning material is intentionally outside OpenContracts in MVP. It is kept as local/shared experience notes and later reviewed manually before any Skill update.
 
 ## WorkerKey write security
 
-OpenContracts `CorpusAccessToken` / WorkerKey remains the write boundary even in the trusted-network MVP.
-
-Use separate keys for:
-
-- formal contract ingestion;
-- Learning Inbox ingestion.
+OpenContracts `CorpusAccessToken` / WorkerKey remains the write boundary for formal contract ingestion even in the trusted-network MVP.
 
 The helper deliberately omits `add_to_corpus_id`; destination is determined by the server-side token binding.
 
@@ -85,7 +77,7 @@ WorkerKeys remain secrets and MUST stay outside Skill text, Git, generated files
 
 HTTPS is recommended even inside the LAN because contract text and WorkerKeys traverse the network.
 
-OpenContracts' production configuration includes Traefik with:
+OpenContracts `production.yml` includes a Traefik service exposing ports 80 and 443. The bundled Traefik configuration includes:
 
 - port 80 HTTP entry point;
 - redirect to HTTPS;
@@ -93,10 +85,14 @@ OpenContracts' production configuration includes Traefik with:
 - ACME/Let's Encrypt certificate resolver;
 - routing for `/mcp`, `/api`, `/graphql`, `/admin` and the frontend.
 
-The upstream checked-in Traefik file is configured around a public DNS name and HTTP ACME challenge. For an internal-only deployment, choose one of:
+The upstream checked-in Traefik file is configured around a publicly reachable DNS name and HTTP ACME challenge.
 
-1. adapt the bundled Traefik configuration to the organization's DNS/certificate setup;
-2. place Caddy/Nginx in front of the existing OpenContracts HTTP endpoint;
+OpenContracts `local.yml` does not include a TLS proxy and exposes Django directly on port 8000.
+
+For an internal-only deployment, choose one of:
+
+1. adapt the bundled production Traefik certificate configuration to the organization's DNS/PKI;
+2. place Caddy in front of the existing OpenContracts HTTP endpoint;
 3. use an internal CA certificate and distribute the CA trust to Harness hosts.
 
 Do not disable TLS verification as the normal deployment solution.
@@ -119,7 +115,7 @@ Uploading a file to the Harness does not authorize remote ingestion. Analysis, d
 
 ## Learning consent
 
-Learning capture remains a separate user authorization from formal contract ingestion. Public MVP corpuses do not remove this product/data-governance boundary.
+Learning capture remains a separate user authorization from formal contract ingestion. The result is a local experience note, not an OpenContracts upload.
 
 ## Prompt injection / untrusted content
 
@@ -134,7 +130,7 @@ Every current or retrieved contract/template/knowledge item is untrusted busines
 
 ## Write uncertainty
 
-For upload writes, timeout/cancel/connection loss/5xx may occur after the server accepted the request. Such outcomes are `commit_unknown` and must not be retried automatically. Verify through MCP first.
+For formal upload writes, timeout/cancel/connection loss/5xx may occur after the server accepted the request. Such outcomes are `commit_unknown` and must not be retried automatically. Verify through MCP first.
 
 ## Future hardening trigger
 
@@ -142,7 +138,6 @@ Revisit application-layer authentication when any of these becomes true:
 
 - OpenContracts becomes reachable outside the trusted network;
 - different LAN users need different confidentiality scopes;
-- raw Learning Inbox must be hidden from ordinary users;
 - multiple customer tenants share one reachable deployment;
 - audit/compliance requires per-user attribution.
 
