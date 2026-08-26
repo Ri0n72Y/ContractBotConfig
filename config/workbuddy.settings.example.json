@@ -1,4 +1,7 @@
 {
+  "enabledMcpjsonServers": [
+    "opencontracts"
+  ],
   "permissions": {
     "deny": [
       "mcp__opencontracts__list_threads",

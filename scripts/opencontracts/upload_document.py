@@ -42,6 +42,7 @@ def main() -> int:
 
     base_url = os.getenv("OPENCONTRACTS_BASE_URL", "").strip().rstrip("/")
     token = os.getenv(args.token_env, "").strip()
+    ca_bundle = os.getenv("OPENCONTRACTS_CA_BUNDLE", "").strip()
     allow_insecure = os.getenv("OPENCONTRACTS_ALLOW_INSECURE_HTTP", "0") == "1"
     try:
         timeout = max(1.0, float(os.getenv("OPENCONTRACTS_UPLOAD_TIMEOUT_SECONDS", "60")))
@@ -66,6 +67,14 @@ def main() -> int:
         emit(ok=False, status="blocked", retry_safe=True, error="https_required")
         return 2
 
+    verify: bool | str = True
+    if ca_bundle:
+        ca_path = Path(ca_bundle).expanduser().resolve()
+        if not ca_path.is_file():
+            emit(ok=False, status="blocked", retry_safe=True, error="ca_bundle_not_found")
+            return 2
+        verify = str(ca_path)
+
     endpoint = f"{base_url}/api/imports/documents/"
     mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
     data: dict[str, str] = {
@@ -86,6 +95,7 @@ def main() -> int:
                 files={"file": (source.name, handle, mime)},
                 data=data,
                 timeout=timeout,
+                verify=verify,
             )
     except requests.RequestException:
         emit(

@@ -2,7 +2,8 @@
   "mcpServers": {
     "opencontracts": {
       "type": "http",
-      "url": "${OPENCONTRACTS_MCP_URL}"
+      "url": "${OPENCONTRACTS_MCP_URL}",
+      "description": "OpenContracts MCP over trusted internal HTTPS"
     }
   }
 }

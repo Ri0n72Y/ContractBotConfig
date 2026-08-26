@@ -34,33 +34,42 @@ approved-knowledge
 
 Session learning material is not stored in OpenContracts for MVP. `contract-learning` produces a local experience note; maintainers periodically collect and review those notes and update the relevant Skills manually.
 
-## Configuration
+## Agent / MCP configuration
 
-Copy `config/opencontracts.env.example` into your local runtime configuration. Do not commit populated env files.
-
-For MCP, use `.mcp.json` as a reference. MVP uses the anonymous public endpoint:
+The repository root `.mcp.json` is the project-level MCP configuration for WorkBuddy/CodeBuddy-compatible Harnesses. It references:
 
 ```text
-https://<internal-opencontracts-host>/mcp/
+OPENCONTRACTS_MCP_URL
 ```
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey.
+Runtime values are listed in `config/opencontracts.env.example`; deployment-specific values stay outside Git.
 
-## Network / HTTPS
+The WorkBuddy settings example in `config/workbuddy.settings.example.json` enables the `opencontracts` MCP server and denies MCP capabilities that are not used by the current contract workflow.
 
-The selected MVP deployment is:
+## Selected MVP deployment
 
 ```text
 OpenContracts local.yml
-+ Caddy on the OpenContracts host
-+ internal DNS / trusted LAN
++ Caddy internal HTTPS
++ public retrieval corpuses inside trusted LAN/VPN
++ WorkerKey for formal ingestion
 ```
 
-OpenContracts `local.yml` exposes Django over HTTP on port 8000 and does not include TLS. Caddy is the canonical HTTPS entrypoint for Harness MCP/API traffic and proxies to the local Django endpoint.
+Caddy runs on the OpenContracts Docker host, joins the same Docker network as Django, and proxies HTTPS traffic to `django:8000`. Raw host port 8000 is restricted to loopback.
 
-For an internal-only hostname, the provided Caddy example uses `tls internal`. Every WorkBuddy/Harness host must trust the Caddy root CA. TLS verification stays enabled.
+For an internal-only hostname, Caddy uses `tls internal`. Every WorkBuddy/Harness host receives the exported Caddy root certificate. The runtime sets both `OPENCONTRACTS_CA_BUNDLE` for the Python upload helper and `NODE_EXTRA_CA_CERTS` for MCP-client compatibility.
 
-See `deploy/reverse-proxy/`.
+Server and Agent PowerShell automation is under:
+
+```text
+deploy/opencontracts/
+```
+
+See `deploy/opencontracts/README.md` for local and remote PowerShell procedures.
+
+## Formal ingestion
+
+Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey. The helper does not allow caller-selected corpus IDs and does not automatically retry an ambiguous write.
 
 ## Security invariants
 
