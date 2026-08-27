@@ -14,7 +14,7 @@ python -m pip install -r scripts/opencontracts/requirements.txt
 python scripts/opencontracts/check_config.py
 ```
 
-The command validates the HTTPS URLs, three retrieval corpus slugs, Caddy CA bundle path, MCP-client CA setting, and formal upload WorkerKey presence. It never prints token values.
+The command validates the HTTPS URLs, two retrieval corpus slugs, Caddy CA bundle path, MCP-client CA setting, and formal upload WorkerKey presence. It never prints token values.
 
 ## Caddy internal CA
 
@@ -37,7 +37,7 @@ python scripts/opencontracts/upload_document.py \
 
 Default credential: `OPENCONTRACTS_UPLOAD_WORKER_KEY`.
 
-The helper sends `POST /api/imports/documents/` with `Authorization: WorkerKey ...`. It deliberately omits `add_to_corpus_id`; the server-side WorkerKey binding selects the destination corpus.
+The helper sends `POST /api/imports/documents/` with `Authorization: WorkerKey ...`. It deliberately omits `add_to_corpus_id`; the server-side WorkerKey binding selects `contracts-history` as the destination.
 
 Session-learning experience notes are not uploaded to OpenContracts in the MVP.
 

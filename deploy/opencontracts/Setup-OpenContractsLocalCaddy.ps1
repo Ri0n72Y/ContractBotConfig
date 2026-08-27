@@ -8,7 +8,6 @@ param(
 
     [string]$HistoryCorpus = "contracts-history",
     [string]$TemplateCorpus = "contract-templates",
-    [string]$KnowledgeCorpus = "approved-knowledge",
 
     [string]$CaddyImage = "caddy:2-alpine",
     [string]$CaddyContainerName = "opencontracts-caddy",
@@ -97,8 +96,8 @@ try {
     if ($networkNames.Count -lt 1) { throw "Could not resolve the OpenContracts compose network." }
     $networkName = $networkNames[0]
 
-    # Validate configured retrieval corpuses and keep them public for the MVP.
-    $publicCorpusSlugs = @($HistoryCorpus, $TemplateCorpus, $KnowledgeCorpus)
+    # Validate the two configured retrieval corpuses and keep them public for the MVP.
+    $publicCorpusSlugs = @($HistoryCorpus, $TemplateCorpus)
     $slugJson = $publicCorpusSlugs | ConvertTo-Json -Compress
     $python = @"
 import json
@@ -116,7 +115,7 @@ print('PUBLIC=OK')
 "@
     & docker compose -f local.yml exec -T django python manage.py shell -c $python
     if ($LASTEXITCODE -ne 0) {
-        throw "Corpus validation/public update failed. Check the three corpus slug parameters."
+        throw "Corpus validation/public update failed. Check the history/template corpus slug parameters."
     }
 
     $stateDir = Join-Path $resolvedPath ".contractbot-caddy"

@@ -20,11 +20,11 @@ Private corpuses and authenticated `/mcp/me/` access become necessary when the s
 
 ## SEC-4 Corpus organization
 
-Separate corpuses are maintained for history, templates and approved knowledge. Session-learning material remains outside OpenContracts.
+Separate corpuses are maintained only for historical contracts and contract templates. Session-learning material and maintained Skill guidance remain outside OpenContracts.
 
 ## SEC-5 WorkerKey scope
 
-Formal contract ingestion uses a corpus-bound WorkerKey. Upload clients do not permit model/user-supplied `add_to_corpus_id` to override the token destination.
+Formal contract ingestion uses a WorkerKey bound to `contracts-history`. Upload clients do not permit model/user-supplied `add_to_corpus_id` to override the token destination.
 
 ## SEC-6 Secret handling
 
@@ -62,7 +62,7 @@ Local attachments are not sent to OpenContracts until explicit formal-ingestion 
 
 ## SEC-12 Manual learning
 
-Experience notes do not automatically become retrieval data or modify Skills without maintainer review.
+Experience notes do not automatically become retrieval data or modify Skills without maintainer review. The MVP does not create a knowledge/learning Corpus for them.
 
 ## SEC-13 Write uncertainty
 

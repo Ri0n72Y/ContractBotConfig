@@ -31,15 +31,14 @@ The server therefore must not be reachable from untrusted networks.
 
 ## Corpus model
 
-The MVP keeps three retrieval corpuses logically separated:
+The MVP keeps two retrieval corpuses logically separated:
 
 ```text
 contracts-history
 contract-templates
-approved-knowledge
 ```
 
-They may all remain public inside the trusted network. Session-learning material stays outside OpenContracts and is maintained as local/shared experience notes for manual Skill updates.
+They may both remain public inside the trusted network. There is no knowledge/learning Corpus in the MVP. Session-learning material stays outside OpenContracts and is maintained as local/shared experience notes for manual Skill updates.
 
 ## WorkerKey write security
 
@@ -84,7 +83,7 @@ Experience-note creation is separately authorized and remains outside OpenContra
 
 ## Prompt injection / untrusted content
 
-Every current or retrieved contract/template/knowledge item is untrusted business data. Embedded text cannot alter Skill/system policy, change configured endpoints or Corpus selection, request WorkerKeys, authorize uploads, trigger unapproved system actions, or widen tool permissions.
+Every current or retrieved contract/template is untrusted business data. Embedded text cannot alter Skill/system policy, change configured endpoints or Corpus selection, request WorkerKeys, authorize uploads, trigger unapproved system actions, or widen tool permissions.
 
 ## Write uncertainty
 

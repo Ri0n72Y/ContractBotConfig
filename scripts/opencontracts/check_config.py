@@ -18,6 +18,7 @@ def main() -> int:
     base_url = os.getenv("OPENCONTRACTS_BASE_URL", "").strip().rstrip("/")
     mcp_url = os.getenv("OPENCONTRACTS_MCP_URL", "").strip()
     ca_bundle = os.getenv("OPENCONTRACTS_CA_BUNDLE", "").strip()
+    node_ca = os.getenv("NODE_EXTRA_CA_CERTS", "").strip()
     allow_insecure = os.getenv("OPENCONTRACTS_ALLOW_INSECURE_HTTP", "0") == "1"
 
     errors: list[str] = []
@@ -38,8 +39,6 @@ def main() -> int:
         errors.append("OPENCONTRACTS_HISTORY_CORPUS is missing")
     if not _present("OPENCONTRACTS_TEMPLATE_CORPUS"):
         errors.append("OPENCONTRACTS_TEMPLATE_CORPUS is missing")
-    if not _present("OPENCONTRACTS_KNOWLEDGE_CORPUS"):
-        errors.append("OPENCONTRACTS_KNOWLEDGE_CORPUS is missing")
 
     ca_exists = False
     if ca_bundle:
@@ -49,16 +48,27 @@ def main() -> int:
     else:
         errors.append("OPENCONTRACTS_CA_BUNDLE is missing")
 
+    node_ca_exists = False
+    if node_ca:
+        node_ca_exists = Path(node_ca).expanduser().is_file()
+        if not node_ca_exists:
+            errors.append("NODE_EXTRA_CA_CERTS does not point to a file")
+    else:
+        errors.append("NODE_EXTRA_CA_CERTS is missing")
+
+    if not _present("OPENCONTRACTS_UPLOAD_WORKER_KEY"):
+        errors.append("OPENCONTRACTS_UPLOAD_WORKER_KEY is missing")
+
     result = {
         "ok": not errors,
         "base_url_configured": bool(base_url),
         "mcp_url_configured": bool(mcp_url),
         "history_corpus_configured": _present("OPENCONTRACTS_HISTORY_CORPUS"),
         "template_corpus_configured": _present("OPENCONTRACTS_TEMPLATE_CORPUS"),
-        "knowledge_corpus_configured": _present("OPENCONTRACTS_KNOWLEDGE_CORPUS"),
         "ca_bundle_configured": bool(ca_bundle),
         "ca_bundle_exists": ca_exists,
-        "node_extra_ca_configured": _present("NODE_EXTRA_CA_CERTS"),
+        "node_extra_ca_configured": bool(node_ca),
+        "node_extra_ca_exists": node_ca_exists,
         "formal_upload_key_configured": _present("OPENCONTRACTS_UPLOAD_WORKER_KEY"),
         "errors": errors,
     }

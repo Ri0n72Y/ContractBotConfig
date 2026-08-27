@@ -2,7 +2,7 @@
 
 ## Principle
 
-OpenContracts stores retrievable enterprise contract data. Session-learning material stays outside OpenContracts because it is maintained manually rather than used as runtime retrieval data.
+OpenContracts stores only retrievable enterprise contract data needed by the current runtime. Session-learning material stays outside OpenContracts because it is maintained manually rather than used as runtime retrieval data.
 
 Corpus boundaries organize business data and workflow. In the trusted-network MVP they are not the confidentiality boundary because the retrieval corpuses remain public.
 
@@ -29,15 +29,9 @@ Rules:
 - strict named-template requests require unique identity confirmation;
 - templates never contain credentials or operational system instructions.
 
-### `approved-knowledge`
+## No knowledge/learning Corpus in MVP
 
-Purpose: curated drafting/review knowledge intentionally suitable for routine retrieval.
-
-Rules:
-
-- public inside the trusted-network MVP;
-- content is reviewed, reusable and scoped;
-- it is maintained intentionally rather than populated automatically from session experience.
+There is no `approved-knowledge`, Learning Inbox, or other experience Corpus in the MVP. Reusable operating guidance that is stable enough for the assistant belongs in the maintained Skill files. If experience material is collected from sessions, it stays as local/shared notes until a maintainer reviews it and edits the relevant Skill.
 
 ## Experience system outside OpenContracts
 

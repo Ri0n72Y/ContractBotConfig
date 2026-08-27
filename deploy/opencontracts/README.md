@@ -9,7 +9,7 @@ WorkBuddy / Harness
   -> OpenContracts django:8000
 ```
 
-OpenContracts 的三个检索 Corpus 在 MVP 中保持 public；正式合同入库使用绑定 `contracts-history` 的 WorkerKey。
+OpenContracts 只配置两个运行时检索 Corpus：`contracts-history` 和 `contract-templates`，两者在 MVP 中保持 public。会话经验不进入 OpenContracts；正式合同入库使用绑定 `contracts-history` 的 WorkerKey。
 
 ## 0. 需要先确定的值
 
@@ -20,7 +20,6 @@ OPENCONTRACTS_SERVER_IP=<OpenContracts服务器固定内网IPv4>
 OPENCONTRACTS_PATH=<服务器上的OpenContracts目录>
 HISTORY_CORPUS=<历史合同Corpus slug>
 TEMPLATE_CORPUS=<模板Corpus slug>
-KNOWLEDGE_CORPUS=<已批准知识Corpus slug>
 ```
 
 示例：
@@ -30,7 +29,6 @@ OPENCONTRACTS_SERVER_IP=10.10.20.15
 OPENCONTRACTS_PATH=D:\OpenContracts
 HISTORY_CORPUS=contracts-history
 TEMPLATE_CORPUS=contract-templates
-KNOWLEDGE_CORPUS=approved-knowledge
 ```
 
 服务器需要已经能够通过 `docker compose -f local.yml up -d` 正常启动 OpenContracts。
@@ -57,7 +55,6 @@ OPENCONTRACTS_BASE_URL=https://10.10.20.15
 OPENCONTRACTS_MCP_URL=https://10.10.20.15/mcp/
 OPENCONTRACTS_HISTORY_CORPUS=contracts-history
 OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
-OPENCONTRACTS_KNOWLEDGE_CORPUS=approved-knowledge
 OPENCONTRACTS_CA_BUNDLE=<本机caddy-root.crt路径>
 NODE_EXTRA_CA_CERTS=<同一个caddy-root.crt路径>
 OPENCONTRACTS_UPLOAD_WORKER_KEY=<正式入库WorkerKey>
@@ -73,7 +70,7 @@ OPENCONTRACTS_UPLOAD_WORKER_KEY=<正式入库WorkerKey>
 2. 把 `local.yml` 中 Django 的 `8000:8000` 改为 `127.0.0.1:8000:8000`，并创建带时间戳的备份；
 3. 把固定 IP 加入 `DJANGO_ALLOWED_HOSTS`；
 4. 启动 OpenContracts `local.yml`；
-5. 检查三个 Corpus slug 是否存在，并设为 `is_public=True`；
+5. 检查历史合同和模板两个 Corpus slug 是否存在，并设为 `is_public=True`；
 6. 创建 Caddy 容器并加入 OpenContracts Docker network；
 7. 只把 Caddy 的 `443/tcp` 暴露到宿主机；
 8. Caddy 使用 `https://<固定IP>` + `tls internal`，反代 `django:8000`；
@@ -86,8 +83,7 @@ OPENCONTRACTS_UPLOAD_WORKER_KEY=<正式入库WorkerKey>
   -OpenContractsPath 'D:\OpenContracts' `
   -ServerIp '10.10.20.15' `
   -HistoryCorpus 'contracts-history' `
-  -TemplateCorpus 'contract-templates' `
-  -KnowledgeCorpus 'approved-knowledge'
+  -TemplateCorpus 'contract-templates'
 ```
 
 如当前部署需要 `fullstack` profile，再增加 `-StartFullStack`。
@@ -110,8 +106,7 @@ Invoke-Command `
     'D:\OpenContracts', `
     '10.10.20.15', `
     'contracts-history', `
-    'contract-templates', `
-    'approved-knowledge'
+    'contract-templates'
 ```
 
 执行完成后把 Caddy 根证书拉回管理员工作站：
@@ -173,7 +168,6 @@ Invoke-Command `
     'C:\Temp\caddy-root.crt', `
     'contracts-history', `
     'contract-templates', `
-    'approved-knowledge', `
     '<WorkerKey>', `
     'Machine'
 ```
@@ -183,7 +177,7 @@ Invoke-Command `
 - 把 Caddy 根证书复制到固定本机目录；
 - 导入 Windows Trusted Root；
 - 设置 `OPENCONTRACTS_BASE_URL` 与 `OPENCONTRACTS_MCP_URL` 为固定 IP HTTPS URL；
-- 设置三个 Corpus slug；
+- 设置历史合同和模板两个 Corpus slug；
 - 设置 `OPENCONTRACTS_CA_BUNDLE` 和 `NODE_EXTRA_CA_CERTS`；
 - 可选设置 `OPENCONTRACTS_UPLOAD_WORKER_KEY`。
 
@@ -231,7 +225,22 @@ python scripts/opencontracts/upload_document.py --file .\test.docx --title 'MVP�
 
 测试上传只应在明确准备好的测试文件和历史 Corpus 上执行。
 
-## 7. 防火墙基线
+## 7. 经验沉淀与 Skill 更新
+
+会话经验不配置 OpenContracts Corpus，也不做向量化或运行时 retrieval。当前流程是：
+
+```text
+完成合同任务
+-> 用户单独同意沉淀经验
+-> contract-learning 生成本地 contract-experience-note.md
+-> 维护人员定期收集和审核
+-> 人工修改对应 Skill
+-> 正常 Git review / release
+```
+
+这部分没有额外 OpenContracts 环境变量、WorkerKey 或服务端部署步骤。
+
+## 8. 防火墙基线
 
 当前拓扑要求：
 
@@ -244,6 +253,8 @@ Internet -> 服务器:443 不允许
 
 Caddy 当前只映射 443；不需要开放 80。OpenContracts 不做公网 NAT/端口转发。
 
-## 8. 固定 IP 变更
+## 9. 固定 IP 变更
 
 固定 IP 是当前 MVP 的部署配置。如果服务器 IP 发生变化，需要重新执行服务端 Caddy 配置脚本，并重新运行 Agent 配置脚本，使证书、URL 和 Django `ALLOWED_HOSTS` 同步到新 IP。
+
+完整架构关系见 `docs/architecture/c4.md`。

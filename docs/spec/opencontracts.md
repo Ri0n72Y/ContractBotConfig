@@ -13,7 +13,14 @@ Normal MCP reads are anonymous because the retrieval corpuses remain public in t
 
 ## OC-2 Retrieval corpuses
 
-Runtime configuration identifies separate corpuses for history, templates and approved knowledge. Session-learning material is not stored in OpenContracts.
+Runtime configuration identifies exactly two OpenContracts corpuses for the current product flow:
+
+```text
+contracts-history
+contract-templates
+```
+
+Session-learning material and manually distilled operating guidance are not stored in a third knowledge/learning Corpus for the MVP.
 
 ## OC-3 Minimal MCP tools
 
@@ -44,7 +51,7 @@ POST /api/imports/documents/
 Authorization: WorkerKey <corpus-bound-token>
 ```
 
-The helper omits `add_to_corpus_id`; the WorkerKey binding is authoritative.
+The helper omits `add_to_corpus_id`; the WorkerKey binding is authoritative. The production WorkerKey is bound to `contracts-history`.
 
 ## OC-7 Duplicate handling
 
@@ -72,4 +79,4 @@ No DNS or hosts-file configuration is required.
 
 ## OC-12 Write credentials
 
-A corpus-bound WorkerKey is required for formal ingestion even though the target Corpus is public. The WorkerKey stays outside Skill content and source control.
+A corpus-bound WorkerKey is required for formal ingestion even though `contracts-history` is public. The WorkerKey stays outside Skill content and source control.

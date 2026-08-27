@@ -6,7 +6,7 @@ Portable contract-assistant Skill Pack for WorkBuddy and compatible Harnesses.
 
 - Local files stay in the user's Harness unless the user explicitly authorizes formal ingestion.
 - Contract analysis and drafting use the Harness model directly.
-- OpenContracts is optional for historical retrieval, templates, approved knowledge, and formal ingestion.
+- OpenContracts is optional for historical-contract retrieval, template retrieval, and formal ingestion.
 - MVP OpenContracts is reachable only inside the trusted LAN/VPN boundary.
 
 ## Skills
@@ -22,17 +22,16 @@ skills/
 
 ## OpenContracts data layout
 
-The MVP uses three retrievable OpenContracts corpuses:
+The MVP uses two retrievable OpenContracts corpuses:
 
 ```text
 contracts-history
 contract-templates
-approved-knowledge
 ```
 
 They may remain public inside the trusted network. Anonymous MCP access is acceptable because network reachability is the MVP confidentiality boundary.
 
-Session learning material stays outside OpenContracts. `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
+There is no knowledge/learning Corpus in the MVP. Session experience stays outside OpenContracts: `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
 
 ## Agent / MCP configuration
 
@@ -61,7 +60,7 @@ PowerShell deployment and Agent configuration scripts are under `deploy/opencont
 
 ## Formal ingestion
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
+Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a WorkerKey bound to `contracts-history`. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
 
 ## Security invariants
 
@@ -74,5 +73,7 @@ Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a
 - Unknown write state is never auto-retried.
 
 Private corpuses and authenticated `/mcp/me/` access remain future hardening options if the trusted-network model changes.
+
+Architecture diagrams: `docs/architecture/c4.md`.
 
 See `docs/architecture/security.md` and `docs/spec/security.md`.

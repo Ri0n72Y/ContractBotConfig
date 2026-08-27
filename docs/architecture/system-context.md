@@ -2,9 +2,9 @@
 
 ## Goal
 
-Provide a portable contract-assistant capability for WorkBuddy and compatible Harnesses. The Harness owns conversational runtime, local files, model access and user interaction. OpenContracts provides optional enterprise retrieval and controlled formal ingestion.
+Provide a portable contract-assistant capability for WorkBuddy and compatible Harnesses. The Harness owns conversational runtime, local files, model access and user interaction. OpenContracts provides optional historical/template retrieval and controlled formal ingestion.
 
-The MVP runs OpenContracts inside a trusted LAN/VPN boundary at a fixed private IPv4 address. Retrieval uses public corpuses over anonymous MCP; formal writes remain WorkerKey-authenticated.
+The MVP runs OpenContracts inside a trusted LAN/VPN boundary at a fixed private IPv4 address. Retrieval uses two public corpuses over anonymous MCP; formal writes remain WorkerKey-authenticated.
 
 ## Context
 
@@ -18,15 +18,24 @@ flowchart LR
     N[Trusted Network]
     C[Caddy HTTPS on fixed LAN IP]
     M[OpenContracts MCP /mcp/]
-    R[Public Retrieval Corpuses]
+    RH[contracts-history]
+    RT[contract-templates]
     W[WorkerKey upload helper]
+    MT[Maintainer]
+    G[Git / Skill source]
 
     U --> H --> S
     S --> L
-    S -->|historical retrieval when requested/approved| N --> C --> M --> R
-    S -->|explicit formal ingestion| W --> N --> C --> R
+    S -->|historical/template retrieval when requested or approved| N --> C --> M
+    M --> RH
+    M --> RT
+    S -->|explicit formal ingestion| W --> N --> C --> RH
     S -->|explicit learning consent| E
+    MT -->|periodic review| E
+    MT -->|manual Skill changes| G --> S
 ```
+
+A more complete C4 view is in `docs/architecture/c4.md`.
 
 ## Runtime ownership
 
@@ -34,7 +43,7 @@ The Harness owns intent recognition, Skill loading, model/provider use, local at
 
 The Skill Pack owns contract-mode behavior, retrieval guidance, evidence handling, formal-ingestion consent, contract document conventions, experience distillation, and safe deterministic helpers.
 
-OpenContracts owns stored contracts/templates/approved knowledge, extraction/retrieval, public MCP reads for the trusted-network MVP, WorkerKey-bound formal ingestion, and server-side processing state.
+OpenContracts owns stored historical contracts and templates, extraction/retrieval, public MCP reads for the trusted-network MVP, WorkerKey-bound formal ingestion, and server-side processing state.
 
 Infrastructure owns the fixed LAN IP, LAN/VPN routing, Caddy HTTPS termination, Caddy CA distribution, and firewall rules that prevent untrusted-network access.
 
@@ -68,7 +77,7 @@ uploaded contract/tender
 user asks to draft
 → contract
 → gather current facts
-→ optionally suggest enterprise retrieval
+→ optionally suggest history/template retrieval
 → user agrees or already requested it
 → contract-repository
 → anonymous MCP over trusted network

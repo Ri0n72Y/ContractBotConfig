@@ -12,9 +12,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$TemplateCorpus,
 
-    [Parameter(Mandatory = $true)]
-    [string]$KnowledgeCorpus,
-
     [string]$UploadWorkerKey = "",
 
     [ValidateSet("User", "Machine")]
@@ -58,7 +55,6 @@ $values = [ordered]@{
     OPENCONTRACTS_MCP_URL = "$baseUrl/mcp/"
     OPENCONTRACTS_HISTORY_CORPUS = $HistoryCorpus
     OPENCONTRACTS_TEMPLATE_CORPUS = $TemplateCorpus
-    OPENCONTRACTS_KNOWLEDGE_CORPUS = $KnowledgeCorpus
     OPENCONTRACTS_CA_BUNDLE = $caTarget
     NODE_EXTRA_CA_CERTS = $caTarget
     OPENCONTRACTS_ALLOW_INSECURE_HTTP = "0"
@@ -78,7 +74,6 @@ Write-Host "OPENCONTRACTS_BASE_URL=$baseUrl"
 Write-Host "OPENCONTRACTS_MCP_URL=$baseUrl/mcp/"
 Write-Host "OPENCONTRACTS_HISTORY_CORPUS=$HistoryCorpus"
 Write-Host "OPENCONTRACTS_TEMPLATE_CORPUS=$TemplateCorpus"
-Write-Host "OPENCONTRACTS_KNOWLEDGE_CORPUS=$KnowledgeCorpus"
 Write-Host "OPENCONTRACTS_CA_BUNDLE=$caTarget"
 Write-Host "NODE_EXTRA_CA_CERTS=$caTarget"
 Write-Host "OPENCONTRACTS_UPLOAD_WORKER_KEY=" + $(if ($UploadWorkerKey) { "configured" } else { "NOT SET" })
