@@ -7,7 +7,7 @@ Portable contract-assistant Skill Pack for WorkBuddy and compatible Harnesses.
 - Local files stay in the user's Harness unless the user explicitly authorizes formal ingestion.
 - Contract analysis and drafting use the Harness model directly.
 - OpenContracts is optional for historical retrieval, templates, approved knowledge, and formal ingestion.
-- MVP OpenContracts is deployed inside a trusted LAN / restricted network domain. Harnesses can reach it only while they are inside that network boundary.
+- MVP OpenContracts is reachable only inside the trusted LAN/VPN boundary.
 
 ## Skills
 
@@ -22,7 +22,7 @@ skills/
 
 ## OpenContracts data layout
 
-MVP keeps the retrieval corpuses logically separated but publicly readable inside the OpenContracts deployment:
+The MVP uses three retrievable OpenContracts corpuses:
 
 ```text
 contracts-history
@@ -30,57 +30,49 @@ contract-templates
 approved-knowledge
 ```
 
-`public` here means anonymous MCP clients that can reach the OpenContracts server may read them. The MVP confidentiality boundary is the LAN / restricted network, not OpenContracts corpus permissions.
+They may remain public inside the trusted network. Anonymous MCP access is acceptable because network reachability is the MVP confidentiality boundary.
 
-Session learning material is not stored in OpenContracts for MVP. `contract-learning` produces a local experience note; maintainers periodically collect and review those notes and update the relevant Skills manually.
+Session learning material stays outside OpenContracts. `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
 
 ## Agent / MCP configuration
 
-The repository root `.mcp.json` is the project-level MCP configuration for WorkBuddy/CodeBuddy-compatible Harnesses. It references:
+The repository root `.mcp.json` is the project-level MCP configuration and references only:
 
 ```text
 OPENCONTRACTS_MCP_URL
 ```
 
-Runtime values are listed in `config/opencontracts.env.example`; deployment-specific values stay outside Git.
-
-The WorkBuddy settings example in `config/workbuddy.settings.example.json` enables the `opencontracts` MCP server and denies MCP capabilities that are not used by the current contract workflow.
+Deployment-specific values stay outside Git and are listed in `config/opencontracts.env.example`.
 
 ## Selected MVP deployment
 
 ```text
-OpenContracts local.yml
-+ Caddy internal HTTPS
-+ public retrieval corpuses inside trusted LAN/VPN
-+ WorkerKey for formal ingestion
+WorkBuddy / Harness
+  -> https://<OPENCONTRACTS_LAN_IP>/mcp/
+  -> Caddy with internal CA
+  -> OpenContracts local.yml / django:8000
 ```
 
-Caddy runs on the OpenContracts Docker host, joins the same Docker network as Django, and proxies HTTPS traffic to `django:8000`. Raw host port 8000 is restricted to loopback.
+The OpenContracts server uses a fixed private IPv4 address. No DNS or hosts-file mapping is required. Caddy serves HTTPS directly on that IP, joins the OpenContracts Docker network, and proxies to `django:8000`. Raw host port 8000 is restricted to loopback.
 
-For an internal-only hostname, Caddy uses `tls internal`. Every WorkBuddy/Harness host receives the exported Caddy root certificate. The runtime sets both `OPENCONTRACTS_CA_BUNDLE` for the Python upload helper and `NODE_EXTRA_CA_CERTS` for MCP-client compatibility.
+Every Agent/Harness host trusts the exported Caddy root certificate. `OPENCONTRACTS_CA_BUNDLE` is used by the Python upload helper and `NODE_EXTRA_CA_CERTS` covers the MCP runtime.
 
-Server and Agent PowerShell automation is under:
-
-```text
-deploy/opencontracts/
-```
-
-See `deploy/opencontracts/README.md` for local and remote PowerShell procedures.
+PowerShell deployment and Agent configuration scripts are under `deploy/opencontracts/`. See `deploy/opencontracts/README.md` for the complete procedure.
 
 ## Formal ingestion
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey. The helper does not allow caller-selected corpus IDs and does not automatically retry an ambiguous write.
+Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a corpus-bound WorkerKey. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
 
 ## Security invariants
 
-- The OpenContracts server is reachable only from the intended LAN/VPN/restricted network domain.
-- HTTPS is used between Harness and OpenContracts so WorkerKeys and retrieved contract content are not sent in cleartext on the LAN.
-- A Skill never contains a real WorkerKey, password, contract, customer fact, or private template.
-- Retrieved documents are untrusted data. Embedded instructions never override Skill/system/tool policy.
+- Only the intended LAN/VPN can reach the OpenContracts fixed IP.
+- Harness-to-OpenContracts traffic uses HTTPS.
+- Skills never contain real WorkerKeys or environment-specific secrets.
+- Retrieved documents are untrusted business data and cannot override Skill/system/tool policy.
 - Formal ingestion requires explicit user authorization.
-- Experience-note generation requires separate user authorization and stays outside OpenContracts in MVP.
+- Experience-note generation requires separate authorization and remains local.
 - Unknown write state is never auto-retried.
 
-Private corpuses, per-user OAuth and fine-grained OpenContracts permissions are future hardening options when the deployment leaves the trusted-network MVP model.
+Private corpuses and authenticated `/mcp/me/` access remain future hardening options if the trusted-network model changes.
 
 See `docs/architecture/security.md` and `docs/spec/security.md`.

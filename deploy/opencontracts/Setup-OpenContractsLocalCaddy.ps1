@@ -4,13 +4,11 @@ param(
     [string]$OpenContractsPath,
 
     [Parameter(Mandatory = $true)]
-    [string]$InternalHost,
+    [string]$ServerIp,
 
-    [string[]]$PublicCorpusSlugs = @(
-        "contracts-history",
-        "contract-templates",
-        "approved-knowledge"
-    ),
+    [string]$HistoryCorpus = "contracts-history",
+    [string]$TemplateCorpus = "contract-templates",
+    [string]$KnowledgeCorpus = "approved-knowledge",
 
     [string]$CaddyImage = "caddy:2-alpine",
     [string]$CaddyContainerName = "opencontracts-caddy",
@@ -19,6 +17,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$parsedIp = $null
+if (-not [System.Net.IPAddress]::TryParse($ServerIp, [ref]$parsedIp) -or
+    $parsedIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    throw "ServerIp must be a fixed private IPv4 address, for example 10.10.20.15"
+}
 
 function Invoke-DockerChecked {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
@@ -43,55 +47,40 @@ function Set-DotEnvValue {
         $content = [regex]::Replace($content, $pattern, $line)
     }
     else {
-        if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
-            $content += "`r`n"
-        }
+        if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) { $content += "`r`n" }
         $content += $line + "`r`n"
     }
 
-    [System.IO.File]::WriteAllText(
-        $Path,
-        $content,
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    [System.IO.File]::WriteAllText($Path, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
 $resolvedPath = (Resolve-Path $OpenContractsPath).Path
 $composePath = Join-Path $resolvedPath "local.yml"
 $djangoEnvPath = Join-Path $resolvedPath ".envs/.local/.django"
 
-if (-not (Test-Path $composePath)) {
-    throw "local.yml not found under $resolvedPath"
-}
-if (-not (Test-Path $djangoEnvPath)) {
-    throw ".envs/.local/.django not found under $resolvedPath"
-}
+if (-not (Test-Path $composePath)) { throw "local.yml not found under $resolvedPath" }
+if (-not (Test-Path $djangoEnvPath)) { throw ".envs/.local/.django not found under $resolvedPath" }
 
 Push-Location $resolvedPath
 try {
     Invoke-DockerChecked version
     Invoke-DockerChecked compose -f local.yml config --services
 
-    # Keep the raw local HTTP port host-local so LAN clients cannot bypass Caddy.
+    # Prevent LAN clients from bypassing Caddy with cleartext HTTP.
     $composeText = [System.IO.File]::ReadAllText($composePath)
     if ($composeText -notmatch '127\.0\.0\.1:8000:8000') {
         if ($composeText -notmatch '"8000:8000"') {
-            throw "Could not find the expected django port mapping \"8000:8000\" in local.yml"
+            throw "Could not find expected django port mapping \"8000:8000\" in local.yml"
         }
-
         $backupPath = "$composePath.contractbot-backup-$((Get-Date).ToString('yyyyMMdd-HHmmss'))"
         Copy-Item $composePath $backupPath
         $composeText = $composeText -replace '"8000:8000"', '"127.0.0.1:8000:8000"'
-        [System.IO.File]::WriteAllText(
-            $composePath,
-            $composeText,
-            [System.Text.UTF8Encoding]::new($false)
-        )
+        [System.IO.File]::WriteAllText($composePath, $composeText, [System.Text.UTF8Encoding]::new($false))
         Write-Host "Updated django port binding; backup: $backupPath"
     }
 
-    # Django rejects unknown Host headers by default; allow the internal Caddy hostname.
-    Set-DotEnvValue -Path $djangoEnvPath -Name "DJANGO_ALLOWED_HOSTS" -Value "localhost,127.0.0.1,0.0.0.0,$InternalHost"
+    # Django validates Host headers. Allow the fixed IP used by Caddy clients.
+    Set-DotEnvValue -Path $djangoEnvPath -Name "DJANGO_ALLOWED_HOSTS" -Value "localhost,127.0.0.1,0.0.0.0,$ServerIp"
 
     if ($StartFullStack) {
         Invoke-DockerChecked compose -f local.yml --profile fullstack up -d
@@ -101,19 +90,16 @@ try {
     }
 
     $djangoId = (& docker compose -f local.yml ps -q django).Trim()
-    if (-not $djangoId) {
-        throw "Could not resolve the running django container."
-    }
+    if (-not $djangoId) { throw "Could not resolve the running django container." }
 
     $inspect = (& docker inspect $djangoId) | ConvertFrom-Json
     $networkNames = @($inspect[0].NetworkSettings.Networks.PSObject.Properties.Name)
-    if ($networkNames.Count -lt 1) {
-        throw "Could not resolve the OpenContracts compose network."
-    }
+    if ($networkNames.Count -lt 1) { throw "Could not resolve the OpenContracts compose network." }
     $networkName = $networkNames[0]
 
-    # Keep the three MVP retrieval corpuses public and fail if the configured slugs are wrong.
-    $slugJson = $PublicCorpusSlugs | ConvertTo-Json -Compress
+    # Validate configured retrieval corpuses and keep them public for the MVP.
+    $publicCorpusSlugs = @($HistoryCorpus, $TemplateCorpus, $KnowledgeCorpus)
+    $slugJson = $publicCorpusSlugs | ConvertTo-Json -Compress
     $python = @"
 import json
 from opencontractserver.corpuses.models import Corpus
@@ -130,28 +116,22 @@ print('PUBLIC=OK')
 "@
     & docker compose -f local.yml exec -T django python manage.py shell -c $python
     if ($LASTEXITCODE -ne 0) {
-        throw "Corpus validation/public update failed. Check the slugs passed to -PublicCorpusSlugs."
+        throw "Corpus validation/public update failed. Check the three corpus slug parameters."
     }
 
     $stateDir = Join-Path $resolvedPath ".contractbot-caddy"
     New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
     $caddyFilePath = Join-Path $stateDir "Caddyfile"
     $caddyFile = @"
-$InternalHost {
+https://$ServerIp {
     tls internal
     reverse_proxy django:8000
 }
 "@
-    [System.IO.File]::WriteAllText(
-        $caddyFilePath,
-        $caddyFile,
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    [System.IO.File]::WriteAllText($caddyFilePath, $caddyFile, [System.Text.UTF8Encoding]::new($false))
 
     $existing = (& docker ps -a --filter "name=^/${CaddyContainerName}$" --format "{{.ID}}").Trim()
-    if ($existing) {
-        Invoke-DockerChecked rm -f $CaddyContainerName
-    }
+    if ($existing) { Invoke-DockerChecked rm -f $CaddyContainerName }
 
     Invoke-DockerChecked volume create opencontracts_caddy_data
     Invoke-DockerChecked volume create opencontracts_caddy_config
@@ -159,7 +139,6 @@ $InternalHost {
         --name $CaddyContainerName `
         --restart unless-stopped `
         --network $networkName `
-        -p 80:80 `
         -p 443:443 `
         -v opencontracts_caddy_data:/data `
         -v opencontracts_caddy_config:/config `
@@ -175,25 +154,20 @@ $InternalHost {
     $copied = $false
     for ($i = 0; $i -lt 20; $i++) {
         & docker cp "${CaddyContainerName}:/data/caddy/pki/authorities/local/root.crt" $caPath 2>$null
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $caPath)) {
-            $copied = $true
-            break
-        }
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $caPath)) { $copied = $true; break }
         Start-Sleep -Seconds 1
     }
-    if (-not $copied) {
-        throw "Caddy started but its internal root certificate could not be exported."
-    }
+    if (-not $copied) { throw "Caddy started but its internal root certificate could not be exported." }
 
     Write-Host ""
     Write-Host "OpenContracts local.yml + Caddy configured."
-    Write-Host "BASE_URL=https://$InternalHost"
-    Write-Host "MCP_URL=https://$InternalHost/mcp/"
+    Write-Host "BASE_URL=https://$ServerIp"
+    Write-Host "MCP_URL=https://$ServerIp/mcp/"
     Write-Host "CA_ROOT=$caPath"
     Write-Host "RAW_DJANGO=http://127.0.0.1:8000"
     Write-Host "CADDY_CONTAINER=$CaddyContainerName"
     Write-Host ""
-    Write-Host "Next: make $InternalHost resolve to this server from every Agent host, distribute CA_ROOT, then mint a WorkerKey for the history corpus."
+    Write-Host "Next: distribute CA_ROOT to Agent hosts, configure their environment, and mint the history-corpus WorkerKey."
 }
 finally {
     Pop-Location

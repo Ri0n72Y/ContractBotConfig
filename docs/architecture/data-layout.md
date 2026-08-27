@@ -2,9 +2,9 @@
 
 ## Principle
 
-For the MVP, OpenContracts stores retrievable enterprise contract data. Session-learning material is intentionally kept outside OpenContracts because it is not part of runtime retrieval.
+OpenContracts stores retrievable enterprise contract data. Session-learning material stays outside OpenContracts because it is maintained manually rather than used as runtime retrieval data.
 
-Corpus boundaries organize business data and workflow. They are not the confidentiality boundary because the OpenContracts deployment stays inside a trusted network and the corpuses remain public within that deployment.
+Corpus boundaries organize business data and workflow. In the trusted-network MVP they are not the confidentiality boundary because the retrieval corpuses remain public.
 
 ## Recommended corpuses
 
@@ -25,61 +25,36 @@ Purpose: enterprise-approved contract templates.
 Rules:
 
 - public inside the trusted-network MVP;
-- only actual templates and related template guidance belong here;
+- only templates and directly related template guidance belong here;
 - strict named-template requests require unique identity confirmation;
-- templates may contain business text but never credentials or operational system instructions.
+- templates never contain credentials or operational system instructions.
 
 ### `approved-knowledge`
 
-Purpose: curated drafting/review knowledge that is intentionally useful for routine retrieval.
+Purpose: curated drafting/review knowledge intentionally suitable for routine retrieval.
 
 Rules:
 
 - public inside the trusted-network MVP;
-- contains reviewed, reusable knowledge;
-- content should be concise and scoped;
-- it is maintained intentionally, not automatically populated from session learning.
+- content is reviewed, reusable and scoped;
+- it is maintained intentionally rather than populated automatically from session experience.
 
 ## Experience system outside OpenContracts
 
-`contract-learning` produces local experience notes after separate user consent. These notes are source material for maintainers, not retrieval documents.
+`contract-learning` creates local experience notes after separate user consent. Maintainers periodically collect, review, merge and generalize useful lessons, then update the relevant Skill files through normal version control.
 
-MVP flow:
-
-```text
-session corrections / accepted improvements
-→ local contract-experience-note.md
-→ manual periodic collection
-→ human review / merge / generalization
-→ update the relevant Skill files
-→ normal code review and release
-```
-
-No Learning Inbox Corpus, vectorization, automatic retrieval, or automatic Skill self-modification is required for MVP.
+No automatic vectorization, retrieval, remote learning upload or self-modifying Skill loop is part of the MVP.
 
 ## Network boundary
 
-The deployment assumes:
-
 ```text
-trusted LAN / VPN / restricted network
+trusted LAN / VPN
     ├── Harness users
     ├── WorkBuddy host
-    └── OpenContracts
+    └── OpenContracts fixed LAN IP
 
 Internet / untrusted network
     X OpenContracts
 ```
 
-If OpenContracts becomes reachable outside this boundary, or if different internal users require different confidentiality scopes, migrate the affected corpuses to private and introduce authenticated MCP access.
-
-## Future private-corpus migration
-
-The three retrieval corpuses can later become private without changing the Skill semantics:
-
-```text
-public MVP corpus
-→ private corpus
-→ explicit OpenContracts user/service permissions
-→ /mcp/me/ authenticated access
-```
+If OpenContracts becomes reachable outside this boundary, or internal users need different confidentiality scopes, affected corpuses can later move to private authenticated access.

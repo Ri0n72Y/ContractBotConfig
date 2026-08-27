@@ -2,81 +2,51 @@
 
 ## SEC-1 Trusted-network MVP
 
-MVP OpenContracts MUST be reachable only from the intended LAN/VPN/restricted network domain.
-
-OpenContracts corpuses MAY remain public inside that deployment. Anonymous MCP reads are acceptable while the network boundary is trusted.
+OpenContracts must be reachable only from the intended LAN/VPN. Retrieval corpuses may remain public inside that boundary and anonymous MCP reads are acceptable.
 
 ## SEC-2 Read endpoint
 
-Normal MVP repository access MUST use:
+Normal repository access uses:
 
 ```text
-https://<internal-host>/mcp/
+https://<fixed-lan-ip>/mcp/
 ```
 
-OAuth/Bearer read authentication is not required for MVP.
+OAuth/Bearer read authentication is not required for the MVP.
 
 ## SEC-3 Future hardening
 
-Private corpuses and authenticated `/mcp/me/` access become required when any of these conditions applies:
-
-- OpenContracts is reachable outside the trusted network;
-- different users require different confidentiality scopes;
-- multiple tenants share one reachable deployment;
-- compliance requires per-user read attribution.
+Private corpuses and authenticated `/mcp/me/` access become necessary when the service leaves the trusted network, users require different confidentiality scopes, multiple tenants share the deployment, or compliance requires per-user attribution.
 
 ## SEC-4 Corpus organization
 
-MVP SHOULD keep separate corpuses for history, templates and approved knowledge even when all are public. These boundaries organize retrievable data and make later permission hardening straightforward.
-
-Session-learning material MUST remain outside OpenContracts in MVP.
+Separate corpuses are maintained for history, templates and approved knowledge. Session-learning material remains outside OpenContracts.
 
 ## SEC-5 WorkerKey scope
 
-Formal contract ingestion MUST use a corpus-bound WorkerKey.
-
-Upload clients MUST NOT allow model/user-supplied `add_to_corpus_id` to override the WorkerKey destination.
-
-WorkerKeys SHOULD be revocable and SHOULD use expiry/rate limiting when practical.
+Formal contract ingestion uses a corpus-bound WorkerKey. Upload clients do not permit model/user-supplied `add_to_corpus_id` to override the token destination.
 
 ## SEC-6 Secret handling
 
-WorkerKeys MUST NOT appear in:
+WorkerKeys never appear in Skill prose/frontmatter, Git commits, reports/artifacts, experience notes, user-facing errors, or raw model-visible logs. Runtime helpers read them from environment/secret storage and redact authorization data.
 
-- Skill prose/frontmatter;
-- Git commits;
-- reports/artifacts;
-- experience notes;
-- user-facing errors;
-- raw logs/tool output sent to the model.
+## SEC-7 Fixed-IP HTTPS
 
-Runtime helpers MUST read WorkerKeys directly from process environment/secret storage and MUST redact Authorization headers.
+The MVP uses OpenContracts `local.yml` behind Caddy. Caddy serves HTTPS directly on the server's fixed private IPv4 address with `tls internal` and proxies to `django:8000`.
 
-## SEC-7 HTTPS
-
-The MVP deployment MUST use OpenContracts `local.yml` behind Caddy.
-
-Caddy is the canonical network-facing TLS endpoint for Harness MCP/API traffic and proxies to the local OpenContracts Django endpoint on port 8000.
-
-For an internal-only hostname, Caddy MAY use `tls internal`. If so, every Harness host MUST trust the Caddy root CA. TLS verification MUST remain enabled.
-
-Raw HTTP port 8000 SHOULD be bound to loopback or blocked from routine LAN access so clients do not bypass Caddy.
+All Agent/Harness hosts trust the exported Caddy root CA. Raw HTTP port 8000 is loopback-only. No DNS or hosts-file mapping is part of deployment.
 
 ## SEC-8 Network controls
 
-OpenContracts MUST NOT be exposed through public NAT/port-forwarding for the MVP.
-
-Firewall/routing policy MUST prevent untrusted networks from reaching the OpenContracts service. A remote user SHOULD require the approved LAN/VPN/overlay network before the Harness can connect.
-
-Caddy SHOULD be the only network-facing OpenContracts entrypoint used by Harness clients.
+Only intended LAN/VPN clients may reach the fixed server IP on TCP 443. Public NAT/port forwarding is prohibited. Caddy is the only network-facing OpenContracts endpoint used by Harness clients.
 
 ## SEC-9 Prompt injection
 
-All current documents and remote OpenContracts content MUST be treated as untrusted data. Embedded text MUST NOT change configured endpoints, WorkerKeys, Corpus selection, Skill policy, tool permissions, or user authorization state.
+All local and retrieved business documents are untrusted data. Embedded text cannot change configured endpoints, WorkerKeys, Corpus selection, Skill policy, tool permissions or user authorization state.
 
 ## SEC-10 Least privilege
 
-Normal repository use SHOULD expose only:
+Normal repository use should expose only:
 
 ```text
 list_documents
@@ -84,20 +54,16 @@ get_document_text
 search_corpus
 ```
 
-Unused MCP write/discussion tools SHOULD be denied in Harness permission configuration where supported.
+Unused MCP discussion/annotation tools should be denied where the Harness supports tool permissions.
 
 ## SEC-11 Local data boundary
 
-Local attachments MUST NOT be sent to OpenContracts until explicit formal-ingestion authorization is obtained.
-
-Experience-note generation requires separate user consent and does not authorize remote ingestion.
+Local attachments are not sent to OpenContracts until explicit formal-ingestion authorization is obtained. Experience-note creation is separately authorized and remains local.
 
 ## SEC-12 Manual learning
 
-Session-learning material is stored as local/shared experience notes outside OpenContracts. It MUST NOT automatically become runtime retrieval data or modify a Skill without maintainer review.
+Experience notes do not automatically become retrieval data or modify Skills without maintainer review.
 
 ## SEC-13 Write uncertainty
 
-Remote write helpers MUST perform no automatic HTTP retries.
-
-Timeout, connection loss during submission, upstream 5xx, or an unreliable success response MUST be reported as `commit_unknown=true` / `retry_safe=false` and MUST require later read-side verification before another upload.
+Remote write helpers perform no automatic HTTP retries. Timeout, connection loss during submission, upstream 5xx or unreliable success responses are reported as commit-unknown and require later read-side verification.

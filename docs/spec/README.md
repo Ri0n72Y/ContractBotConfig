@@ -1,15 +1,15 @@
 # Specifications
 
-This directory defines the acceptance-level behavior for the portable Contract Skill Pack.
+This directory defines acceptance-level behavior for the portable Contract Skill Pack.
 
 Current MVP assumptions:
 
 - WorkBuddy/Harness owns runtime, local files and interaction;
-- OpenContracts is reachable only inside a trusted network;
-- OpenContracts retrieval corpuses may remain public and use anonymous `/mcp/` reads;
+- OpenContracts is reachable only inside a trusted LAN/VPN at a fixed private IPv4 address;
+- retrieval corpuses may remain public and use anonymous `/mcp/` reads;
+- Caddy provides HTTPS directly on the fixed IP in front of OpenContracts `local.yml`;
 - formal contract ingestion uses a corpus-bound WorkerKey;
-- session-learning material stays outside OpenContracts and is manually reviewed before Skill updates;
-- HTTPS is required for the intended deployment path, using bundled production Traefik or an internal reverse proxy such as Caddy.
+- session-learning material stays outside OpenContracts and is manually reviewed before Skill updates.
 
 Files:
 

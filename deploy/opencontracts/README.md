@@ -1,19 +1,43 @@
-# OpenContracts local.yml + Caddy deployment
+# OpenContracts `local.yml` + Caddy 固定 IP 部署
 
-This is the selected MVP deployment path.
+这是当前 MVP 的标准部署流程。OpenContracts 使用现有 `local.yml`，服务器保留固定内网 IPv4，Caddy 直接给该 IP 提供 HTTPS。整个流程不需要 DNS，也不修改 Agent 的 hosts 文件。
 
 ```text
 WorkBuddy / Harness
-  -> https://<internal-host>/mcp/
-  -> Caddy (internal CA)
+  -> https://<固定内网IP>/mcp/
+  -> Caddy :443 (tls internal)
   -> OpenContracts django:8000
 ```
 
-OpenContracts stays on `local.yml`. The three retrieval corpuses remain public inside the trusted network. Formal document ingestion uses a corpus-bound WorkerKey.
+OpenContracts 的三个检索 Corpus 在 MVP 中保持 public；正式合同入库使用绑定 `contracts-history` 的 WorkerKey。
 
-## 1. Agent/Harness MCP configuration
+## 0. 需要先确定的值
 
-The repository root `.mcp.json` is the project-level MCP configuration:
+部署前只需要确认：
+
+```text
+OPENCONTRACTS_SERVER_IP=<OpenContracts服务器固定内网IPv4>
+OPENCONTRACTS_PATH=<服务器上的OpenContracts目录>
+HISTORY_CORPUS=<历史合同Corpus slug>
+TEMPLATE_CORPUS=<模板Corpus slug>
+KNOWLEDGE_CORPUS=<已批准知识Corpus slug>
+```
+
+示例：
+
+```text
+OPENCONTRACTS_SERVER_IP=10.10.20.15
+OPENCONTRACTS_PATH=D:\OpenContracts
+HISTORY_CORPUS=contracts-history
+TEMPLATE_CORPUS=contract-templates
+KNOWLEDGE_CORPUS=approved-knowledge
+```
+
+服务器需要已经能够通过 `docker compose -f local.yml up -d` 正常启动 OpenContracts。
+
+## 1. Agent MCP 配置
+
+仓库根目录 `.mcp.json` 可以直接随项目使用：
 
 ```json
 {
@@ -26,150 +50,200 @@ The repository root `.mcp.json` is the project-level MCP configuration:
 }
 ```
 
-Fill the runtime values from `config/opencontracts.env.example` on each Agent/Harness host. The required values are:
+以 `10.10.20.15` 为例，Agent 最终环境变量应为：
 
 ```text
-OPENCONTRACTS_BASE_URL=https://<internal-host>
-OPENCONTRACTS_MCP_URL=https://<internal-host>/mcp/
-OPENCONTRACTS_HISTORY_CORPUS=<actual history corpus slug>
-OPENCONTRACTS_TEMPLATE_CORPUS=<actual template corpus slug>
-OPENCONTRACTS_KNOWLEDGE_CORPUS=<actual approved-knowledge corpus slug>
-OPENCONTRACTS_CA_BUNDLE=<local path to exported caddy-root.crt>
-NODE_EXTRA_CA_CERTS=<same caddy-root.crt path>
-OPENCONTRACTS_UPLOAD_WORKER_KEY=<one-time WorkerKey; formal ingestion only>
+OPENCONTRACTS_BASE_URL=https://10.10.20.15
+OPENCONTRACTS_MCP_URL=https://10.10.20.15/mcp/
+OPENCONTRACTS_HISTORY_CORPUS=contracts-history
+OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
+OPENCONTRACTS_KNOWLEDGE_CORPUS=approved-knowledge
+OPENCONTRACTS_CA_BUNDLE=<本机caddy-root.crt路径>
+NODE_EXTRA_CA_CERTS=<同一个caddy-root.crt路径>
+OPENCONTRACTS_UPLOAD_WORKER_KEY=<正式入库WorkerKey>
 ```
 
-Restart WorkBuddy/CodeBuddy after setting persistent environment variables.
+`config/opencontracts.env.example` 中这些环境相关值保持空白，不提交真实 IP/Token。
 
-## 2. Configure the OpenContracts server
+## 2. 配置 OpenContracts 服务器
 
-Run `Setup-OpenContractsLocalCaddy.ps1` on the OpenContracts Docker host. It:
+`Setup-OpenContractsLocalCaddy.ps1` 会完成以下动作：
 
-- changes the django host mapping from `8000:8000` to `127.0.0.1:8000:8000` and creates a timestamped backup of `local.yml`;
-- adds the internal hostname to `DJANGO_ALLOWED_HOSTS` in `.envs/.local/.django`;
-- starts the `local.yml` stack;
-- verifies the configured retrieval corpus slugs exist and sets them public;
-- starts Caddy as a separate Docker container on the same Compose network;
-- serves the internal hostname with `tls internal`;
-- exports Caddy's root certificate to `.contractbot-caddy/caddy-root.crt`.
+1. 校验固定 IPv4、Docker、`local.yml` 和 Django env 文件；
+2. 把 `local.yml` 中 Django 的 `8000:8000` 改为 `127.0.0.1:8000:8000`，并创建带时间戳的备份；
+3. 把固定 IP 加入 `DJANGO_ALLOWED_HOSTS`；
+4. 启动 OpenContracts `local.yml`；
+5. 检查三个 Corpus slug 是否存在，并设为 `is_public=True`；
+6. 创建 Caddy 容器并加入 OpenContracts Docker network；
+7. 只把 Caddy 的 `443/tcp` 暴露到宿主机；
+8. Caddy 使用 `https://<固定IP>` + `tls internal`，反代 `django:8000`；
+9. 导出内部 CA 根证书到 `.contractbot-caddy/caddy-root.crt`。
 
-Example on the OpenContracts host:
+在服务器本机运行：
 
 ```powershell
 .\Setup-OpenContractsLocalCaddy.ps1 `
   -OpenContractsPath 'D:\OpenContracts' `
-  -InternalHost 'contracts.internal.example' `
-  -PublicCorpusSlugs 'contracts-history','contract-templates','approved-knowledge'
+  -ServerIp '10.10.20.15' `
+  -HistoryCorpus 'contracts-history' `
+  -TemplateCorpus 'contract-templates' `
+  -KnowledgeCorpus 'approved-knowledge'
 ```
 
-Use `-StartFullStack` only when this server also needs the OpenContracts local frontend profile.
+如当前部署需要 `fullstack` profile，再增加 `-StartFullStack`。
 
-## 3. Remote PowerShell execution
+## 3. 通过远程 PowerShell 配置服务器
 
-From an administrator workstation:
+从管理员工作站建立 PowerShell Remoting session：
 
 ```powershell
 $session = New-PSSession -ComputerName 'OC-SERVER'
+```
 
+直接把仓库里的脚本发送到远端执行，服务器上无需预先复制脚本：
+
+```powershell
 Invoke-Command `
   -Session $session `
   -FilePath '.\deploy\opencontracts\Setup-OpenContractsLocalCaddy.ps1' `
-  -ArgumentList 'D:\OpenContracts','contracts.internal.example',@('contracts-history','contract-templates','approved-knowledge')
+  -ArgumentList `
+    'D:\OpenContracts', `
+    '10.10.20.15', `
+    'contracts-history', `
+    'contract-templates', `
+    'approved-knowledge'
+```
 
+执行完成后把 Caddy 根证书拉回管理员工作站：
+
+```powershell
 Copy-Item `
   -FromSession $session `
   'D:\OpenContracts\.contractbot-caddy\caddy-root.crt' `
   '.\caddy-root.crt'
 ```
 
-`Invoke-Command -FilePath` sends the local script for execution in the remote session; the script does not need to exist on the server beforehand.
+## 4. 创建正式入库 WorkerKey
 
-## 4. Internal DNS / hosts resolution
+先查询历史合同 Corpus 的数据库 ID：
 
-Every Agent/Harness host must resolve the same internal hostname to the OpenContracts server IP. Prefer internal DNS. For an MVP without internal DNS, `Configure-AgentOpenContracts.ps1` can maintain the Windows hosts entry when `-ServerIp` is supplied.
+```powershell
+Invoke-Command -Session $session -ScriptBlock {
+    Set-Location 'D:\OpenContracts'
+    docker compose -f local.yml exec -T django python manage.py shell -c "from opencontractserver.corpuses.models import Corpus; print(list(Corpus.objects.filter(slug='contracts-history').values_list('id','slug','is_public')))"
+}
+```
 
-Example:
+假设结果中的 raw ID 为 `12`，创建 token：
+
+```powershell
+Invoke-Command -Session $session -ScriptBlock {
+    Set-Location 'D:\OpenContracts'
+    docker compose -f local.yml exec -T django python manage.py mint_worker_token `
+      --corpus 12 `
+      --worker-name contractbot-formal-ingest `
+      --rate-limit 30 `
+      --expires-days 365
+}
+```
+
+命令输出的 `OC_WORKER_TOKEN=...` 明文只显示一次。把该值保存到 Agent/Harness 的 `OPENCONTRACTS_UPLOAD_WORKER_KEY`，不要写入 Git、`.mcp.json` 或 `SKILL.md`。
+
+## 5. 配置 Windows Agent / WorkBuddy 主机
+
+先把 `caddy-root.crt` 复制到目标 Agent：
+
+```powershell
+$agent = New-PSSession -ComputerName 'WORKBUDDY-01'
+
+Copy-Item `
+  '.\caddy-root.crt' `
+  -ToSession $agent `
+  -Destination 'C:\Temp\caddy-root.crt'
+```
+
+远程执行 Agent 配置脚本：
+
+```powershell
+Invoke-Command `
+  -Session $agent `
+  -FilePath '.\deploy\opencontracts\Configure-AgentOpenContracts.ps1' `
+  -ArgumentList `
+    '10.10.20.15', `
+    'C:\Temp\caddy-root.crt', `
+    'contracts-history', `
+    'contract-templates', `
+    'approved-knowledge', `
+    '<WorkerKey>', `
+    'Machine'
+```
+
+脚本会：
+
+- 把 Caddy 根证书复制到固定本机目录；
+- 导入 Windows Trusted Root；
+- 设置 `OPENCONTRACTS_BASE_URL` 与 `OPENCONTRACTS_MCP_URL` 为固定 IP HTTPS URL；
+- 设置三个 Corpus slug；
+- 设置 `OPENCONTRACTS_CA_BUNDLE` 和 `NODE_EXTRA_CA_CERTS`；
+- 可选设置 `OPENCONTRACTS_UPLOAD_WORKER_KEY`。
+
+长期运行的共享 WorkBuddy 主机建议 `Machine` scope；个人工作站可使用 `User` scope。修改持久环境变量后重启 WorkBuddy/CodeBuddy 进程。
+
+## 6. 验证
+
+OpenContracts 服务器：
+
+```powershell
+Invoke-Command -Session $session -ScriptBlock {
+    Set-Location 'D:\OpenContracts'
+    docker compose -f local.yml ps
+    docker ps --filter name=opencontracts-caddy
+    docker logs --tail 100 opencontracts-caddy
+    Get-NetTCPConnection -LocalPort 443 -State Listen
+    Get-NetTCPConnection -LocalPort 8000 -State Listen
+}
+```
+
+预期：
 
 ```text
-10.10.20.15 contracts.internal.example
+443 由 Caddy 对 LAN 提供 HTTPS
+8000 只绑定 127.0.0.1
 ```
 
-Do not expose OpenContracts through public NAT/port forwarding.
-
-## 5. Mint the formal-ingestion WorkerKey
-
-First find the raw database ID of the history corpus:
+Agent 主机：
 
 ```powershell
-Set-Location 'D:\OpenContracts'
-docker compose -f local.yml exec -T django python manage.py shell -c "from opencontractserver.corpuses.models import Corpus; print(list(Corpus.objects.filter(slug='contracts-history').values_list('id','slug','is_public')))"
+Invoke-Command -Session $agent -ScriptBlock {
+    Test-NetConnection 10.10.20.15 -Port 443
+    Invoke-WebRequest https://10.10.20.15/admin/login/ -UseBasicParsing
+}
 ```
 
-Then mint a corpus-scoped token. The plaintext token is printed once only:
+然后重启 WorkBuddy，确认项目根目录 `.mcp.json` 中的 `opencontracts` 服务能够连接，并能使用预期 MCP 工具。
+
+上传 helper 验证：
 
 ```powershell
-docker compose -f local.yml exec -T django python manage.py mint_worker_token `
-  --corpus <RAW_CORPUS_ID> `
-  --worker-name contractbot-formal-ingest `
-  --rate-limit 30 `
-  --expires-days 365
+python scripts/opencontracts/check_config.py
+python scripts/opencontracts/upload_document.py --file .\test.docx --title 'MVP入库测试'
 ```
 
-Copy the printed `OC_WORKER_TOKEN=...` value into the Agent/Harness runtime as:
+测试上传只应在明确准备好的测试文件和历史 Corpus 上执行。
+
+## 7. 防火墙基线
+
+当前拓扑要求：
 
 ```text
-OPENCONTRACTS_UPLOAD_WORKER_KEY=<token>
+LAN/VPN -> 服务器固定IP:443 允许
+LAN/VPN -> 服务器:8000 不允许
+Internet -> 服务器:443 不允许
+数据库/Redis/parser/embedder -> 仅 Docker 内部网络
 ```
 
-Do not put it in `.mcp.json`, `SKILL.md`, Git, or a checked-in env file.
+Caddy 当前只映射 443；不需要开放 80。OpenContracts 不做公网 NAT/端口转发。
 
-## 6. Configure a Windows Agent/Harness host
+## 8. 固定 IP 变更
 
-Copy `caddy-root.crt` to the target machine, then run:
-
-```powershell
-.\Configure-AgentOpenContracts.ps1 `
-  -InternalHost 'contracts.internal.example' `
-  -ServerIp '10.10.20.15' `
-  -CaddyRootCertificate 'C:\Temp\caddy-root.crt' `
-  -HistoryCorpus 'contracts-history' `
-  -TemplateCorpus 'contract-templates' `
-  -KnowledgeCorpus 'approved-knowledge' `
-  -UploadWorkerKey '<WorkerKey>' `
-  -EnvironmentScope User
-```
-
-For a dedicated always-on WorkBuddy host managed remotely, `-EnvironmentScope Machine` is usually easier, but it requires an elevated session and makes the runtime variables machine-wide. For a personal workstation, run the script as the actual WorkBuddy user with `User` scope.
-
-The script imports the Caddy root certificate and sets both `OPENCONTRACTS_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` to the installed certificate copy.
-
-## 7. Basic checks
-
-On the OpenContracts host:
-
-```powershell
-docker compose -f D:\OpenContracts\local.yml ps
-docker ps --filter name=opencontracts-caddy
-docker logs --tail 100 opencontracts-caddy
-```
-
-On an Agent/Harness host after restart:
-
-```powershell
-Resolve-DnsName contracts.internal.example
-Invoke-WebRequest https://contracts.internal.example/admin/login/ -UseBasicParsing
-```
-
-Then use WorkBuddy/CodeBuddy MCP diagnostics to confirm `opencontracts` connects and exposes the expected tools.
-
-For upload-helper validation, set the runtime variables and run `scripts/opencontracts/check_config.py`, then perform a controlled test upload with `upload_document.py`.
-
-## 8. Firewall baseline
-
-The selected topology expects:
-
-- LAN/VPN clients -> Caddy `443/tcp` allowed;
-- optional `80/tcp` allowed only for Caddy HTTP-to-HTTPS redirect;
-- raw OpenContracts `8000/tcp` bound to `127.0.0.1` only;
-- no public Internet ingress to 80/443;
-- database, Redis, parsers, embedders and internal Docker networks not exposed to normal clients.
+固定 IP 是当前 MVP 的部署配置。如果服务器 IP 发生变化，需要重新执行服务端 Caddy 配置脚本，并重新运行 Agent 配置脚本，使证书、URL 和 Django `ALLOWED_HOSTS` 同步到新 IP。

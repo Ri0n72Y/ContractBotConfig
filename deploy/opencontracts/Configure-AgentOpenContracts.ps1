@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$InternalHost,
+    [string]$ServerIp,
 
     [Parameter(Mandatory = $true)]
     [string]$CaddyRootCertificate,
@@ -15,7 +15,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$KnowledgeCorpus,
 
-    [string]$ServerIp = "",
     [string]$UploadWorkerKey = "",
 
     [ValidateSet("User", "Machine")]
@@ -25,28 +24,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if (-not (Test-Path $CaddyRootCertificate)) {
-    throw "Caddy root certificate not found: $CaddyRootCertificate"
+$parsedIp = $null
+if (-not [System.Net.IPAddress]::TryParse($ServerIp, [ref]$parsedIp) -or
+    $parsedIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    throw "ServerIp must be the fixed private IPv4 address of the OpenContracts/Caddy server."
 }
 
-if ($ServerIp) {
-    $hostsPath = Join-Path $env:SystemRoot "System32/drivers/etc/hosts"
-    $hostsText = [System.IO.File]::ReadAllText($hostsPath)
-    $pattern = "(?m)^\s*\S+\s+" + [regex]::Escape($InternalHost) + "(?:\s|$).*"
-    $line = "$ServerIp`t$InternalHost"
-    if ([regex]::IsMatch($hostsText, $pattern)) {
-        $hostsText = [regex]::Replace($hostsText, $pattern, $line)
-    }
-    else {
-        if (-not $hostsText.EndsWith("`n")) { $hostsText += "`r`n" }
-        $hostsText += $line + "`r`n"
-    }
-    [System.IO.File]::WriteAllText(
-        $hostsPath,
-        $hostsText,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    Write-Host "Updated hosts entry: $InternalHost -> $ServerIp"
+if (-not (Test-Path $CaddyRootCertificate)) {
+    throw "Caddy root certificate not found: $CaddyRootCertificate"
 }
 
 $caDir = if ($EnvironmentScope -eq "Machine") {
@@ -67,7 +52,7 @@ else {
 }
 Import-Certificate -FilePath $caTarget -CertStoreLocation $certStore | Out-Null
 
-$baseUrl = "https://$InternalHost"
+$baseUrl = "https://$ServerIp"
 $values = [ordered]@{
     OPENCONTRACTS_BASE_URL = $baseUrl
     OPENCONTRACTS_MCP_URL = "$baseUrl/mcp/"

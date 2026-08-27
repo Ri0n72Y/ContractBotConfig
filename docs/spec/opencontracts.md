@@ -2,31 +2,18 @@
 
 ## OC-1 Endpoints
 
-The configured base URL identifies the OpenContracts deployment reachable inside the trusted network.
-
-MVP MCP URL:
+The MVP OpenContracts deployment is reachable at a fixed private IPv4 address inside the trusted network.
 
 ```text
-https://<internal-host>/mcp/
+OPENCONTRACTS_BASE_URL=https://<fixed-lan-ip>
+OPENCONTRACTS_MCP_URL=https://<fixed-lan-ip>/mcp/
 ```
 
-The MVP keeps business corpuses public inside the OpenContracts deployment, so normal read-side MCP access is anonymous.
-
-Private corpuses and `/mcp/me/` authenticated access are a future hardening path, not an MVP requirement.
+Normal MCP reads are anonymous because the retrieval corpuses remain public in the trusted-network MVP.
 
 ## OC-2 Retrieval corpuses
 
-Runtime configuration identifies separate retrieval corpuses for:
-
-```text
-history
-templates
-approved knowledge
-```
-
-These may all be public during MVP.
-
-Session-learning material is not stored in OpenContracts for MVP.
+Runtime configuration identifies separate corpuses for history, templates and approved knowledge. Session-learning material is not stored in OpenContracts.
 
 ## OC-3 Minimal MCP tools
 
@@ -42,24 +29,11 @@ Additional tools require an explicit product need.
 
 ## OC-4 Retrieval evidence
 
-Semantic search is a discovery mechanism. If the assistant relies on a specific contract/template as evidence, it MUST retrieve sufficient actual document text to support the claim.
-
-Long document text MUST follow the tool's paging contract using returned offsets.
-
-Partial reads MUST produce correspondingly limited conclusions.
+Semantic search discovers candidates. If the assistant relies on a specific contract/template as evidence, it must retrieve sufficient actual document text to support the claim. Long documents follow the tool paging contract.
 
 ## OC-5 Reference Pack
 
-Repository-assisted work MUST build an internal source set containing:
-
-- query purpose;
-- candidates;
-- actually used documents;
-- actual template, if any;
-- how each source influenced the result;
-- unresolved evidence gaps.
-
-The final response SHOULD disclose the material sources actually used.
+Repository-assisted work maintains an internal source set covering query purpose, candidates, actually used documents/templates, how each source influenced the result, and unresolved evidence gaps. The user-facing response should disclose material sources actually used.
 
 ## OC-6 Formal ingestion endpoint
 
@@ -70,44 +44,32 @@ POST /api/imports/documents/
 Authorization: WorkerKey <corpus-bound-token>
 ```
 
-The project helper MUST omit `add_to_corpus_id`; the token's server-side binding is authoritative.
+The helper omits `add_to_corpus_id`; the WorkerKey binding is authoritative.
 
 ## OC-7 Duplicate handling
 
-Before formal contract ingestion, the Skill SHOULD search for a likely existing document. A likely duplicate MUST be surfaced to the user before a replacement/new-version submission.
-
-The system MUST NOT silently overwrite based only on a similar title.
+Before formal ingestion, the Skill should search for a likely existing document. Suspected duplicates are surfaced before a new-version/re-upload decision. Similar titles never justify silent overwrite.
 
 ## OC-8 Processing state
 
-HTTP acceptance does not prove extracted text or semantic search readiness.
-
-After an accepted upload, the user MUST be told that parsing/indexing is still processing. A later MCP read MAY confirm the document is searchable.
+HTTP acceptance proves submission only. Parsing/indexing may still be in progress. A later MCP read can verify that document text is available and searchable.
 
 ## OC-9 Commit-unknown
 
-Any ambiguous write outcome MUST stop automatic retries. The next safe action is read-side verification.
+Any ambiguous write outcome stops automatic retries. Read-side verification is required before another upload.
 
 ## OC-10 Network boundary
 
-For MVP, confidentiality depends on OpenContracts being unreachable from untrusted networks.
-
-The deployment MUST avoid public port forwarding/NAT exposure and SHOULD require the approved LAN/VPN/network overlay before a Harness can reach the service.
-
-If this assumption changes, migrate the relevant corpuses to private and introduce authenticated MCP access.
+The fixed OpenContracts IP must be unreachable from untrusted networks. No public NAT/port forwarding is part of the MVP.
 
 ## OC-11 HTTPS
 
-The current OpenContracts deployment uses `local.yml`, which exposes Django over HTTP on port 8000 and includes no TLS reverse proxy.
+OpenContracts `local.yml` remains the application stack. Caddy runs on the same host, joins the OpenContracts Docker network, exposes TCP 443, serves `https://<fixed-lan-ip>` with `tls internal`, and proxies to `django:8000`.
 
-The MVP MUST place Caddy in front of that endpoint and use the Caddy HTTPS origin for Harness MCP and REST ingestion traffic.
+Raw host port 8000 is bound to loopback. Every Harness host trusts the Caddy root CA. TLS verification remains enabled.
 
-For an internal-only hostname, Caddy MAY use `tls internal`; every Harness host MUST trust the issuing Caddy root CA. TLS verification MUST remain enabled.
-
-Raw port 8000 SHOULD be restricted to loopback/host-local access or blocked from routine LAN clients so Caddy is the normal network-facing entrypoint.
+No DNS or hosts-file configuration is required.
 
 ## OC-12 Write credentials
 
-A corpus-bound WorkerKey remains required for formal ingestion even when the target Corpus is public.
-
-The WorkerKey MUST stay outside Skill content and source control.
+A corpus-bound WorkerKey is required for formal ingestion even though the target Corpus is public. The WorkerKey stays outside Skill content and source control.

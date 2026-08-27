@@ -1,14 +1,14 @@
 # OpenContracts runtime configuration
 
-This directory contains examples only. Real WorkerKeys stay in the user's Harness secret store, host environment, or an untracked local env file.
+This directory contains examples only. Real WorkerKeys and deployment-specific values stay in the Harness secret store, host environment, or an untracked local env file.
 
 ## Values to fill
 
-Copy the names from `opencontracts.env.example` into the Agent/Harness runtime and fill:
+For a server whose fixed LAN IPv4 is `10.10.20.15`, configure:
 
 ```text
-OPENCONTRACTS_BASE_URL=https://<internal-host>
-OPENCONTRACTS_MCP_URL=https://<internal-host>/mcp/
+OPENCONTRACTS_BASE_URL=https://10.10.20.15
+OPENCONTRACTS_MCP_URL=https://10.10.20.15/mcp/
 OPENCONTRACTS_HISTORY_CORPUS=<history corpus slug>
 OPENCONTRACTS_TEMPLATE_CORPUS=<template corpus slug>
 OPENCONTRACTS_KNOWLEDGE_CORPUS=<approved-knowledge corpus slug>
@@ -17,48 +17,30 @@ NODE_EXTRA_CA_CERTS=<same caddy-root.crt path>
 OPENCONTRACTS_UPLOAD_WORKER_KEY=<history-corpus WorkerKey>
 ```
 
-The example file intentionally leaves deployment-specific values empty.
+`opencontracts.env.example` intentionally leaves environment-specific values blank.
 
-## MVP MCP access
+## MCP reads
 
-The MVP assumes OpenContracts is reachable only inside a trusted LAN/VPN/restricted network domain and keeps its retrieval corpuses public inside that deployment.
-
-Normal MCP reads use:
+The MVP uses the anonymous public MCP endpoint over the trusted network:
 
 ```text
-https://<internal-host>/mcp/
+https://<fixed-lan-ip>/mcp/
 ```
 
-No OAuth/Bearer credential is required for normal read-side MCP access in this mode. Network reachability is the confidentiality boundary.
+No OAuth/Bearer credential is required for normal reads in this deployment model.
 
-Future deployments may move to private corpuses and `/mcp/me/` OAuth without changing the Skill behavior.
+## Formal ingestion
 
-## Upload authentication
+Formal contract ingestion uses a `CorpusAccessToken` / `WorkerKey` bound to the history Corpus. OpenContracts' `mint_worker_token` command prints the plaintext token once. Copy it to `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
 
-Formal contract ingestion uses a `CorpusAccessToken` / `WorkerKey` bound to the intended history corpus. OpenContracts' `mint_worker_token` command prints the plaintext token once; copy that value into `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
-
-Recommended policy:
-
-- revoke/rotate the key when a host is retired or a key is exposed;
-- use expiry/rate limits when practical;
-- do not send `add_to_corpus_id` from the helper: the WorkerKey binding selects the destination;
-- never place a real WorkerKey in `SKILL.md`, `.mcp.json`, or committed configuration.
-
-Contract-learning material is not uploaded to OpenContracts in MVP and therefore requires no second WorkerKey.
+The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-side binding decides the destination.
 
 ## Caddy internal CA
 
-The selected MVP deployment is OpenContracts `local.yml` behind Caddy with `tls internal`.
+The MVP uses OpenContracts `local.yml` behind Caddy with `tls internal`, serving the fixed private IP directly. There is no DNS/hosts configuration step.
 
 `deploy/opencontracts/Setup-OpenContractsLocalCaddy.ps1` exports Caddy's root certificate. Distribute it to every Agent/Harness host.
 
-`Configure-AgentOpenContracts.ps1` imports the certificate into Windows trust and sets:
+`deploy/opencontracts/Configure-AgentOpenContracts.ps1` imports that root certificate into Windows trust and sets both CA environment variables. TLS verification remains enabled.
 
-```text
-OPENCONTRACTS_CA_BUNDLE=<certificate path>
-NODE_EXTRA_CA_CERTS=<certificate path>
-```
-
-The first value is consumed by the Python upload helper; the second covers the WorkBuddy/CodeBuddy MCP client runtime. TLS verification remains enabled.
-
-See `deploy/opencontracts/README.md` for the complete local/remote PowerShell procedure.
+See `deploy/opencontracts/README.md` for the complete remote PowerShell procedure.

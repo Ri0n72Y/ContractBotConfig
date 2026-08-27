@@ -6,13 +6,11 @@ The Harness owns conversation/runtime state, local files, model execution and us
 
 ## SYS-2 Trusted-network MVP
 
-MVP OpenContracts runs inside a trusted LAN/VPN/restricted network. Anonymous MCP reads of public corpuses are acceptable while that network boundary remains trusted.
+OpenContracts runs at a fixed private IPv4 address inside the trusted LAN/VPN. Anonymous MCP reads of public corpuses are acceptable while that network boundary remains trusted.
 
 ## SYS-3 Default contract flow
 
-Contract-related requests SHOULD activate `contract` and use local/Harness capabilities first.
-
-Database retrieval is optional and is invoked only when explicitly requested or when the assistant suggests it and the user accepts.
+Contract-related requests activate `contract` and use local/Harness capabilities first. Database retrieval is optional and is invoked only when explicitly requested or when the assistant suggests it and the user accepts.
 
 ## SYS-4 Formal ingestion
 
@@ -20,12 +18,12 @@ Formal ingestion is a distinct user-authorized operation and uses the OpenContra
 
 ## SYS-5 Experience learning
 
-Session-learning material remains outside OpenContracts for MVP.
+After separate user consent, the assistant may create a local experience note. Maintainers later collect and review useful notes and update Skills through normal source-control review. No automatic learning upload, vectorized retrieval or self-modifying runtime loop is required.
 
-After separate user consent, the assistant MAY create a local experience note. The note is later collected and reviewed manually by maintainers. Skill updates occur through normal source-control/version-review workflow.
+## SYS-6 Deployment
 
-No automatic self-learning loop, Learning Inbox Corpus, vectorized retrieval or remote learning upload is required.
+The MVP deployment is OpenContracts `local.yml` behind Caddy on the same fixed LAN IP. Agent configuration uses direct `https://<fixed-lan-ip>` URLs and trusted Caddy CA certificates; there is no DNS/hosts configuration step.
 
-## SYS-6 Future hardening
+## SYS-7 Future hardening
 
-When the trusted-network assumption no longer holds, OpenContracts may migrate selected corpuses to private and use authenticated `/mcp/me/` access without changing the high-level Skill map.
+When the trusted-network assumption no longer holds, selected corpuses may move to private authenticated `/mcp/me/` access without changing the high-level Skill map.
