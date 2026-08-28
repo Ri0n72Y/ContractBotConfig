@@ -50,10 +50,11 @@ WorkBuddy / Harness
   -> https://<OPENCONTRACTS_LAN_IP>/mcp/
   -> standalone Caddy Docker Compose
   -> legal-network
-  -> opencontracts-django-1:8000
+  -> opencontracts-api:8000
+  -> OpenContracts django
 ```
 
-OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. ContractBotConfig runs Caddy as a separate Compose project and attaches it to the existing external Docker network `legal-network`.
+OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. Its `django` service already exposes the `opencontracts-api` alias on the external Docker network `legal-network`. ContractBotConfig runs Caddy as a separate Compose project on that same network and uses the alias directly.
 
 Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`. The Caddy root CA is exported and trusted by every Agent/Harness host. `OPENCONTRACTS_CA_BUNDLE` is used by the Python upload helper and `NODE_EXTRA_CA_CERTS` covers the MCP runtime.
 
