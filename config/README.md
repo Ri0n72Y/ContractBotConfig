@@ -38,15 +38,15 @@ The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-
 
 ## Caddy internal CA
 
-OpenContracts keeps its existing `local.yml` and local startup flow. The separate Caddy Compose under `deploy/opencontracts/caddy/` joins the existing external Docker network `legal` and reaches OpenContracts at `django:8000`.
+OpenContracts keeps its existing `local.yml` and startup flow. The separate Caddy Compose under `deploy/opencontracts/caddy/` joins the existing external Docker network `legal-network` and reaches OpenContracts at `opencontracts-django-1:8000`.
 
 Caddy serves the fixed private IP with `tls internal` and proxies only the MCP and formal-import paths needed by the Skill Pack. There is no DNS/hosts configuration step.
 
-The Caddy root CA is exported to the path configured by `CADDY_CA_OUTPUT` in `deploy/opencontracts/.env`:
+On the Windows OpenContracts host, export the Caddy root CA with:
 
-```bash
+```powershell
 cd deploy/opencontracts/caddy
-sh manage.sh export-ca
+.\manage.ps1 export-ca
 ```
 
 Distribute that certificate to every Agent/Harness host. `Configure-AgentOpenContracts.ps1` imports it into Windows trust and sets both CA environment variables. TLS verification remains enabled.
