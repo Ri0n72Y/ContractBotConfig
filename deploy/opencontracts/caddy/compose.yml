@@ -14,6 +14,21 @@ services:
     networks:
       - legal-network
 
+  doc-converter:
+    build:
+      context: ../converter
+    image: contractbot-doc-converter:local
+    container_name: ${DOC_CONVERTER_CONTAINER_NAME:-contractbot-doc-converter}
+    restart: unless-stopped
+    environment:
+      GOTENBERG_URL: http://gotenberg:3000/forms/libreoffice/convert
+      CONVERTER_TIMEOUT_SECONDS: ${DOC_CONVERTER_TIMEOUT_SECONDS:-90}
+      CONVERTER_MAX_FILE_BYTES: ${DOC_CONVERTER_MAX_FILE_BYTES:-104857600}
+    expose:
+      - "8080"
+    networks:
+      - legal-network
+
 networks:
   legal-network:
     external: true

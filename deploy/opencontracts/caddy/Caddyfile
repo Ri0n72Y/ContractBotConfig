@@ -21,6 +21,14 @@ https://{$OPENCONTRACTS_LAN_IP} {
         }
     }
 
+    @doc_convert {
+        method POST
+        path /contract-files/convert-to-pdf
+    }
+    handle @doc_convert {
+        reverse_proxy doc-converter:8080
+    }
+
     handle {
         respond 404
     }
