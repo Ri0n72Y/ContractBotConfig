@@ -1,6 +1,6 @@
 # OpenContracts runtime configuration
 
-This directory contains examples only. Real WorkerKeys and deployment-specific values stay in the Harness secret store, host environment, or an untracked local env file.
+This directory contains Agent/Harness runtime examples only. Real WorkerKeys and deployment-specific values stay in the Harness secret store, host environment, or an untracked local env file.
 
 ## Values to fill
 
@@ -32,16 +32,25 @@ Only two OpenContracts Corpus identities are configured by the Skill Pack: histo
 
 ## Formal ingestion
 
-Formal contract ingestion uses a `CorpusAccessToken` / WorkerKey bound to the history Corpus. OpenContracts' `mint_worker_token` command prints the plaintext token once. Copy it to `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
+Formal contract ingestion uses a Corpus-bound WorkerKey bound to the history Corpus. OpenContracts' `mint_worker_token` command prints the plaintext token once. Copy it to `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
 
 The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-side binding decides the destination.
 
 ## Caddy internal CA
 
-The MVP uses OpenContracts `local.yml` behind Caddy with `tls internal`, serving the fixed private IP directly. There is no DNS/hosts configuration step.
+The MVP keeps the upstream OpenContracts `local.yml` unchanged and runs a separate Caddy Docker Compose from `deploy/opencontracts/caddy/`.
 
-`deploy/opencontracts/Setup-OpenContractsLocalCaddy.ps1` exports Caddy's root certificate. Distribute it to every Agent/Harness host.
+Caddy serves the fixed private IP with `tls internal`, joins the existing OpenContracts Docker network, and proxies only the MCP and formal-import paths needed by the Skill Pack. There is no DNS/hosts configuration step.
 
-`deploy/opencontracts/Configure-AgentOpenContracts.ps1` imports that root certificate into Windows trust and sets both CA environment variables. TLS verification remains enabled.
+Export the root CA with:
 
-See `deploy/opencontracts/README.md` for the complete remote PowerShell procedure.
+```bash
+cd deploy/opencontracts/caddy
+sh manage.sh export-ca
+```
+
+Then distribute `deploy/opencontracts/runtime/caddy-root.crt` to every Agent/Harness host.
+
+`Configure-AgentOpenContracts.ps1` imports that root certificate into Windows trust and sets both CA environment variables. TLS verification remains enabled.
+
+See `deploy/opencontracts/README.md` for the complete Docker Compose deployment and Agent procedure.
