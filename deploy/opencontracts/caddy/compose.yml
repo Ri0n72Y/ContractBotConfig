@@ -1,0 +1,25 @@
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    container_name: ${CADDY_CONTAINER_NAME:-contractbot-opencontracts-caddy}
+    restart: unless-stopped
+    environment:
+      OPENCONTRACTS_LAN_IP: ${OPENCONTRACTS_LAN_IP:?set OPENCONTRACTS_LAN_IP in ../.env}
+      OPENCONTRACTS_UPSTREAM: ${OPENCONTRACTS_UPSTREAM:-django:8000}
+    ports:
+      - "${OPENCONTRACTS_LAN_IP}:443:443/tcp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - opencontracts
+
+networks:
+  opencontracts:
+    external: true
+    name: ${OPENCONTRACTS_DOCKER_NETWORK:?set OPENCONTRACTS_DOCKER_NETWORK in ../.env}
+
+volumes:
+  caddy_data:
+  caddy_config:
