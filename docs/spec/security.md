@@ -32,13 +32,17 @@ WorkerKeys never appear in Skill prose/frontmatter, Git commits, reports/artifac
 
 ## SEC-7 Fixed-IP HTTPS
 
-The MVP uses OpenContracts `local.yml` behind Caddy. Caddy serves HTTPS directly on the server's fixed private IPv4 address with `tls internal` and proxies to `django:8000`.
+The MVP leaves the upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins the Docker network used by the running `django` service, serves HTTPS directly on the server's fixed private IPv4 address with `tls internal`, and proxies the required MCP/import paths to `django:8000`.
 
-All Agent/Harness hosts trust the exported Caddy root CA. Raw HTTP port 8000 is loopback-only. No DNS or hosts-file mapping is part of deployment.
+All Agent/Harness hosts trust the exported Caddy root CA. No DNS or hosts-file mapping is part of deployment.
 
 ## SEC-8 Network controls
 
-Only intended LAN/VPN clients may reach the fixed server IP on TCP 443. Public NAT/port forwarding is prohibited. Caddy is the only network-facing OpenContracts endpoint used by Harness clients.
+Only intended LAN/VPN clients may reach the fixed server IP on TCP 443 for Harness traffic. Public NAT/port forwarding is prohibited.
+
+Because upstream `local.yml` is not modified and publishes development ports, host/network policy must prevent routine LAN/VPN clients from directly reaching Django port 8000 and other development-only published ports such as Flower 5555. If the fullstack frontend is enabled, its published port must also be assessed explicitly.
+
+Caddy 443 is the only intended OpenContracts endpoint used by Harness clients.
 
 ## SEC-9 Prompt injection
 
