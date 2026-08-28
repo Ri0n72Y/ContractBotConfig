@@ -49,11 +49,11 @@ Deployment-specific Agent values stay outside Git and are listed in `config/open
 WorkBuddy / Harness
   -> https://<OPENCONTRACTS_LAN_IP>/mcp/
   -> standalone Caddy Docker Compose
-  -> legal Docker network
-  -> OpenContracts django:8000
+  -> legal-network
+  -> opencontracts-django-1:8000
 ```
 
-OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. ContractBotConfig runs Caddy as a separate Compose project and attaches it to the existing external Docker network `legal`.
+OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. ContractBotConfig runs Caddy as a separate Compose project and attaches it to the existing external Docker network `legal-network`.
 
 Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`. The Caddy root CA is exported and trusted by every Agent/Harness host. `OPENCONTRACTS_CA_BUNDLE` is used by the Python upload helper and `NODE_EXTRA_CA_CERTS` covers the MCP runtime.
 
@@ -64,7 +64,7 @@ deploy/opencontracts/.env.example
 deploy/opencontracts/opencontracts-admin.sh
 deploy/opencontracts/caddy/compose.yml
 deploy/opencontracts/caddy/Caddyfile
-deploy/opencontracts/caddy/manage.sh
+deploy/opencontracts/caddy/manage.ps1
 ```
 
 Windows Agent configuration remains available through `deploy/opencontracts/Configure-AgentOpenContracts.ps1`.
