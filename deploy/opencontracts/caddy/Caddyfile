@@ -8,7 +8,7 @@ https://{$OPENCONTRACTS_LAN_IP} {
 
     @mcp path /mcp /mcp/*
     handle @mcp {
-        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+        reverse_proxy opencontracts-api:8000 {
             header_up Host localhost:8000
             flush_interval -1
         }
@@ -16,7 +16,7 @@ https://{$OPENCONTRACTS_LAN_IP} {
 
     @imports path /api/imports/documents /api/imports/documents/*
     handle @imports {
-        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+        reverse_proxy opencontracts-api:8000 {
             header_up Host localhost:8000
         }
     }
