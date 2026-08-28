@@ -1,22 +1,18 @@
-# OpenContracts + Caddy + DOC Converter 部署流程
+# OpenContracts + Caddy 部署流程
 
-当前部署保持 OpenContracts 原生 `local.yml` 不变。本仓库只额外提供 Caddy 和一个轻量 `.doc` → PDF 适配服务。
+默认部署保持 OpenContracts 原生 `local.yml` 不变，只额外启动 Caddy。
 
-## 实际依赖
+旧版 `.doc` 的默认策略已经改为 **Harness 本地优先**：优先复用用户机器现有的 Word/Office/文档能力读取或转换。仓库中的服务器转换容器仅作为 optional fallback 保留，默认不启动，也不通过 Caddy 暴露。
 
-现有 OpenContracts 环境已经提供：
+## 默认拓扑
+
+现有 OpenContracts 环境提供：
 
 - 外部 Docker network：`legal-network`；
-- Django 在该网络上的 alias：`opencontracts-api`；
-- Gotenberg 服务：`gotenberg:3000`。
+- Django network alias：`opencontracts-api`；
+- OpenContracts 自己的其他服务。
 
-本仓库新增：
-
-- Caddy：固定内网 IP 的 HTTPS 入口；
-- `doc-converter`：只接受旧版 `.doc`，复用现有 Gotenberg LibreOffice route 转成 PDF；
-- Harness helper：把源 `.doc` 发给转换端点并保存 PDF 工作副本。
-
-实际链路：
+默认 ContractBot 部署：
 
 ```text
 WorkBuddy / Harness
@@ -24,22 +20,12 @@ WorkBuddy / Harness
         | HTTPS
         v
 Caddy :443
-   |                 \
-   |                  \ POST /contract-files/convert-to-pdf
-   |                   v
-   |              doc-converter:8080
-   |                   |
-   |                   | legal-network
-   |                   v
-   |              gotenberg:3000
-   |                   |
-   |                   +---- PDF ----> Harness
    |
    +---- /mcp/* ---------------------> opencontracts-api:8000
    +---- /api/imports/documents/* ---> opencontracts-api:8000
 ```
 
-`doc-converter` 没有宿主机端口，不直接暴露给 LAN；只有 Caddy 的 HTTPS 路径可访问它。
+Caddy 通过 `legal-network` 访问 `opencontracts-api:8000`，不依赖 Compose 自动生成的 Django 容器名，也不经过宿主机映射的 8000。
 
 ## 文件
 
@@ -48,16 +34,19 @@ deploy/opencontracts/
 ├── .env.example
 ├── opencontracts-admin.sh
 ├── Configure-AgentOpenContracts.ps1
-├── converter/
-│   ├── Dockerfile
-│   └── app.py
-└── caddy/
+├── caddy/
+│   ├── compose.yml
+│   ├── Caddyfile
+│   └── manage.ps1
+└── converter/                 # optional，不属于默认部署
+    ├── Dockerfile
+    ├── app.py
     ├── compose.yml
-    ├── Caddyfile
-    └── manage.ps1
+    ├── manage.ps1
+    └── README.md
 ```
 
-## 1. 配置 `.env`
+## 1. 配置默认部署
 
 ```powershell
 cd deploy/opencontracts
@@ -74,10 +63,6 @@ CADDY_IMAGE=caddy:2-alpine
 CADDY_CONTAINER_NAME=contractbot-opencontracts-caddy
 CADDY_CA_OUTPUT=runtime/opencontracts-caddy-root.crt
 
-DOC_CONVERTER_CONTAINER_NAME=contractbot-doc-converter
-DOC_CONVERTER_TIMEOUT_SECONDS=90
-DOC_CONVERTER_MAX_FILE_BYTES=104857600
-
 HISTORY_CORPUS=contracts
 TEMPLATE_CORPUS=contract-templates
 
@@ -86,15 +71,13 @@ WORKER_RATE_LIMIT=30
 WORKER_EXPIRES_DAYS=365
 ```
 
-`OPENCONTRACTS_LAN_IP` 是 Windows 宿主机用于局域网访问的固定 IPv4。
-
-`legal-network`、`opencontracts-api` 和 `gotenberg` 已由现有 OpenContracts 环境提供，不重复做部署变量。
+`legal-network` 与 `opencontracts-api` 已由 OpenContracts `local.yml` 定义，不重复作为部署变量。
 
 ## 2. OpenContracts 保持原样
 
-继续按现有方式使用 OpenContracts `local.yml`。本仓库不修改它。
+继续按现有方式启动 OpenContracts。
 
-Django 的相关网络定义保持：
+Django 保持加入：
 
 ```yaml
 networks:
@@ -104,73 +87,34 @@ networks:
       - opencontracts-api
 ```
 
-Caddy 和转换服务都加入同一个外部 `legal-network`。
+本仓库不修改 OpenContracts `local.yml`。
 
-## 3. Caddy + Converter Compose
-
-`caddy/compose.yml` 同时启动两个服务：
-
-- `caddy`：发布 `${OPENCONTRACTS_LAN_IP}:443`；
-- `doc-converter`：仅在 Docker 网络内监听 `8080`，不发布宿主机端口。
-
-转换容器使用 `deploy/opencontracts/converter/Dockerfile` 本地构建。容器中只有简单 Python HTTP 脚本及 `Flask/httpx` 运行依赖；转换本身仍由现有 Gotenberg 完成。
-
-默认内部转换地址固定为：
-
-```text
-http://gotenberg:3000/forms/libreoffice/convert
-```
-
-## 4. Caddy 路由
-
-Caddy 只开放当前业务需要的三个入口：
-
-```text
-/mcp/*
-    -> opencontracts-api:8000
-
-/api/imports/documents/*
-    -> opencontracts-api:8000
-
-POST /contract-files/convert-to-pdf
-    -> doc-converter:8080
-    -> gotenberg:3000/forms/libreoffice/convert
-```
-
-其他路径返回 `404`。
-
-转换接口约束：
-
-- multipart 字段名：`file`；
-- 只接受扩展名 `.doc`；
-- 默认最大源文件和结果文件：100 MiB；
-- 默认 Gotenberg 超时：90 秒；
-- Gotenberg 返回结果必须以 `%PDF` 开头；
-- 不保存长期转换副本；
-- 不记录正文、响应正文或原始二进制；
-- 只记录安全错误码和转换哈希。
-
-这些边界沿用旧 AstrBot `contract_doc_preconverter` 已验证的转换逻辑，但已经移除所有 AstrBot event / File component / staging 依赖。
-
-## 5. 启动
+## 3. 启动默认 Caddy
 
 ```powershell
 cd deploy/opencontracts/caddy
 .\manage.ps1 up
 ```
 
-`up` 会执行：
+等价于：
 
 ```powershell
 docker compose `
   --env-file ..\.env `
   -f .\compose.yml `
-  up -d --build
+  up -d
 ```
 
-因此修改 `converter/app.py` 后再次运行 `up` 即可重新构建轻量转换容器。
+默认 Caddyfile 只开放：
 
-## 6. 导出 Caddy Root CA
+```text
+/mcp/*
+/api/imports/documents/*
+```
+
+其他路径返回 `404`。默认**没有** `/contract-files/convert-to-pdf` 路由。
+
+## 4. 导出 Caddy Root CA
 
 ```powershell
 .\manage.ps1 export-ca
@@ -182,9 +126,9 @@ docker compose `
 deploy/opencontracts/runtime/opencontracts-caddy-root.crt
 ```
 
-把该 CA 分发给需要访问服务的 WorkBuddy / Harness 主机。
+将该 CA 分发给需要访问 OpenContracts 的 Harness 主机。
 
-## 7. Agent / Harness 环境
+## 5. Agent / Harness 配置
 
 ```text
 OPENCONTRACTS_BASE_URL=https://<固定内网IP>
@@ -196,46 +140,59 @@ NODE_EXTRA_CA_CERTS=<同一Root CA路径>
 OPENCONTRACTS_UPLOAD_WORKER_KEY=<WorkerKey>
 ```
 
-`.doc` 转换不需要额外服务器地址；helper 直接复用 `OPENCONTRACTS_BASE_URL`。
+旧 `.doc` 不需要新增默认服务器配置。Skill 会先让 Harness 使用本地文档能力。
 
-## 8. `.doc` 转换
-
-在 Harness 工作区：
-
-```powershell
-python scripts/opencontracts/convert_doc_to_pdf.py `
-  --file 'C:\path\某合同.doc'
-```
-
-默认生成：
+## 6. `.doc` 默认处理策略
 
 ```text
-C:\path\某合同.converted.pdf
+.doc
+  |
+  v
+Harness 本地读取/转换
+  |
+  +-- 成功 --> 直接分析，或使用本地 PDF 工作副本入库
+  |
+  +-- 失败 --> optional remote converter（仅显式启用时）
+                  |
+                  +-- 未启用 --> 请用户提供 DOCX/PDF
 ```
 
-原 `.doc` 不覆盖。后续分析使用 PDF 工作副本。
+如果 Harness 已经能可靠取得正文，分析任务无需为了统一格式再生成 PDF。
 
-如果用户已明确授权正式入库，则继续：
+正式入库时，如果 OpenContracts 不能可靠处理源 `.doc`，应使用 Harness 本地生成的 PDF 工作副本；不要直接提交旧 `.doc`。
+
+## 7. Optional server-side converter
+
+`deploy/opencontracts/converter/` 保留了从旧 AstrBot 方案抽出的轻量转换代码。
+
+如需要中央兜底，可单独启动：
 
 ```powershell
-python scripts/opencontracts/upload_document.py `
-  --file 'C:\path\某合同.converted.pdf' `
-  --title '某合同'
+cd deploy/opencontracts/converter
+.\manage.ps1 up
 ```
 
-转换本身不是 OpenContracts 写操作，也不构成入库授权。
+它会加入现有 `legal-network`，内部调用：
 
-## 9. WorkerKey
+```text
+gotenberg:3000/forms/libreoffice/convert
+```
 
-正式入库 WorkerKey 仍按现有方式绑定历史合同 Corpus：
+但 optional compose **没有宿主机 `ports:` 映射**，默认 Caddyfile **也没有转换路由**。因此仅启动该容器不会向 LAN/Harness 暴露转换能力。
+
+如果未来明确决定启用远程 fallback，再单独增加受控 Caddy route，并给 Harness 配置完整的 `OPENCONTRACTS_CONVERTER_URL`。当前默认部署不配置该变量。
+
+## 8. WorkerKey
+
+正式入库 WorkerKey 继续按现有方式绑定历史合同 Corpus：
 
 ```text
 opencontracts-admin.sh mint-worker-key
 ```
 
-转换服务完全不接触 WorkerKey。
+转换逻辑不接触 WorkerKey。
 
-## 10. 日常操作
+## 9. 日常 Caddy 操作
 
 ```powershell
 .\manage.ps1 up
@@ -244,4 +201,4 @@ opencontracts-admin.sh mint-worker-key
 .\manage.ps1 down
 ```
 
-`logs` 同时显示 Caddy 和 `doc-converter` 日志。`caddy_data` volume 保存内部 CA，普通 `down` / `up` 不会更换 CA。
+`caddy_data` volume 保存内部 CA，普通 `down` / `up` 不会更换 CA。

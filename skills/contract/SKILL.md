@@ -17,24 +17,19 @@ description: >
 
 ## 旧版 `.doc` 工作文件
 
-旧版 Word `.doc` 不直接交给 OpenContracts，也不要依赖每台用户机器安装 Office/LibreOffice。
+旧版 Word `.doc` 优先由当前 Harness 在本机处理，不默认依赖服务器转换服务。
 
-遇到 `.doc` 时，调用仓库内的确定性 helper：
+处理顺序：
 
-```text
-python scripts/opencontracts/convert_doc_to_pdf.py --file <source.doc>
-```
+1. 先使用 Harness 已有的本地文件能力读取、提取或转换 `.doc`。如果宿主机已安装 Word、Office 或 Harness 已提供兼容转换能力，直接复用这些能力；
+2. 本地处理成功后，继续使用本地提取结果或本地生成的 PDF/DOCX 工作副本完成分析、比较、修改或生成，不再调用远程转换；
+3. 原始 `.doc` 始终保留，不覆盖；
+4. `.docx`、`.pdf` 和 Harness 本身可以直接读取的格式保持正常本地流程；
+5. 只有本地能力不可用或转换失败，且当前部署明确启用了 optional 远程转换能力时，才可调用 `scripts/opencontracts/convert_doc_to_pdf.py` 作为兜底；
+6. 默认部署不启动、不暴露远程 DOC 转换接口。不要因为仓库中存在该 helper 就假定服务可用；
+7. 如果本地能力与 optional 远程兜底都不可用，再向用户说明需要提供 DOCX/PDF 或在可转换环境中重试。
 
-该 helper 通过当前 `OPENCONTRACTS_BASE_URL` 和 Caddy 内部 CA 调用宿主机上的 `/contract-files/convert-to-pdf`，服务端再使用 `legal-network` 中现有的 Gotenberg 生成 PDF。
-
-规则：
-
-- 仅 `.doc` 强制走预转换；`.docx`、`.pdf` 保持正常 Harness 流程；
-- 原始 `.doc` 始终保留，不覆盖；
-- 默认工作副本命名为 `<原名>.converted.pdf`；
-- 后续分析、比较、生成或正式入库使用转换后的 PDF 工作副本；
-- 转换失败时停止使用该 `.doc` 做后续自动处理，并向用户说明需要稍后重试或提供 DOCX/PDF；
-- 转换只是格式适配，不改变用户文件中的业务事实，也不构成正式入库授权。
+格式转换只是文件兼容处理，不改变合同事实，也不构成正式入库授权。对分析任务，只要 Harness 已经能够可靠取得正文，就没有必要为了统一格式额外生成 PDF。
 
 ## 意图处理
 

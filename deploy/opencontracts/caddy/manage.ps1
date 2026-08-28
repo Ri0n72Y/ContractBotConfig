@@ -32,7 +32,7 @@ function Invoke-CaddyCompose {
 
 switch ($Command) {
     "up" {
-        Invoke-CaddyCompose up -d --build
+        Invoke-CaddyCompose up -d
     }
     "export-ca" {
         $output = $env:CADDY_CA_OUTPUT
@@ -45,7 +45,7 @@ switch ($Command) {
         Write-Output $output
     }
     "logs" {
-        Invoke-CaddyCompose logs --tail=200 -f caddy doc-converter
+        Invoke-CaddyCompose logs --tail=200 -f caddy
     }
     "down" {
         Invoke-CaddyCompose down

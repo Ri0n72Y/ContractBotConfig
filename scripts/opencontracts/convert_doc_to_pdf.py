@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert one legacy .doc file to PDF through the trusted Caddy endpoint."""
+"""Convert one legacy .doc file through an explicitly enabled remote endpoint."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def main() -> int:
         emit(ok=False, status="blocked", error="source_format_unsupported")
         return 2
 
-    base_url = os.getenv("OPENCONTRACTS_BASE_URL", "").strip().rstrip("/")
+    endpoint = os.getenv("OPENCONTRACTS_CONVERTER_URL", "").strip()
     ca_bundle = os.getenv("OPENCONTRACTS_CA_BUNDLE", "").strip()
     allow_insecure = os.getenv("OPENCONTRACTS_ALLOW_INSECURE_HTTP", "0") == "1"
     try:
@@ -49,13 +49,13 @@ def main() -> int:
     except ValueError:
         timeout = 120.0
 
-    if not base_url:
-        emit(ok=False, status="blocked", error="missing_runtime_configuration")
+    if not endpoint:
+        emit(ok=False, status="blocked", error="converter_not_enabled")
         return 2
 
-    parsed = urlparse(base_url)
+    parsed = urlparse(endpoint)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-        emit(ok=False, status="blocked", error="invalid_base_url")
+        emit(ok=False, status="blocked", error="invalid_converter_url")
         return 2
     if parsed.scheme != "https" and not allow_insecure:
         emit(ok=False, status="blocked", error="https_required")
@@ -81,7 +81,6 @@ def main() -> int:
         emit(ok=False, status="blocked", error="output_exists", output_path=str(output))
         return 2
 
-    endpoint = f"{base_url}/contract-files/convert-to-pdf"
     try:
         with source.open("rb") as handle:
             with requests.Session() as session:
@@ -105,12 +104,7 @@ def main() -> int:
                 error_code = payload["error"]
         except ValueError:
             pass
-        emit(
-            ok=False,
-            status="failed",
-            http_status=response.status_code,
-            error=error_code,
-        )
+        emit(ok=False, status="failed", http_status=response.status_code, error=error_code)
         return 3
 
     pdf_bytes = response.content

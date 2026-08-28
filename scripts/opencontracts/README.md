@@ -1,6 +1,6 @@
 # OpenContracts helper scripts
 
-These helpers implement deterministic conversion/write/config boundaries that should not be delegated to model-generated HTTP calls.
+These helpers implement deterministic write/config boundaries that should not be delegated to model-generated HTTP calls.
 
 ## Requirements
 
@@ -25,26 +25,33 @@ OPENCONTRACTS_CA_BUNDLE=<path to caddy-root.crt>
 NODE_EXTRA_CA_CERTS=<same certificate path>
 ```
 
-Both `convert_doc_to_pdf.py` and `upload_document.py` use `OPENCONTRACTS_CA_BUNDLE` for Python TLS verification. They do not disable certificate validation.
+`upload_document.py` uses `OPENCONTRACTS_CA_BUNDLE` for Python TLS verification. It does not disable certificate validation.
 
-## Legacy `.doc` conversion
+## Legacy `.doc` handling
 
-Old binary Word `.doc` files are normalized through the server-side converter before analysis or formal archive:
+The default contract Skills are local-first:
+
+1. Let the Harness use its native local document capability first. On many Windows hosts this can reuse an installed Word/Office stack.
+2. If the Harness can reliably read the document, analysis can proceed directly without producing a PDF.
+3. If formal OpenContracts ingestion needs a compatible file, prefer a locally generated PDF working copy.
+4. The optional server-side converter is only a fallback for deployments that explicitly enable and expose it.
+
+The repository keeps `convert_doc_to_pdf.py` for that optional fallback. It is not part of the default deployment and should not be called merely because the script exists.
+
+When an operator later exposes an approved converter endpoint, set the full endpoint explicitly:
+
+```text
+OPENCONTRACTS_CONVERTER_URL=https://<server>/contract-files/convert-to-pdf
+```
+
+Then the helper can be used:
 
 ```bash
 python scripts/opencontracts/convert_doc_to_pdf.py \
   --file /path/to/legacy-contract.doc
 ```
 
-Default output:
-
-```text
-/path/to/legacy-contract.converted.pdf
-```
-
-The helper sends `POST /contract-files/convert-to-pdf` through Caddy. The internal `doc-converter` container forwards the file to the existing Gotenberg LibreOffice route on `legal-network`, validates that the result is a PDF, and returns it. The source `.doc` is never overwritten and the helper does not retry conversion requests automatically.
-
-Only `.doc` is forced through this compatibility path. `.docx` and `.pdf` keep the normal Harness/OpenContracts flow.
+The source `.doc` is never overwritten.
 
 ## Formal contract upload
 
@@ -54,14 +61,7 @@ python scripts/opencontracts/upload_document.py \
   --title "设备采购合同"
 ```
 
-For a legacy `.doc`, convert first and upload the resulting PDF:
-
-```bash
-python scripts/opencontracts/convert_doc_to_pdf.py --file /path/to/contract.doc
-python scripts/opencontracts/upload_document.py \
-  --file /path/to/contract.converted.pdf \
-  --title "设备采购合同"
-```
+For legacy `.doc`, upload a reliable PDF working copy produced by the Harness or, when explicitly enabled, by the optional converter.
 
 Default credential: `OPENCONTRACTS_UPLOAD_WORKER_KEY`.
 
