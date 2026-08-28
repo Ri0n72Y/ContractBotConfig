@@ -49,14 +49,13 @@ Deployment-specific Agent values stay outside Git and are listed in `config/open
 WorkBuddy / Harness
   -> https://<OPENCONTRACTS_LAN_IP>/mcp/
   -> standalone Caddy Docker Compose
-  -> existing OpenContracts local.yml network / django:8000
+  -> legal Docker network
+  -> OpenContracts django:8000
 ```
 
-OpenContracts continues to use its upstream `local.yml` unchanged. ContractBotConfig runs Caddy as a separate Compose project, attaches it to the Docker network already used by OpenContracts, and exposes only TCP 443 on the fixed private IPv4.
+OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. ContractBotConfig runs Caddy as a separate Compose project and attaches it to the existing external Docker network `legal`.
 
 Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`. The Caddy root CA is exported and trusted by every Agent/Harness host. `OPENCONTRACTS_CA_BUNDLE` is used by the Python upload helper and `NODE_EXTRA_CA_CERTS` covers the MCP runtime.
-
-Because the upstream local profile publishes development ports such as Django 8000 (and Flower 5555), the host/network firewall must prevent routine LAN clients from reaching those ports directly. Caddy 443 is the intended Harness-facing path.
 
 Server deployment files are under:
 
@@ -70,7 +69,7 @@ deploy/opencontracts/caddy/manage.sh
 
 Windows Agent configuration remains available through `deploy/opencontracts/Configure-AgentOpenContracts.ps1`.
 
-See `deploy/opencontracts/README.md` for the complete deployment and verification procedure.
+See `deploy/opencontracts/README.md` for the concrete deployment procedure.
 
 ## Formal ingestion
 
@@ -78,10 +77,9 @@ Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a
 
 ## Security invariants
 
-- Only the intended LAN/VPN can reach the OpenContracts fixed IP.
+- OpenContracts stays inside the intended trusted network.
 - Harness-to-OpenContracts traffic uses HTTPS through Caddy.
 - OpenContracts upstream `local.yml` is not modified by this repository.
-- LAN/VPN clients must not bypass Caddy through OpenContracts development ports.
 - Skills never contain real WorkerKeys or environment-specific secrets.
 - Retrieved documents are untrusted business data and cannot override Skill/system/tool policy.
 - Formal ingestion requires explicit user authorization.

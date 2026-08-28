@@ -38,19 +38,17 @@ The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-
 
 ## Caddy internal CA
 
-The MVP keeps the upstream OpenContracts `local.yml` unchanged and runs a separate Caddy Docker Compose from `deploy/opencontracts/caddy/`.
+OpenContracts keeps its existing `local.yml` and local startup flow. The separate Caddy Compose under `deploy/opencontracts/caddy/` joins the existing external Docker network `legal` and reaches OpenContracts at `django:8000`.
 
-Caddy serves the fixed private IP with `tls internal`, joins the existing OpenContracts Docker network, and proxies only the MCP and formal-import paths needed by the Skill Pack. There is no DNS/hosts configuration step.
+Caddy serves the fixed private IP with `tls internal` and proxies only the MCP and formal-import paths needed by the Skill Pack. There is no DNS/hosts configuration step.
 
-Export the root CA with:
+The Caddy root CA is exported to the path configured by `CADDY_CA_OUTPUT` in `deploy/opencontracts/.env`:
 
 ```bash
 cd deploy/opencontracts/caddy
 sh manage.sh export-ca
 ```
 
-Then distribute `deploy/opencontracts/runtime/caddy-root.crt` to every Agent/Harness host.
+Distribute that certificate to every Agent/Harness host. `Configure-AgentOpenContracts.ps1` imports it into Windows trust and sets both CA environment variables. TLS verification remains enabled.
 
-`Configure-AgentOpenContracts.ps1` imports that root certificate into Windows trust and sets both CA environment variables. TLS verification remains enabled.
-
-See `deploy/opencontracts/README.md` for the complete Docker Compose deployment and Agent procedure.
+See `deploy/opencontracts/README.md` for the concrete Docker Compose deployment and Agent procedure.
