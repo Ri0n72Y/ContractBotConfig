@@ -8,6 +8,7 @@
 - Caddy 使用独立 Docker Compose，并加入同一个 `legal-network`。
 - Caddy 通过 `opencontracts-api:8000` 访问 Django，不依赖 Compose 生成的容器名，也不经过宿主机映射的 `8000:8000`。
 - Harness 通过固定内网 IP 的 HTTPS 访问 `/mcp/` 与 `/api/imports/documents/`。
+- 当前实际公开 Corpus 为历史合同 `contracts` 与模板 `contract-templates`。
 
 实际链路：
 
@@ -56,7 +57,7 @@ CADDY_IMAGE=caddy:2-alpine
 CADDY_CONTAINER_NAME=contractbot-opencontracts-caddy
 CADDY_CA_OUTPUT=runtime/opencontracts-caddy-root.crt
 
-HISTORY_CORPUS=contracts-history
+HISTORY_CORPUS=contracts
 TEMPLATE_CORPUS=contract-templates
 
 WORKER_NAME=contractbot-formal-ingest
@@ -200,23 +201,16 @@ deploy/opencontracts/runtime/opencontracts-caddy-root.crt
 
 将该 CA 分发到需要访问 OpenContracts 的 WorkBuddy / Harness 主机。
 
-## 7. 日常操作
+## 7. 创建正式入库 WorkerKey
 
-```powershell
-.\manage.ps1 up
-.\manage.ps1 logs
-.\manage.ps1 export-ca
-.\manage.ps1 down
-```
-
-`caddy_data` volume 保存内部 CA，普通 `down` / `up` 不会更换 CA。
+当前历史合同 Corpus 的真实 slug 是 `contracts`。需要正式入库时，使用 `opencontracts-admin.sh mint-worker-key` 创建绑定到该 Corpus 的 WorkerKey，并把输出 token 保存到 Agent / Harness secret 环境。
 
 ## 8. Agent / Harness 配置
 
 ```text
 OPENCONTRACTS_BASE_URL=https://<固定内网IP>
 OPENCONTRACTS_MCP_URL=https://<固定内网IP>/mcp/
-OPENCONTRACTS_HISTORY_CORPUS=contracts-history
+OPENCONTRACTS_HISTORY_CORPUS=contracts
 OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
 OPENCONTRACTS_CA_BUNDLE=<本机Root CA路径>
 NODE_EXTRA_CA_CERTS=<同一Root CA路径>
@@ -229,10 +223,21 @@ Windows WorkBuddy / Harness：
 .\Configure-AgentOpenContracts.ps1 `
   -ServerIp '<固定内网IP>' `
   -CaddyRootCertificate '<opencontracts-caddy-root.crt路径>' `
-  -HistoryCorpus 'contracts-history' `
+  -HistoryCorpus 'contracts' `
   -TemplateCorpus 'contract-templates' `
   -UploadWorkerKey '<WorkerKey>' `
   -EnvironmentScope Machine
 ```
+
+## 9. 日常操作
+
+```powershell
+.\manage.ps1 up
+.\manage.ps1 logs
+.\manage.ps1 export-ca
+.\manage.ps1 down
+```
+
+`caddy_data` volume 保存内部 CA，普通 `down` / `up` 不会更换 CA。
 
 仓库根目录 `.mcp.json` 继续使用 `${OPENCONTRACTS_MCP_URL}`。
