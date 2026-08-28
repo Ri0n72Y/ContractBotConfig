@@ -6,18 +6,14 @@
 https://{$OPENCONTRACTS_LAN_IP} {
     tls internal
 
-    handle /healthz {
-        respond "ok" 200
-    }
-
     handle /mcp/* {
-        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+        reverse_proxy django:8000 {
             header_up Host localhost:8000
         }
     }
 
     handle /api/imports/documents/* {
-        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+        reverse_proxy django:8000 {
             header_up Host localhost:8000
         }
     }
