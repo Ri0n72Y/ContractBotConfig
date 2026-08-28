@@ -48,28 +48,41 @@ WorkerKeys stay outside Skill text, Git, generated files and model-visible logs.
 
 ## HTTPS and fixed IP
 
-The current OpenContracts deployment uses `local.yml`, whose Django service is HTTP on port 8000. Caddy is the only intended network-facing OpenContracts endpoint for Harness clients:
+The current OpenContracts deployment continues to use the upstream `local.yml` unchanged. ContractBotConfig runs Caddy separately:
 
 ```text
 WorkBuddy / Harness
 → https://<fixed-lan-ip>
-→ Caddy :443
-→ django:8000 on Docker network
+→ Caddy Compose :443
+→ existing OpenContracts Docker network
+→ django:8000
 ```
 
-Caddy uses `tls internal` and issues a certificate for the fixed private IPv4 address. Every Agent/Harness host must trust the exported Caddy root CA. TLS verification remains enabled.
-
-Raw Django port 8000 is bound to `127.0.0.1` on the host so LAN clients cannot bypass Caddy over cleartext HTTP.
+Caddy uses `tls internal`, issues a certificate for the fixed private IPv4 address, and proxies only the MCP and formal-import routes required by the Skill Pack. Every Agent/Harness host must trust the exported Caddy root CA. TLS verification remains enabled.
 
 No DNS or hosts-file mapping is part of the MVP deployment.
+
+## Development-port boundary
+
+Keeping the upstream local compose unchanged also keeps its published development ports unchanged. Current upstream `local.yml` publishes Django 8000 and Flower 5555; the fullstack frontend may publish 3000 when enabled.
+
+These ports are not Harness entrypoints. Host firewall, network ACL, VPN policy, or equivalent controls must prevent routine LAN/VPN clients from bypassing Caddy through them.
+
+This separation intentionally keeps ownership clear:
+
+```text
+OpenContracts local.yml    upstream-owned, unchanged
+Caddy compose              ContractBotConfig-owned
+Network filtering          infrastructure-owned
+```
 
 ## Network controls
 
 At minimum:
 
 - permit intended LAN/VPN clients to reach the fixed server IP on TCP 443;
-- block public Internet ingress to that IP/port;
-- keep host port 8000 loopback-only;
+- block public Internet ingress to OpenContracts;
+- prevent routine LAN/VPN clients from reaching Django 8000 and other development-only published ports directly;
 - do not expose database, Redis, parsers, embedders or Docker-internal services to normal clients;
 - avoid public NAT/port forwarding to OpenContracts.
 
