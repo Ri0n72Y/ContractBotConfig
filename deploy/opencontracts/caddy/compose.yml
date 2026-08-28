@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       OPENCONTRACTS_LAN_IP: ${OPENCONTRACTS_LAN_IP}
+      OPENCONTRACTS_UPSTREAM: ${OPENCONTRACTS_UPSTREAM:-opencontracts-django-1:8000}
     ports:
       - "${OPENCONTRACTS_LAN_IP}:443:443/tcp"
     volumes:
