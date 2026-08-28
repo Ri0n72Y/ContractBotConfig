@@ -9,14 +9,14 @@ For a server whose fixed LAN IPv4 is `10.10.20.15`, configure:
 ```text
 OPENCONTRACTS_BASE_URL=https://10.10.20.15
 OPENCONTRACTS_MCP_URL=https://10.10.20.15/mcp/
-OPENCONTRACTS_HISTORY_CORPUS=<history corpus slug>
-OPENCONTRACTS_TEMPLATE_CORPUS=<template corpus slug>
+OPENCONTRACTS_HISTORY_CORPUS=contracts
+OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
 OPENCONTRACTS_CA_BUNDLE=<path to caddy-root.crt>
 NODE_EXTRA_CA_CERTS=<same caddy-root.crt path>
-OPENCONTRACTS_UPLOAD_WORKER_KEY=<history-corpus WorkerKey>
+OPENCONTRACTS_UPLOAD_WORKER_KEY=<contracts-bound WorkerKey>
 ```
 
-`opencontracts.env.example` intentionally leaves environment-specific values blank.
+The current OpenContracts deployment exposes `contracts` and `contract-templates` as the two public runtime corpuses. `config/opencontracts.env.example` therefore carries those two slugs as defaults while leaving host-specific URLs, CA paths and secrets blank.
 
 ## MCP reads
 
@@ -28,11 +28,11 @@ https://<fixed-lan-ip>/mcp/
 
 No OAuth/Bearer credential is required for normal reads in this deployment model.
 
-Only two OpenContracts Corpus identities are configured by the Skill Pack: history and templates. Session experience/learning material stays outside OpenContracts and is handled through local notes plus manual Skill updates.
+Only two OpenContracts Corpus identities are configured by the Skill Pack: history (`contracts`) and templates (`contract-templates`). Session experience/learning material stays outside OpenContracts and is handled through local notes plus manual Skill updates.
 
 ## Formal ingestion
 
-Formal contract ingestion uses a Corpus-bound WorkerKey bound to the history Corpus. OpenContracts' `mint_worker_token` command prints the plaintext token once. Copy it to `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
+Formal contract ingestion uses a Corpus-bound WorkerKey bound to `contracts`. OpenContracts' `mint_worker_token` command prints the plaintext token once. Copy it to `OPENCONTRACTS_UPLOAD_WORKER_KEY` on the Agent/Harness host.
 
 The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-side binding decides the destination.
 
