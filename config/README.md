@@ -38,7 +38,7 @@ The upload helper deliberately omits `add_to_corpus_id`; the WorkerKey's server-
 
 ## Caddy internal CA
 
-OpenContracts keeps its existing `local.yml` and startup flow. The separate Caddy Compose under `deploy/opencontracts/caddy/` joins the existing external Docker network `legal-network` and reaches OpenContracts at `opencontracts-django-1:8000`.
+OpenContracts keeps its existing `local.yml` and startup flow. Its Django service exposes the network alias `opencontracts-api` on the existing external Docker network `legal-network`. The separate Caddy Compose under `deploy/opencontracts/caddy/` joins that same network and reaches OpenContracts at `opencontracts-api:8000`.
 
 Caddy serves the fixed private IP with `tls internal` and proxies only the MCP and formal-import paths needed by the Skill Pack. There is no DNS/hosts configuration step.
 
