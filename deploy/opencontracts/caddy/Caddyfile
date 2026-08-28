@@ -6,14 +6,17 @@
 https://{$OPENCONTRACTS_LAN_IP} {
     tls internal
 
-    handle /mcp/* {
-        reverse_proxy django:8000 {
+    @mcp path /mcp /mcp/*
+    handle @mcp {
+        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
             header_up Host localhost:8000
+            flush_interval -1
         }
     }
 
-    handle /api/imports/documents/* {
-        reverse_proxy django:8000 {
+    @imports path /api/imports/documents /api/imports/documents/*
+    handle @imports {
+        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
             header_up Host localhost:8000
         }
     }
