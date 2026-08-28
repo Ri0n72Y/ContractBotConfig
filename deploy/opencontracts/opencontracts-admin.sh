@@ -45,8 +45,8 @@ print(Corpus.objects.get(slug=os.environ["HISTORY_CORPUS"]).pk)
 Usage: sh opencontracts-admin.sh <command>
 
 Commands:
-  publish-corpuses  Set contracts-history and contract-templates public
-  mint-worker-key   Mint a WorkerKey bound to contracts-history
+  publish-corpuses  Set contracts and contract-templates public
+  mint-worker-key   Mint a WorkerKey bound to contracts
 EOF
         exit 2
         ;;
