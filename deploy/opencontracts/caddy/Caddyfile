@@ -1,0 +1,28 @@
+{
+    auto_https disable_redirects
+    admin off
+}
+
+https://{$OPENCONTRACTS_LAN_IP} {
+    tls internal
+
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    handle /mcp/* {
+        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+            header_up Host localhost:8000
+        }
+    }
+
+    handle /api/imports/documents/* {
+        reverse_proxy {$OPENCONTRACTS_UPSTREAM} {
+            header_up Host localhost:8000
+        }
+    }
+
+    handle {
+        respond 404
+    }
+}
