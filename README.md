@@ -8,21 +8,19 @@ Customer-facing assets live only under:
 
 ```text
 client/
+├── .mcp.json
 ├── INSTALL.md
 ├── README.md
-├── .mcp.example.json
-├── client-setup.ps1
-├── client-setup.cmd
 └── skills/
 ```
 
-After server preparation, one ignored deployment file is added:
+`client/.mcp.json` is versioned and contains the fixed MCP endpoint:
 
 ```text
-client/.mcp.json
+https://192.168.200.69/mcp/
 ```
 
-`client/` is the only directory that needs to be packaged and distributed to end users. The preferred flow is: the user uploads the prepared archive to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines that installation contract; `client-setup.ps1` is the Windows fallback.
+`client/` is the only directory that needs to be packaged and distributed to end users. The preferred flow is: the user uploads an archive of `client/` to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines that installation contract.
 
 Server/deployment assets remain separate under `deploy/opencontracts/`.
 
@@ -46,7 +44,7 @@ cd deploy/opencontracts
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The script starts/updates Caddy, reads the fixed LAN IP, generates `client/.mcp.json`, and creates:
+The script starts/updates the HTTPS Caddy gateway and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
@@ -59,14 +57,14 @@ The WorkerKey remains only on the server and is never copied into `client/` or t
 ```text
 Harness
   → globally installed ContractBot Skills
-  → http://<fixed-lan-ip>/mcp/
-  → Caddy on the trusted LAN/VPN
+  → https://192.168.200.69/mcp/
+  → Caddy HTTPS gateway
   → opencontracts-api:8000
 ```
 
-For formal ingestion, the Skill derives the import endpoint from the same MCP origin and submits without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
+For formal ingestion, the Skill derives `https://192.168.200.69/api/imports/documents/` from the same MCP origin and submits without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
 
-No client CA, WorkerKey, ContractBot environment variables, helper runtime, or `CONTRACTBOT_HOME` are required.
+TLS trust for the internal Caddy certificate is handled by host/infrastructure policy and is outside the client bundle.
 
 Detailed server procedure: `deploy/opencontracts/README.md`.
 Architecture: `docs/architecture/c4.md`.
