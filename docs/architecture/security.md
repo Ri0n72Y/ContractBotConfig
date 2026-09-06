@@ -2,27 +2,25 @@
 
 ## MVP objective
 
-OpenContracts runs inside a trusted LAN/VPN boundary at a fixed private IPv4 address. Retrieval corpuses may remain public inside that deployment. Network reachability is the confidentiality boundary for reads and the outer boundary for the Caddy-proxied formal-write path.
+OpenContracts runs inside a trusted LAN/VPN boundary at the fixed private IPv4 address `192.168.200.69`. Retrieval corpuses may remain public inside that deployment. Network reachability is the confidentiality boundary for reads and the outer boundary for the Caddy-proxied formal-write path.
 
 ```text
 untrusted network
     X
     │
-fixed LAN IP :80
+192.168.200.69 :443
     │
-Caddy HTTP gateway
+Caddy HTTPS gateway
     ├── anonymous MCP reads
     └── formal writes with server-injected WorkerKey
 ```
-
-Private corpuses, per-user OAuth, and TLS are future hardening options if the trust boundary changes.
 
 ## Read-side security
 
 MVP MCP URL:
 
 ```text
-http://<fixed-lan-ip>/mcp/
+https://192.168.200.69/mcp/
 ```
 
 No OAuth/Bearer credential is required for normal reads. Any client that can reach the fixed IP can access public OpenContracts corpuses according to OpenContracts' public MCP behavior.
@@ -42,27 +40,25 @@ There is no knowledge/learning Corpus in the MVP. Session-learning material stay
 
 ## WorkerKey write security
 
-OpenContracts still requires a corpus-bound WorkerKey for formal ingestion. The WorkerKey is stored only in the untracked server `deploy/opencontracts/.env` and passed to the Caddy container.
+OpenContracts requires a corpus-bound WorkerKey for formal ingestion. The WorkerKey is stored only in the untracked server `deploy/opencontracts/.env` and passed to the Caddy container.
 
 Clients do not receive, persist, or send the WorkerKey. For `/api/imports/documents/`, Caddy overwrites the upstream Authorization header with the server-side WorkerKey before forwarding to OpenContracts. The token binding selects `contracts-history`.
 
 This simplifies client installation but means any client that can reach the exposed formal-import route can attempt a write. The trusted LAN/VPN boundary is therefore also the access-control boundary for this shared write gateway.
 
-## Trusted-LAN HTTP
+## Fixed-IP HTTPS
 
 The current deployment uses:
 
 ```text
 WorkBuddy / Harness
-→ http://<fixed-lan-ip>
-→ Caddy Compose :80
+→ https://192.168.200.69
+→ Caddy Compose :443
 → legal-network
 → opencontracts-api:8000
 ```
 
-HTTP is intentional for the MVP so clients can connect by fixed private IP without installing an internal CA. Traffic on this internal link is not TLS-encrypted.
-
-If the LAN/VPN cannot be treated as trusted, this design must be hardened before broader exposure: use managed TLS or an enterprise-trusted CA, private/authenticated MCP, and preferably per-user write authorization rather than a shared gateway credential.
+Caddy currently uses `tls internal`. The corresponding root CA trust is a host/infrastructure prerequisite and is intentionally outside the ContractBot client bundle. It may be provisioned centrally by IT or replaced by another certificate source already trusted by the client machines.
 
 ## Development-port boundary
 
@@ -74,13 +70,14 @@ Ownership remains clear:
 OpenContracts local.yml    upstream-owned, unchanged
 Caddy compose              ContractBotConfig-owned
 Network filtering          infrastructure-owned
+TLS trust                  infrastructure-owned
 ```
 
 ## Network controls
 
 At minimum:
 
-- permit intended LAN/VPN clients to reach the fixed server IP on TCP 80;
+- permit intended LAN/VPN clients to reach `192.168.200.69` on TCP 443;
 - block public Internet ingress to OpenContracts;
 - prevent routine clients from reaching Django 8000 and other development-only ports directly;
 - do not expose database, Redis, parsers, embedders or Docker-internal services to normal clients;
