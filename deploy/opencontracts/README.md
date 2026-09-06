@@ -83,11 +83,10 @@ Run:
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The command starts Caddy and writes two ignored deployment-specific files into `client/`:
+The command starts Caddy and generates one ignored deployment-specific file:
 
 ```text
 client/.mcp.json
-client/skills/contract-upload/DEPLOYMENT.md
 ```
 
 It also creates:
@@ -95,6 +94,8 @@ It also creates:
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
+
+The generated `.mcp.json` contains the fixed MCP URL. The formal-import Skill derives its upload URL from the same origin, so no second client URL file is needed.
 
 The generated client directory and ZIP contain no WorkerKey and no CA certificate.
 
@@ -120,4 +121,4 @@ For Windows Harnesses without native global installation, the assistant may exec
 
 ## Trust boundary
 
-This MVP intentionally uses HTTP on the trusted LAN/VPN so clients can connect using only the fixed IP without installing a private CA. Traffic is not TLS-encrypted on that internal link. If the network boundary is no longer trusted, move to authenticated/private MCP plus a managed TLS certificate or an enterprise-trusted CA.
+This MVP intentionally uses HTTP on the trusted LAN/VPN so clients can connect using only the fixed IP without installing a private CA. Traffic is not TLS-encrypted on that internal link. If the network boundary is no longer trusted, move to authenticated/private MCP plus managed TLS or an enterprise-trusted CA.
