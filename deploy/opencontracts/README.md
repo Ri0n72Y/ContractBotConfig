@@ -1,6 +1,6 @@
 # OpenContracts + Caddy server deployment
 
-This directory contains server-side deployment/admin assets. Client Skills and MCP installation files live only under the repository-root `client/` directory.
+This directory contains server-side deployment/admin assets. Client Skills and the fixed MCP configuration live only under the repository-root `client/` directory.
 
 ## Server layout
 
@@ -25,7 +25,7 @@ Copy `.env.example` to `.env` and configure:
 
 ```text
 OPENCONTRACTS_LOCAL_YML=C:/path/to/OpenContracts/local.yml
-OPENCONTRACTS_LAN_IP=10.10.20.15
+OPENCONTRACTS_LAN_IP=192.168.200.69
 HISTORY_CORPUS=contracts-history
 TEMPLATE_CORPUS=contract-templates
 OPENCONTRACTS_UPLOAD_WORKER_KEY=<minted WorkerKey>
@@ -50,16 +50,18 @@ If a WorkerKey still needs to be minted:
 
 Copy the plaintext result into `OPENCONTRACTS_UPLOAD_WORKER_KEY` in `.env`.
 
-## 3. Caddy
+## 3. Caddy HTTPS gateway
 
-Caddy exposes the fixed private IP on TCP 80 inside the trusted LAN/VPN:
+Caddy exposes the fixed private IP on TCP 443:
 
 ```text
-http://<fixed-lan-ip>/mcp/
-http://<fixed-lan-ip>/api/imports/documents/
+https://192.168.200.69/mcp/
+https://192.168.200.69/api/imports/documents/
 ```
 
-It proxies only the MCP and single-document import routes. The formal-import route overwrites the upstream `Authorization` header with:
+The current Caddyfile uses `tls internal`. TLS trust for that internal CA must already be provided by host/IT infrastructure; the customer client bundle does not install certificates.
+
+Caddy proxies only the MCP and single-document import routes. The formal-import route overwrites the upstream `Authorization` header with:
 
 ```text
 WorkerKey <server-side corpus-bound token>
@@ -75,7 +77,9 @@ Start/update Caddy:
 
 All other Caddy routes return 404.
 
-## 4. Prepare the client directory
+## 4. Package the client directory
+
+`client/.mcp.json` is a normal versioned file with the fixed MCP URL. No deployment-time client configuration is generated.
 
 Run:
 
@@ -83,32 +87,22 @@ Run:
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The command starts Caddy and generates one ignored deployment-specific file:
-
-```text
-client/.mcp.json
-```
-
-It also creates:
+This starts/updates Caddy and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
 
-The generated `.mcp.json` contains the fixed MCP URL. The formal-import Skill derives its upload URL from the same origin, so no second client URL file is needed.
-
-The generated client directory and ZIP contain no WorkerKey and no CA certificate.
+The ZIP contains only the static client MCP configuration, installation instructions, and Skills. It contains no WorkerKey.
 
 ## 5. End-user flow
 
-The customer uploads the prepared client ZIP to a compatible Harness and asks the assistant to install ContractBot globally. The assistant installs only:
+The customer uploads the `client/` ZIP to a compatible Harness and asks the assistant to install ContractBot globally. The assistant installs only:
 
 - the `opencontracts` MCP definition from `.mcp.json`;
 - the Skills under `skills/`.
 
-No client environment variables, certificates, WorkerKey, helper runtime, or `CONTRACTBOT_HOME` are required.
-
-For Windows Harnesses without native global installation, the assistant may execute `client-setup.ps1` itself. `client-setup.cmd` remains a manual fallback.
+There is no client setup script, WorkerKey configuration, helper runtime, or ContractBot environment-variable setup.
 
 ## Caddy operations
 
@@ -121,4 +115,4 @@ For Windows Harnesses without native global installation, the assistant may exec
 
 ## Trust boundary
 
-This MVP intentionally uses HTTP on the trusted LAN/VPN so clients can connect using only the fixed IP without installing a private CA. Traffic is not TLS-encrypted on that internal link. If the network boundary is no longer trusted, move to authenticated/private MCP plus managed TLS or an enterprise-trusted CA.
+The service remains restricted to the intended LAN/VPN. HTTPS protects client-to-Caddy traffic. With `tls internal`, the Caddy root CA trust is an infrastructure prerequisite; it can be provisioned centrally instead of being part of the ContractBot client package.
