@@ -71,9 +71,9 @@ The fixed OpenContracts IP must be unreachable from untrusted networks. No publi
 
 ## OC-11 HTTPS
 
-OpenContracts continues to use the upstream `local.yml` unchanged. ContractBotConfig runs Caddy as a separate Docker Compose project on the same host and attaches it to the Docker network already used by the running `django` service.
+OpenContracts continues to use the upstream `local.yml` unchanged. Its `django` service exposes the stable Docker network alias `opencontracts-api` on `legal-network`. ContractBotConfig runs Caddy as a separate Docker Compose project on the same host and joins that existing external network.
 
-Caddy exposes the fixed private IP on TCP 443, serves `https://<fixed-lan-ip>` with `tls internal`, and proxies only `/mcp/*` and `/api/imports/documents/*` to `django:8000`.
+Caddy exposes the fixed private IP on TCP 443, serves `https://<fixed-lan-ip>` with `tls internal`, and proxies only `/mcp/*` and `/api/imports/documents/*` to `opencontracts-api:8000`.
 
 Every Harness host trusts the Caddy root CA and TLS verification remains enabled. No DNS or hosts-file configuration is required.
 
