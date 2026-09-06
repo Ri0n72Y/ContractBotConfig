@@ -31,27 +31,9 @@ foreach ($name in @("OPENCONTRACTS_LAN_IP", "OPENCONTRACTS_UPLOAD_WORKER_KEY")) 
 }
 if (-not (Test-Path $ClientDir)) { throw "Client directory not found: $ClientDir" }
 
-$parsedIp = $null
-if (-not [System.Net.IPAddress]::TryParse($env:OPENCONTRACTS_LAN_IP, [ref]$parsedIp) -or
-    $parsedIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
-    throw "OPENCONTRACTS_LAN_IP must be an IPv4 address"
-}
-
-# Start the HTTP gateway. The WorkerKey stays in the server .env and is passed
-# only to Caddy, which injects it for the formal-ingestion route.
+# Start/update the HTTPS gateway. The WorkerKey stays on the server and is
+# passed only to Caddy, which injects it for the formal-ingestion route.
 & (Join-Path $CaddyDir "manage.ps1") setup
-
-$baseUrl = "http://$($env:OPENCONTRACTS_LAN_IP)"
-$mcp = [ordered]@{
-    mcpServers = [ordered]@{
-        opencontracts = [ordered]@{
-            type = "http"
-            url = "$baseUrl/mcp/"
-            description = "OpenContracts MCP on the trusted internal network"
-        }
-    }
-}
-$mcp | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $ClientDir ".mcp.json") -Encoding UTF8
 
 $runtimeDir = Join-Path $ScriptDir "runtime"
 if (-not $OutputZip) {
@@ -67,6 +49,7 @@ if (Test-Path $OutputZip) { Remove-Item $OutputZip -Force }
 $items = Get-ChildItem -Force $ClientDir
 Compress-Archive -Path $items.FullName -DestinationPath $OutputZip -Force
 
-Write-Host "Client directory prepared: $ClientDir"
+Write-Host "Caddy HTTPS gateway started."
 Write-Host "Client ZIP: $OutputZip"
-Write-Host "Client bundle contains MCP + Skills only; the WorkerKey remains on the server."
+Write-Host "Client bundle contains only the fixed MCP configuration, Skills and installation instructions."
+Write-Host "The WorkerKey remains on the server."
