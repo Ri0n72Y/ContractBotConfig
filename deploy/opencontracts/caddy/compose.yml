@@ -5,12 +5,11 @@ services:
     restart: unless-stopped
     environment:
       OPENCONTRACTS_LAN_IP: ${OPENCONTRACTS_LAN_IP}
+      OPENCONTRACTS_UPLOAD_WORKER_KEY: ${OPENCONTRACTS_UPLOAD_WORKER_KEY}
     ports:
-      - "${OPENCONTRACTS_LAN_IP}:443:443/tcp"
+      - "${OPENCONTRACTS_LAN_IP}:80:80/tcp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
     networks:
       - legal-network
 
@@ -18,7 +17,3 @@ networks:
   legal-network:
     external: true
     name: legal-network
-
-volumes:
-  caddy_data:
-  caddy_config:
