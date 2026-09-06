@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("setup", "up", "export-ca", "logs", "down")]
+    [ValidateSet("setup", "up", "logs", "down")]
     [string]$Command
 )
 
@@ -30,35 +30,9 @@ function Invoke-CaddyCompose {
     }
 }
 
-function Export-CaddyRootCA {
-    $output = $env:CADDY_CA_OUTPUT
-    if (-not [System.IO.Path]::IsPathRooted($output)) {
-        $output = Join-Path $DeployDir $output
-    }
-    $outputDir = Split-Path -Parent $output
-    New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-    Invoke-CaddyCompose cp "caddy:/data/caddy/pki/authorities/local/root.crt" $output
-    return [System.IO.Path]::GetFullPath($output)
-}
-
 switch ($Command) {
-    "setup" {
-        Invoke-CaddyCompose up -d
-        $output = Export-CaddyRootCA
-        Write-Host "Caddy started."
-        Write-Host "Root CA: $output"
-    }
-    "up" {
-        Invoke-CaddyCompose up -d
-    }
-    "export-ca" {
-        $output = Export-CaddyRootCA
-        Write-Output $output
-    }
-    "logs" {
-        Invoke-CaddyCompose logs --tail=200 -f caddy
-    }
-    "down" {
-        Invoke-CaddyCompose down
-    }
+    "setup" { Invoke-CaddyCompose up -d }
+    "up" { Invoke-CaddyCompose up -d }
+    "logs" { Invoke-CaddyCompose logs --tail=200 -f caddy }
+    "down" { Invoke-CaddyCompose down }
 }
