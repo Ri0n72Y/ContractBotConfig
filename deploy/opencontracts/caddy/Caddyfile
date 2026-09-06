@@ -1,11 +1,8 @@
 {
-    auto_https disable_redirects
     admin off
 }
 
-https://{$OPENCONTRACTS_LAN_IP} {
-    tls internal
-
+http://{$OPENCONTRACTS_LAN_IP} {
     @mcp path /mcp /mcp/*
     handle @mcp {
         reverse_proxy opencontracts-api:8000 {
@@ -18,6 +15,7 @@ https://{$OPENCONTRACTS_LAN_IP} {
     handle @imports {
         reverse_proxy opencontracts-api:8000 {
             header_up Host localhost:8000
+            header_up Authorization "WorkerKey {$OPENCONTRACTS_UPLOAD_WORKER_KEY}"
         }
     }
 
