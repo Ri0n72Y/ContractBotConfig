@@ -8,9 +8,6 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Prepared client deployment file (generated from server-side .env)
-client/.mcp.json
-
 # Local artifacts
 output/
 reports/
