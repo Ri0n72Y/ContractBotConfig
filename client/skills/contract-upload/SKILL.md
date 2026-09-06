@@ -15,27 +15,44 @@ description: >
 
 仅仅上传文件给 Harness、要求分析、修改、生成或比较，不构成入库授权。
 
+## 固定目标
+
+正式入库目标是历史合同 Corpus：`contracts-history`。
+
+客户端不持有 WorkerKey，也不配置 Authorization。服务器端 Caddy 在正式入库路由上注入绑定 `contracts-history` 的 WorkerKey，因此客户端不要发送 `Authorization`，也不要发送 `add_to_corpus_id`。
+
+实际部署的正式入库 URL 写在本 Skill 同目录的 `DEPLOYMENT.md` 中。该文件由服务器端打包脚本生成。
+
 ## 入库前检查
 
 1. 确认用户指向的本地文件；
-2. 如果源文件是旧版 `.doc`，优先使用 Harness 本地已有的 Word/Office/文档转换能力生成可供 OpenContracts 使用的 PDF 工作副本；原始 `.doc` 不覆盖；
-3. 如果本地转换不可用或失败，只有当前部署明确启用了 optional 远程转换服务时，才调用 `CONTRACTBOT_HOME/scripts/opencontracts/convert_doc_to_pdf.py`；默认部署不假定该服务存在；
-4. 如果 `.doc` 无法得到可靠 PDF 工作副本，不要直接把原始 `.doc` 提交给 OpenContracts；向用户说明需要提供 DOCX/PDF 或在可转换环境中重试；
-5. 确认正式合同标题，尽量使用合同正文标题；
-6. 如日期明确，可纳入标题/描述；日期不明确时不要猜测；
-7. 通过合同历史 Corpus 的 MCP 查找明显同一合同/同一标题；
-8. 发现可能重复时，向用户说明，并确认其意图是新增版本、重新上传还是取消；
-9. 未获得重新上传意图时不要静默覆盖。
-
-`.doc` → PDF 是格式兼容处理，不需要再次询问入库授权；真正的远程写操作仍然只在前述用户授权存在时执行。
+2. 旧版 `.doc` 优先使用当前 Harness 的本地 Word/Office/文档能力读取或转换为可靠的 DOCX/PDF 工作副本；原文件不覆盖；
+3. 如果无法得到可靠可上传文件，请用户提供 DOCX/PDF；
+4. 确认正式合同标题，尽量使用合同正文标题；
+5. 如日期明确，可纳入标题/描述；日期不明确时不要猜测；
+6. 通过 `contracts-history` 的 MCP 检索明显同一合同/同一标题；
+7. 发现可能重复时，向用户说明，并确认其意图是新增版本、重新上传还是取消；
+8. 未获得重新上传意图时不要静默覆盖。
 
 ## 上传方式
 
-调用安装在 `CONTRACTBOT_HOME/scripts/opencontracts/upload_document.py` 的受控 helper。安装器负责设置 `CONTRACTBOT_HOME`；不要依赖当前工作目录或项目相对路径。Helper 从运行时环境读取 WorkerKey；Skill 内容中不包含令牌。
+使用当前 Harness 可用的受控 HTTP / shell 能力，向 `DEPLOYMENT.md` 中的 `IMPORT_URL` 发送一次 `multipart/form-data` POST。
 
-正式合同使用 `OPENCONTRACTS_UPLOAD_WORKER_KEY`。Helper 不发送目标 Corpus ID，OpenContracts WorkerKey 的服务器端 Corpus 绑定决定写入位置。
+字段：
 
-不要把 WorkerKey、Authorization header、环境变量值或服务器内部错误复制给用户。
+- `file`：本地文件；
+- `filename`：文件名；
+- `title`：正式标题；
+- `description`：可选描述；
+- `add_to_folder_path`：仅在用户明确需要目标目录时使用。
+
+客户端不得发送：
+
+- `Authorization`；
+- WorkerKey；
+- `add_to_corpus_id`。
+
+服务器网关会覆盖并注入正式写入凭据。不要向用户显示服务器内部认证信息或上游错误细节。
 
 ## 写操作安全
 
@@ -51,7 +68,7 @@ description: >
 此时：
 
 1. 停止重复上传；
-2. 告诉用户“提交状态暂时无法确认，需要稍后从合同库核验”；
+2. 告诉用户提交状态暂时无法确认，需要从合同库核验；
 3. 后续通过 MCP 查找目标文档，确认是否已经入库。
 
 已明确收到 4xx 且服务端确认未接受请求时，可作为已知失败处理。
@@ -60,17 +77,13 @@ description: >
 
 服务器接受上传只代表进入处理链，不代表已经完成解析和检索。
 
-典型反馈：
-
-`合同已经提交入库。OpenContracts 还需要完成正文解析和索引，过一段时间后才会稳定出现在历史检索中。`
-
 不要在仅收到 201/202/processing 时声称“已经可以检索”。
 
 ## 后续核验
 
-需要核验时，通过 `contract-repository` 使用 MCP：
+需要核验时，通过 `contract-repository`：
 
-- 查找目标文档；
+- 在 `contracts-history` 中查找目标文档；
 - 确认正文已经可读；
 - 必要时确认检索可以命中。
 
