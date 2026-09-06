@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "opencontracts": {
+      "type": "http",
+      "url": "https://192.168.200.69/mcp/",
+      "description": "OpenContracts MCP on the trusted internal network"
+    }
+  }
+}
