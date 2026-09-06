@@ -9,7 +9,7 @@ This directory is the complete client distribution unit. When a user uploads an 
 3. Do not ask for or configure a WorkerKey. Formal-ingestion authentication is injected by the server-side Caddy gateway.
 4. Do not install a CA certificate. The MVP gateway uses HTTP on the trusted LAN/VPN and the fixed server IP is already packaged in `.mcp.json`.
 5. Do not create ContractBot environment variables or a `CONTRACTBOT_HOME` directory.
-6. For formal ingestion, follow `skills/contract-upload/SKILL.md` and its bundled `DEPLOYMENT.md`. The client must not send an Authorization header.
+6. For formal ingestion, follow `skills/contract-upload/SKILL.md`. It derives the import endpoint from the installed `opencontracts` MCP origin; the client must not send an Authorization header.
 7. Tell the user only that installation completed and whether a Harness restart is required.
 
 ## Windows fallback
