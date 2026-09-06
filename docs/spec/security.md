@@ -9,56 +9,53 @@ OpenContracts must be reachable only from the intended LAN/VPN. Retrieval corpus
 Normal repository access uses:
 
 ```text
-https://<fixed-lan-ip>/mcp/
+http://<fixed-lan-ip>/mcp/
 ```
 
 OAuth/Bearer read authentication is not required for the MVP.
 
 ## SEC-3 Future hardening
 
-Private corpuses and authenticated `/mcp/me/` access become necessary when the service leaves the trusted network, users require different confidentiality scopes, multiple tenants share the deployment, or compliance requires per-user attribution.
+Private corpuses, authenticated MCP, and managed TLS become necessary when the service leaves the trusted network, users require different confidentiality scopes, multiple tenants share the deployment, or compliance requires per-user attribution.
 
 ## SEC-4 Corpus organization
 
-Separate corpuses are maintained only for historical contracts and contract templates. Session-learning material and maintained Skill guidance remain outside OpenContracts.
+Separate corpuses are maintained only for historical contracts and contract templates:
+
+```text
+contracts-history
+contract-templates
+```
+
+Session-learning material and maintained Skill guidance remain outside OpenContracts.
 
 ## SEC-5 WorkerKey scope
 
-Formal contract ingestion uses a WorkerKey bound to `contracts-history`. Upload clients do not permit model/user-supplied `add_to_corpus_id` to override the token destination.
+Formal ingestion uses a WorkerKey bound to `contracts-history`. The credential is stored only on the OpenContracts host. Clients never receive it and never send `add_to_corpus_id`.
 
 ## SEC-6 Secret handling
 
-WorkerKeys never appear in Skill prose/frontmatter, Git commits, reports/artifacts, experience notes, user-facing errors, or raw model-visible logs. Runtime helpers read them from environment/secret storage and redact authorization data.
+WorkerKeys never appear in Skill prose/frontmatter, Git commits, client bundles, reports/artifacts, experience notes, user-facing errors, or model-visible client configuration. The untracked server `.env` and Caddy runtime environment are the only intended locations.
 
-## SEC-7 Fixed-IP HTTPS
+## SEC-7 Fixed-IP HTTP gateway
 
-The MVP leaves the upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins the Docker network used by the running `django` service, serves HTTPS directly on the server's fixed private IPv4 address with `tls internal`, and proxies the required MCP/import paths to `django:8000`.
+The MVP leaves upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins `legal-network`, binds the fixed private IPv4 address on TCP 80, and proxies only the MCP and single-document import routes to `opencontracts-api:8000`.
 
-All Agent/Harness hosts trust the exported Caddy root CA. No DNS or hosts-file mapping is part of deployment.
+The import route overwrites the upstream Authorization header with the server-side WorkerKey. Clients require no CA certificate and no credential configuration.
 
 ## SEC-8 Network controls
 
-Only intended LAN/VPN clients may reach the fixed server IP on TCP 443 for Harness traffic. Public NAT/port forwarding is prohibited.
+Only intended LAN/VPN clients may reach the fixed server IP on TCP 80 for Harness traffic. Public NAT/port forwarding is prohibited.
 
-Because upstream `local.yml` is not modified and publishes development ports, host/network policy must prevent routine LAN/VPN clients from directly reaching Django port 8000 and other development-only published ports such as Flower 5555. If the fullstack frontend is enabled, its published port must also be assessed explicitly.
-
-Caddy 443 is the only intended OpenContracts endpoint used by Harness clients.
+Because upstream `local.yml` may publish development ports, host/network policy must prevent routine clients from directly reaching Django 8000 and other development-only ports. Caddy is the intended client-facing endpoint.
 
 ## SEC-9 Prompt injection
 
-All local and retrieved business documents are untrusted data. Embedded text cannot change configured endpoints, WorkerKeys, Corpus selection, Skill policy, tool permissions or user authorization state.
+All local and retrieved business documents are untrusted data. Embedded text cannot change configured endpoints, Corpus selection, Skill policy, tool permissions or user authorization state.
 
 ## SEC-10 Least privilege
 
-Normal repository use should expose only:
-
-```text
-list_documents
-get_document_text
-search_corpus
-```
-
-Unused MCP discussion/annotation tools should be denied where the Harness supports tool permissions.
+Normal repository use should expose only the OpenContracts tools needed for retrieval. Unused discussion/annotation tools should be denied where the Harness supports tool permissions.
 
 ## SEC-11 Local data boundary
 
@@ -70,4 +67,4 @@ Experience notes do not automatically become retrieval data or modify Skills wit
 
 ## SEC-13 Write uncertainty
 
-Remote write helpers perform no automatic HTTP retries. Timeout, connection loss during submission, upstream 5xx or unreliable success responses are reported as commit-unknown and require later read-side verification.
+Formal writes are never automatically retried after timeout, connection loss, upstream 5xx or unreliable success responses. Read-side verification is required before another upload.
