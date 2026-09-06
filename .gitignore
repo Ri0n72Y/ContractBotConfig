@@ -8,9 +8,8 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Prepared client deployment files (generated from server-side .env)
+# Prepared client deployment file (generated from server-side .env)
 client/.mcp.json
-client/skills/contract-upload/DEPLOYMENT.md
 
 # Local artifacts
 output/
