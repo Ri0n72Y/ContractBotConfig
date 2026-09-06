@@ -59,7 +59,7 @@ https://192.168.200.69/mcp/
 https://192.168.200.69/api/imports/documents/
 ```
 
-The current Caddyfile uses `tls internal`. TLS trust for that internal CA must already be provided by host/IT infrastructure; the customer client bundle does not install certificates.
+The current Caddyfile uses `tls internal`. Caddy's root CA public certificate is exported into the client package so each installing agent can trust it on the customer machine. The CA private key remains only in Caddy's persistent data volume.
 
 Caddy proxies only the MCP and single-document import routes. The formal-import route overwrites the upstream `Authorization` header with:
 
@@ -75,11 +75,17 @@ Start/update Caddy:
 .\caddy\manage.ps1 setup
 ```
 
+Export the public root CA manually when needed:
+
+```powershell
+.\caddy\manage.ps1 export-ca -Output ..\..\..\client\certificates\opencontracts-caddy-root.crt
+```
+
 All other Caddy routes return 404.
 
 ## 4. Package the client directory
 
-`client/.mcp.json` is a normal versioned file with the fixed MCP URL. No deployment-time client configuration is generated.
+`client/.mcp.json` is a normal versioned file with the fixed MCP URL.
 
 Run:
 
@@ -87,20 +93,36 @@ Run:
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-This starts/updates Caddy and creates:
+This starts/updates Caddy, exports its public root CA to:
+
+```text
+client/certificates/opencontracts-caddy-root.crt
+```
+
+and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
 
-The ZIP contains only the static client MCP configuration, installation instructions, and Skills. It contains no WorkerKey.
+The ZIP contains:
+
+- `.mcp.json` with `https://192.168.200.69/mcp/`;
+- the ContractBot Skills;
+- `INSTALL.md` / `README.md`;
+- the public Caddy root CA certificate.
+
+It contains no WorkerKey and no CA private key.
 
 ## 5. End-user flow
 
-The customer uploads the `client/` ZIP to a compatible Harness and asks the assistant to install ContractBot globally. The assistant installs only:
+The customer uploads the `client/` ZIP to a compatible Harness and asks the assistant to install ContractBot globally. The assistant follows `client/INSTALL.md` and:
 
-- the `opencontracts` MCP definition from `.mcp.json`;
-- the Skills under `skills/`.
+1. trusts `certificates/opencontracts-caddy-root.crt` for the current user;
+2. installs the `opencontracts` MCP definition from `.mcp.json`;
+3. installs the Skills under `skills/`.
+
+On Windows, the intended trust scope is the current user's Trusted Root Certification Authorities store, so the agent can normally install the CA without machine-wide administrator configuration.
 
 There is no client setup script, WorkerKey configuration, helper runtime, or ContractBot environment-variable setup.
 
@@ -109,10 +131,11 @@ There is no client setup script, WorkerKey configuration, helper runtime, or Con
 ```powershell
 .\caddy\manage.ps1 setup
 .\caddy\manage.ps1 up
+.\caddy\manage.ps1 export-ca -Output <path>
 .\caddy\manage.ps1 logs
 .\caddy\manage.ps1 down
 ```
 
 ## Trust boundary
 
-The service remains restricted to the intended LAN/VPN. HTTPS protects client-to-Caddy traffic. With `tls internal`, the Caddy root CA trust is an infrastructure prerequisite; it can be provisioned centrally instead of being part of the ContractBot client package.
+The service remains restricted to the intended LAN/VPN. HTTPS protects client-to-Caddy traffic. Because the deployment uses Caddy `tls internal`, client machines must trust the bundled public root CA. The private CA key never leaves the server.
