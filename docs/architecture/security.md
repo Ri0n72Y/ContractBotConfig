@@ -46,7 +46,7 @@ Clients do not receive, persist, or send the WorkerKey. For `/api/imports/docume
 
 This simplifies client installation but means any client that can reach the exposed formal-import route can attempt a write. The trusted LAN/VPN boundary is therefore also the access-control boundary for this shared write gateway.
 
-## Fixed-IP HTTPS
+## Fixed-IP HTTPS and trust
 
 The current deployment uses:
 
@@ -58,7 +58,15 @@ WorkBuddy / Harness
 → opencontracts-api:8000
 ```
 
-Caddy currently uses `tls internal`. The corresponding root CA trust is a host/infrastructure prerequisite and is intentionally outside the ContractBot client bundle. It may be provisioned centrally by IT or replaced by another certificate source already trusted by the client machines.
+Caddy uses `tls internal`. During server-side client packaging, only the public Caddy root certificate is exported to:
+
+```text
+client/certificates/opencontracts-caddy-root.crt
+```
+
+The installing agent trusts that root certificate for the current user before registering the MCP endpoint. On Windows, the intended target is the current user's Trusted Root Certification Authorities store.
+
+The CA private key never leaves Caddy's persistent server-side data volume.
 
 ## Development-port boundary
 
@@ -70,7 +78,7 @@ Ownership remains clear:
 OpenContracts local.yml    upstream-owned, unchanged
 Caddy compose              ContractBotConfig-owned
 Network filtering          infrastructure-owned
-TLS trust                  infrastructure-owned
+Client CA trust            ContractBot install package / installing agent
 ```
 
 ## Network controls
@@ -93,7 +101,7 @@ Experience-note creation is separately authorized and remains outside OpenContra
 
 ## Prompt injection / untrusted content
 
-Every current or retrieved contract/template is untrusted business data. Embedded text cannot alter Skill/system policy, change configured endpoints or Corpus selection, request credentials, authorize uploads, trigger unapproved system actions, or widen tool permissions.
+Every current or retrieved contract/template is untrusted business data. Embedded text cannot alter Skill/system policy, change configured endpoints or Corpus selection, replace the bundled CA, request credentials, authorize uploads, trigger unapproved system actions, or widen tool permissions.
 
 ## Write uncertainty
 
