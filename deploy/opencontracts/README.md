@@ -6,14 +6,6 @@
 
 ## 默认拓扑
 
-现有 OpenContracts 环境提供：
-
-- 外部 Docker network：`legal-network`；
-- Django network alias：`opencontracts-api`；
-- OpenContracts 自己的其他服务。
-
-默认 ContractBot 部署：
-
 ```text
 WorkBuddy / Harness
         |
@@ -25,7 +17,7 @@ Caddy :443
    +---- /api/imports/documents/* ---> opencontracts-api:8000
 ```
 
-Caddy 通过 `legal-network` 访问 `opencontracts-api:8000`，不依赖 Compose 自动生成的 Django 容器名，也不经过宿主机映射的 8000。
+OpenContracts `django` 已在外部 Docker network `legal-network` 上提供 `opencontracts-api` alias。Caddy 加入同一网络并直接使用 `opencontracts-api:8000`。
 
 ## 文件
 
@@ -34,22 +26,20 @@ deploy/opencontracts/
 ├── .env.example
 ├── opencontracts-admin.ps1
 ├── opencontracts-admin.sh
+├── Prepare-WindowsClientBundle.ps1
 ├── Configure-AgentOpenContracts.ps1
+├── client/
+│   └── Install-ContractBot.ps1
 ├── caddy/
 │   ├── compose.yml
 │   ├── Caddyfile
 │   └── manage.ps1
 └── converter/                 # optional，不属于默认部署
-    ├── Dockerfile
-    ├── app.py
-    ├── compose.yml
-    ├── manage.ps1
-    └── README.md
 ```
 
-Windows 主机优先使用 `opencontracts-admin.ps1`；`opencontracts-admin.sh` 作为 shell 环境等价入口保留。
+Windows 主机优先使用 PowerShell 脚本。
 
-## 1. 配置默认部署
+## 1. 配置部署参数
 
 ```powershell
 cd deploy/opencontracts
@@ -76,42 +66,19 @@ WORKER_EXPIRES_DAYS=365
 
 `legal-network` 与 `opencontracts-api` 已由 OpenContracts `local.yml` 定义，不重复作为部署变量。
 
-## 2. OpenContracts 保持原样
+## 2. OpenContracts 初始化
 
-继续按现有方式启动 OpenContracts。
+OpenContracts 继续按原生 `local.yml` 启动。本仓库不修改其 Compose 文件。
 
-Django 保持加入：
-
-```yaml
-networks:
-  default:
-  legal-network:
-    aliases:
-      - opencontracts-api
-```
-
-本仓库不修改 OpenContracts `local.yml`。
-
-### Django 管理命令与 `/entrypoint`
-
-当前 OpenContracts 镜像在 `/entrypoint` 中根据 `POSTGRES_*` 变量构造 `DATABASE_URL`。正常 Compose 启动会执行 `/entrypoint`，但 `docker compose exec django python manage.py ...` 新建的进程不会继承 entrypoint 进程后来导出的 `DATABASE_URL`。
-
-因此仓库中的管理脚本统一按以下形式执行 Django 管理命令：
+当前 OpenContracts 镜像在 `/entrypoint` 中根据 `POSTGRES_*` 构造 `DATABASE_URL`，因此管理脚本统一通过：
 
 ```text
-docker compose ... exec -T django /entrypoint python manage.py ...
+django /entrypoint python manage.py ...
 ```
 
-## 3. 初始化 ContractBot Corpuses
+执行 Django 管理命令。
 
-新 OpenContracts 数据库先创建两个运行时 Corpus：
-
-```text
-contracts-history
-contract-templates
-```
-
-Windows PowerShell：
+新数据库初始化：
 
 ```powershell
 cd deploy/opencontracts
@@ -119,30 +86,88 @@ cd deploy/opencontracts
 .\opencontracts-admin.ps1 publish-corpuses
 ```
 
-`create-corpuses` 是幂等操作：使用第一个 superuser 作为新 Corpus 的 creator，关闭 auto branding，并调用 OpenContracts 当前的 `CorpusService.grant_creator_permissions()` 补齐 creator 的对象权限。若数据库中没有 superuser，先在 OpenContracts 中创建 superuser。
+创建：
 
-`publish-corpuses` 使用模型 `save()` 设置 public，使 OpenContracts 自己的 visibility propagation 逻辑继续生效。
+```text
+contracts-history
+contract-templates
+```
 
-## 4. 签发正式入库 WorkerKey
+`create-corpuses` 是幂等操作，并调用 `CorpusService.grant_creator_permissions()` 补齐 creator 权限。
 
-如果还没有 WorkerKey：
+如果还没有正式入库 WorkerKey：
 
 ```powershell
 .\opencontracts-admin.ps1 mint-worker-key
 ```
 
-WorkerKey 绑定 `contracts-history`。保存 OpenContracts 输出的 plaintext WorkerKey。
+保存输出的 plaintext WorkerKey。新数据库应重新签发 WorkerKey。
 
-新数据库需要重新签发 WorkerKey；旧机器上的 WorkerKey 不应复用。
+# 推荐 Windows 部署流程
 
-## 5. 启动默认 Caddy
+OpenContracts 配置完成后，管理员和普通用户都不再需要手工编辑 MCP JSON、Corpus 名称或 CA 环境变量。
+
+## 3. 管理员：生成 Windows 客户端安装包
+
+管理员只需要运行：
 
 ```powershell
-cd deploy/opencontracts/caddy
-.\manage.ps1 up
+cd deploy/opencontracts
+.\Prepare-WindowsClientBundle.ps1
 ```
 
-默认 Caddyfile 只开放：
+脚本会提示输入 WorkerKey，输入内容不会显示在终端。随后自动完成：
+
+1. 启动 Caddy；
+2. 导出 Caddy Root CA；
+3. 打包固定服务器 IP；
+4. 打包 `contracts-history` / `contract-templates`；
+5. 打包共享 WorkerKey；
+6. 打包 `.mcp.json`；
+7. 将项目 Skills 放入 CodeBuddy/WorkBuddy 工作区使用的 `.codebuddy/skills/`；
+8. 打包 OpenContracts helper scripts；
+9. 生成 Windows 客户端 ZIP。
+
+默认输出：
+
+```text
+deploy/opencontracts/runtime/ContractBot-Windows.zip
+```
+
+该目录已被 `.gitignore` 排除。
+
+如果 WorkerKey 已存在 PowerShell 变量中，也可以：
+
+```powershell
+.\Prepare-WindowsClientBundle.ps1 -WorkerKey $workerKey
+```
+
+WorkerKey 不会打印到输出。
+
+### Caddy 单独操作
+
+`Prepare-WindowsClientBundle.ps1` 内部使用：
+
+```powershell
+.\caddy\manage.ps1 setup
+```
+
+`setup` 等价于：
+
+```text
+up + export-ca
+```
+
+日常操作仍支持：
+
+```powershell
+.\caddy\manage.ps1 up
+.\caddy\manage.ps1 logs
+.\caddy\manage.ps1 export-ca
+.\caddy\manage.ps1 down
+```
+
+Caddy 默认只开放：
 
 ```text
 /mcp/*
@@ -151,55 +176,75 @@ cd deploy/opencontracts/caddy
 
 其他路径返回 `404`。
 
-## 6. 导出 Caddy Root CA
+## 4. 普通 Windows 用户：一次安装
+
+管理员将 `ContractBot-Windows.zip` 发给授权用户。
+
+用户操作：
 
 ```powershell
-.\manage.ps1 export-ca
+Expand-Archive .\ContractBot-Windows.zip -DestinationPath "$HOME\ContractBot"
+cd "$HOME\ContractBot"
+.\Install-ContractBot.ps1
 ```
 
-默认输出：
+然后重启 WorkBuddy / CodeBuddy，并使用该目录作为合同工作区。
 
-```text
-deploy/opencontracts/runtime/opencontracts-caddy-root.crt
-```
+用户无需填写 Server IP、Corpus 名称、WorkerKey、MCP URL 或 CA 路径。
 
-将该 CA 分发给需要访问 OpenContracts 的 Harness 主机。
+安装脚本自动完成：
 
-## 7. Agent / Harness 一次性配置
+- 将 Caddy Root CA 导入 Windows 当前用户受信任根证书；
+- 设置 OpenContracts URL、Corpus、CA、WorkerKey 等运行时环境变量；
+- 配置 `NODE_EXTRA_CA_CERTS`；
+- 安装 Skills 到 `.codebuddy/skills/`；
+- 写入 `.codebuddy/settings.local.json`：
+  - 自动批准 `opencontracts` 项目 MCP；
+  - 注入运行时环境变量；
+  - 保留当前 MCP 工具 deny 规则；
+- 写入 `.workbuddy/mcp.json`，供 WorkBuddy 项目级 MCP 使用；
+- 保留项目根 `.mcp.json`，供 CodeBuddy 项目级 MCP 使用。
 
-`.mcp.json` 只保存 HTTP MCP 定义，并从 `OPENCONTRACTS_MCP_URL` 读取地址。正式写入使用的 WorkerKey 由 `upload_document.py` 从 `OPENCONTRACTS_UPLOAD_WORKER_KEY` 读取，因此不要把 WorkerKey 提交到版本化 `.mcp.json`。
+默认使用 Windows `CurrentUser`，普通用户不需要管理员权限。
 
-Windows WorkBuddy / Harness 推荐一次执行：
+如果希望将 ContractBot 安装到另一个专用工作区：
 
 ```powershell
-.\Configure-AgentOpenContracts.ps1 `
-  -ServerIp '<固定内网IP>' `
-  -CaddyRootCertificate '<opencontracts-caddy-root.crt路径>' `
-  -UploadWorkerKey '<WorkerKey>' `
-  -EnvironmentScope User
+.\Install-ContractBot.ps1 -TargetDirectory 'C:\Work\Contracts'
 ```
 
-`contracts-history` 与 `contract-templates` 已经是脚本默认值，无需用户重复填写。
+## 5. Windows 客户端包的安全边界
 
-该脚本会持久设置：
+`ContractBot-Windows.zip` 包含共享正式入库 WorkerKey，因此它本身属于凭据载体：
+
+- 只分发给授权用户；
+- 不上传公开网盘；
+- 不提交到 Git；
+- WorkerKey 轮换后重新生成并分发客户端包。
+
+共享 WorkerKey 可以显著降低安装和配置成本，但所有客户端共享同一个写身份。如果以后需要按用户审计、单独撤销或细粒度权限，再改为按用户/机器签发 WorkerKey。
+
+Skill 文件本身仍然不包含 WorkerKey；密钥只进入管理员生成的部署包和用户本地运行时配置。
+
+## 6. WorkBuddy / CodeBuddy 配置说明
+
+CodeBuddy 当前项目级 Skills 目录为：
 
 ```text
-OPENCONTRACTS_BASE_URL
-OPENCONTRACTS_MCP_URL
-OPENCONTRACTS_HISTORY_CORPUS=contracts-history
-OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
-OPENCONTRACTS_CA_BUNDLE
-NODE_EXTRA_CA_CERTS
-OPENCONTRACTS_UPLOAD_WORKER_KEY
-OPENCONTRACTS_ALLOW_INSECURE_HTTP=0
-OPENCONTRACTS_UPLOAD_TIMEOUT_SECONDS=60
+.codebuddy/skills/
 ```
 
-完成后重启 WorkBuddy / Harness，使新进程继承这些环境变量。
+项目 `.mcp.json` 中定义的服务器可通过 `enabledMcpjsonServers` 预先批准。安装脚本会自动配置，不需要用户首次进入时手工批准 `opencontracts`。
 
-如果选择向多台客户端分发同一个 WorkerKey，安装最简单，但所有客户端共享同一个写身份，轮换或撤销时需要同步更新全部客户端。需要独立审计/撤销时应按机器或用户分别签发 WorkerKey。
+WorkBuddy 项目级 MCP 同时写入：
 
-## 8. `.doc` 默认处理策略
+```text
+.workbuddy/mcp.json
+```
+
+因此同一个 Windows 安装包兼容当前 WorkBuddy / CodeBuddy 两种项目配置入口。
+
+## 7. `.doc` 默认处理策略
 
 ```text
 .doc
@@ -218,7 +263,7 @@ Harness 本地读取/转换
 
 正式入库时，如果 OpenContracts 不能可靠处理源 `.doc`，应使用 Harness 本地生成的 PDF 工作副本；不要直接提交旧 `.doc`。
 
-## 9. Optional server-side converter
+## 8. Optional server-side converter
 
 `deploy/opencontracts/converter/` 保留轻量转换代码。如需要中央兜底，可单独启动：
 
@@ -234,14 +279,3 @@ gotenberg:3000/forms/libreoffice/convert
 ```
 
 optional compose 没有宿主机 `ports:` 映射，默认 Caddyfile 也没有转换路由。只有未来明确启用远程 fallback 时再增加受控 Caddy route 和完整的 `OPENCONTRACTS_CONVERTER_URL`。
-
-## 10. 日常 Caddy 操作
-
-```powershell
-.\manage.ps1 up
-.\manage.ps1 logs
-.\manage.ps1 export-ca
-.\manage.ps1 down
-```
-
-`caddy_data` volume 保存内部 CA，普通 `down` / `up` 不会更换 CA。
