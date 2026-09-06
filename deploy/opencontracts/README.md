@@ -32,6 +32,7 @@ Caddy 通过 `legal-network` 访问 `opencontracts-api:8000`，不依赖 Compose
 ```text
 deploy/opencontracts/
 ├── .env.example
+├── opencontracts-admin.ps1
 ├── opencontracts-admin.sh
 ├── Configure-AgentOpenContracts.ps1
 ├── caddy/
@@ -45,6 +46,8 @@ deploy/opencontracts/
     ├── manage.ps1
     └── README.md
 ```
+
+Windows 主机优先使用 `opencontracts-admin.ps1`；`opencontracts-admin.sh` 作为 shell 环境等价入口保留。
 
 ## 1. 配置默认部署
 
@@ -99,8 +102,6 @@ networks:
 docker compose ... exec -T django /entrypoint python manage.py ...
 ```
 
-不要把管理脚本改回直接 `django python manage.py ...`。
-
 ## 3. 初始化 ContractBot Corpuses
 
 新 OpenContracts 数据库先创建两个运行时 Corpus：
@@ -110,30 +111,27 @@ contracts-history
 contract-templates
 ```
 
-执行：
+Windows PowerShell：
 
-```bash
-sh deploy/opencontracts/opencontracts-admin.sh create-corpuses
-sh deploy/opencontracts/opencontracts-admin.sh publish-corpuses
+```powershell
+cd deploy/opencontracts
+.\opencontracts-admin.ps1 create-corpuses
+.\opencontracts-admin.ps1 publish-corpuses
 ```
 
 `create-corpuses` 是幂等操作：使用第一个 superuser 作为新 Corpus 的 creator，关闭 auto branding，并调用 OpenContracts 当前的 `CorpusService.grant_creator_permissions()` 补齐 creator 的对象权限。若数据库中没有 superuser，先在 OpenContracts 中创建 superuser。
 
-`publish-corpuses` 使用模型 `save()` 设置 public，使 OpenContracts 自己的 visibility propagation 逻辑仍然生效。
+`publish-corpuses` 使用模型 `save()` 设置 public，使 OpenContracts 自己的 visibility propagation 逻辑继续生效。
 
 ## 4. 签发正式入库 WorkerKey
 
-正式入库 WorkerKey 绑定 `contracts-history`：
+如果还没有 WorkerKey：
 
-```bash
-sh deploy/opencontracts/opencontracts-admin.sh mint-worker-key
+```powershell
+.\opencontracts-admin.ps1 mint-worker-key
 ```
 
-保存 OpenContracts 输出的 plaintext WorkerKey，并配置到 Harness 的：
-
-```text
-OPENCONTRACTS_UPLOAD_WORKER_KEY
-```
+WorkerKey 绑定 `contracts-history`。保存 OpenContracts 输出的 plaintext WorkerKey。
 
 新数据库需要重新签发 WorkerKey；旧机器上的 WorkerKey 不应复用。
 
@@ -144,15 +142,6 @@ cd deploy/opencontracts/caddy
 .\manage.ps1 up
 ```
 
-等价于：
-
-```powershell
-docker compose `
-  --env-file ..\.env `
-  -f .\compose.yml `
-  up -d
-```
-
 默认 Caddyfile 只开放：
 
 ```text
@@ -160,7 +149,7 @@ docker compose `
 /api/imports/documents/*
 ```
 
-其他路径返回 `404`。默认没有 `/contract-files/convert-to-pdf` 路由。
+其他路径返回 `404`。
 
 ## 6. 导出 Caddy Root CA
 
@@ -176,29 +165,39 @@ deploy/opencontracts/runtime/opencontracts-caddy-root.crt
 
 将该 CA 分发给需要访问 OpenContracts 的 Harness 主机。
 
-## 7. Agent / Harness 配置
+## 7. Agent / Harness 一次性配置
 
-```text
-OPENCONTRACTS_BASE_URL=https://<固定内网IP>
-OPENCONTRACTS_MCP_URL=https://<固定内网IP>/mcp/
-OPENCONTRACTS_HISTORY_CORPUS=contracts-history
-OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
-OPENCONTRACTS_CA_BUNDLE=<本机Root CA路径>
-NODE_EXTRA_CA_CERTS=<同一Root CA路径>
-OPENCONTRACTS_UPLOAD_WORKER_KEY=<WorkerKey>
-```
+`.mcp.json` 只保存 HTTP MCP 定义，并从 `OPENCONTRACTS_MCP_URL` 读取地址。正式写入使用的 WorkerKey 由 `upload_document.py` 从 `OPENCONTRACTS_UPLOAD_WORKER_KEY` 读取，因此不要把 WorkerKey 提交到版本化 `.mcp.json`。
 
-Windows WorkBuddy / Harness 可以使用：
+Windows WorkBuddy / Harness 推荐一次执行：
 
 ```powershell
 .\Configure-AgentOpenContracts.ps1 `
   -ServerIp '<固定内网IP>' `
   -CaddyRootCertificate '<opencontracts-caddy-root.crt路径>' `
-  -HistoryCorpus 'contracts-history' `
-  -TemplateCorpus 'contract-templates' `
   -UploadWorkerKey '<WorkerKey>' `
-  -EnvironmentScope Machine
+  -EnvironmentScope User
 ```
+
+`contracts-history` 与 `contract-templates` 已经是脚本默认值，无需用户重复填写。
+
+该脚本会持久设置：
+
+```text
+OPENCONTRACTS_BASE_URL
+OPENCONTRACTS_MCP_URL
+OPENCONTRACTS_HISTORY_CORPUS=contracts-history
+OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
+OPENCONTRACTS_CA_BUNDLE
+NODE_EXTRA_CA_CERTS
+OPENCONTRACTS_UPLOAD_WORKER_KEY
+OPENCONTRACTS_ALLOW_INSECURE_HTTP=0
+OPENCONTRACTS_UPLOAD_TIMEOUT_SECONDS=60
+```
+
+完成后重启 WorkBuddy / Harness，使新进程继承这些环境变量。
+
+如果选择向多台客户端分发同一个 WorkerKey，安装最简单，但所有客户端共享同一个写身份，轮换或撤销时需要同步更新全部客户端。需要独立审计/撤销时应按机器或用户分别签发 WorkerKey。
 
 ## 8. `.doc` 默认处理策略
 
