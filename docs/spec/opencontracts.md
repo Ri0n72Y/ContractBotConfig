@@ -2,25 +2,25 @@
 
 ## OC-1 Endpoints
 
-The MVP OpenContracts deployment is reachable at a fixed private IPv4 address inside the trusted network.
+The MVP OpenContracts deployment is reachable at a fixed private IPv4 address inside the trusted LAN/VPN.
 
 ```text
-OPENCONTRACTS_BASE_URL=https://<fixed-lan-ip>
-OPENCONTRACTS_MCP_URL=https://<fixed-lan-ip>/mcp/
+MCP:    http://<fixed-lan-ip>/mcp/
+Import: http://<fixed-lan-ip>/api/imports/documents/
 ```
 
-Normal MCP reads are anonymous because the retrieval corpuses remain public in the trusted-network MVP.
+Normal MCP reads are anonymous because the retrieval corpuses remain public inside the trusted-network MVP.
 
 ## OC-2 Retrieval corpuses
 
-Runtime configuration identifies exactly two OpenContracts corpuses for the current product flow:
+The client Skills identify exactly two OpenContracts corpuses:
 
 ```text
 contracts-history
 contract-templates
 ```
 
-Session-learning material and manually distilled operating guidance are not stored in a third knowledge/learning Corpus for the MVP.
+Session-learning material is not stored in a third knowledge/learning Corpus.
 
 ## OC-3 Minimal MCP tools
 
@@ -36,22 +36,21 @@ Additional tools require an explicit product need.
 
 ## OC-4 Retrieval evidence
 
-Semantic search discovers candidates. If the assistant relies on a specific contract/template as evidence, it must retrieve sufficient actual document text to support the claim. Long documents follow the tool paging contract.
+Semantic search discovers candidates. If the assistant relies on a specific contract/template as evidence, it must retrieve sufficient actual document text to support the claim.
 
 ## OC-5 Reference Pack
 
-Repository-assisted work maintains an internal source set covering query purpose, candidates, actually used documents/templates, how each source influenced the result, and unresolved evidence gaps. The user-facing response should disclose material sources actually used.
+Repository-assisted work maintains an internal source set covering query purpose, candidates, actually used documents/templates, how each source influenced the result, and unresolved evidence gaps.
 
-## OC-6 Formal ingestion endpoint
+## OC-6 Formal ingestion
 
-Single-document ingestion uses:
+Single-document ingestion reaches Caddy at:
 
 ```text
 POST /api/imports/documents/
-Authorization: WorkerKey <corpus-bound-token>
 ```
 
-The helper omits `add_to_corpus_id`; the WorkerKey binding is authoritative. The production WorkerKey is bound to `contracts-history`.
+The client sends no WorkerKey and no `add_to_corpus_id`. Caddy injects the server-side `Authorization: WorkerKey ...` header before proxying to OpenContracts. The production WorkerKey is bound to `contracts-history`, so the server-side token binding is authoritative.
 
 ## OC-7 Duplicate handling
 
@@ -69,16 +68,14 @@ Any ambiguous write outcome stops automatic retries. Read-side verification is r
 
 The fixed OpenContracts IP must be unreachable from untrusted networks. No public NAT/port forwarding is part of the MVP.
 
-## OC-11 HTTPS
+## OC-11 Trusted-LAN gateway
 
-OpenContracts continues to use the upstream `local.yml` unchanged. Its `django` service exposes the stable Docker network alias `opencontracts-api` on `legal-network`. ContractBotConfig runs Caddy as a separate Docker Compose project on the same host and joins that existing external network.
+OpenContracts continues to use upstream `local.yml` unchanged. Its `django` service exposes the stable Docker alias `opencontracts-api` on `legal-network`. ContractBotConfig runs Caddy as a separate Compose project on the same host and network.
 
-Caddy exposes the fixed private IP on TCP 443, serves `https://<fixed-lan-ip>` with `tls internal`, and proxies only `/mcp/*` and `/api/imports/documents/*` to `opencontracts-api:8000`.
+Caddy binds the fixed private IP on TCP 80, proxies only `/mcp/*` and `/api/imports/documents/*`, and returns 404 for other paths.
 
-Every Harness host trusts the Caddy root CA and TLS verification remains enabled. No DNS or hosts-file configuration is required.
-
-Because upstream `local.yml` publishes development ports, host/network controls must prevent routine Harness/LAN clients from reaching those ports directly. Caddy 443 is the intended client-facing path.
+The MVP intentionally uses HTTP on the trusted LAN/VPN so clients can connect by fixed IP without certificate installation. If this network can no longer be treated as trusted, migrate to managed TLS and stronger application-layer authentication.
 
 ## OC-12 Write credentials
 
-A corpus-bound WorkerKey is required for formal ingestion even though `contracts-history` is public. The WorkerKey stays outside Skill content and source control.
+A corpus-bound WorkerKey is required by OpenContracts for formal ingestion, but the credential stays only in the untracked server `deploy/opencontracts/.env` and Caddy runtime environment. It is never packaged into client MCP, Skills, ZIPs, or user environment variables.
