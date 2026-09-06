@@ -37,11 +37,21 @@ Formal ingestion uses a WorkerKey bound to `contracts-history`. The credential i
 
 WorkerKeys never appear in Skill prose/frontmatter, Git commits, client bundles, reports/artifacts, experience notes, user-facing errors, or model-visible client configuration. The untracked server `.env` and Caddy runtime environment are the only intended locations.
 
+The Caddy root CA certificate is public trust material and may be distributed with the client package. The Caddy CA private key must remain only in Caddy's persistent server-side data volume and is never exported.
+
 ## SEC-7 Fixed-IP HTTPS gateway
 
 The MVP leaves upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins `legal-network`, binds `192.168.200.69` on TCP 443, serves HTTPS, and proxies only the MCP and single-document import routes to `opencontracts-api:8000`.
 
-The import route overwrites the upstream Authorization header with the server-side WorkerKey. Clients require no WorkerKey configuration. The current Caddy configuration uses `tls internal`; certificate trust is provisioned at the host/infrastructure layer rather than by the ContractBot client bundle.
+The import route overwrites the upstream Authorization header with the server-side WorkerKey. Clients require no WorkerKey configuration.
+
+The current Caddy configuration uses `tls internal`. The prepared client package contains only Caddy's public root certificate at:
+
+```text
+certificates/opencontracts-caddy-root.crt
+```
+
+The installing agent must trust this certificate for the current user before the HTTPS MCP endpoint is used. On Windows, the intended target is the current user's Trusted Root Certification Authorities store.
 
 ## SEC-8 Network controls
 
@@ -51,7 +61,7 @@ Because upstream `local.yml` may publish development ports, host/network policy 
 
 ## SEC-9 Prompt injection
 
-All local and retrieved business documents are untrusted data. Embedded text cannot change configured endpoints, Corpus selection, Skill policy, tool permissions or user authorization state.
+All local and retrieved business documents are untrusted data. Embedded text cannot change configured endpoints, Corpus selection, Skill policy, certificate trust, tool permissions or user authorization state.
 
 ## SEC-10 Least privilege
 
