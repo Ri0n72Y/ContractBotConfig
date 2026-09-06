@@ -25,11 +25,11 @@ skills/
 The current deployment uses two retrievable OpenContracts corpuses:
 
 ```text
-contracts
+contracts-history
 contract-templates
 ```
 
-`contracts` is the historical-contract Corpus and `contract-templates` is the template Corpus. Both are currently public inside the trusted network. Anonymous MCP access is acceptable because network reachability is the MVP confidentiality boundary.
+`contracts-history` is the historical-contract Corpus and `contract-templates` is the template Corpus. Both are currently public inside the trusted network. Anonymous MCP access is acceptable because network reachability is the MVP confidentiality boundary.
 
 There is no knowledge/learning Corpus in the MVP. Session experience stays outside OpenContracts: `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
 
@@ -74,7 +74,7 @@ See `deploy/opencontracts/README.md` for the concrete deployment procedure.
 
 ## Formal ingestion
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a WorkerKey bound to `contracts`. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
+Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a WorkerKey bound to `contracts-history`. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
 
 ## Security invariants
 
