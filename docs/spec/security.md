@@ -9,14 +9,14 @@ OpenContracts must be reachable only from the intended LAN/VPN. Retrieval corpus
 Normal repository access uses:
 
 ```text
-http://<fixed-lan-ip>/mcp/
+https://192.168.200.69/mcp/
 ```
 
 OAuth/Bearer read authentication is not required for the MVP.
 
 ## SEC-3 Future hardening
 
-Private corpuses, authenticated MCP, and managed TLS become necessary when the service leaves the trusted network, users require different confidentiality scopes, multiple tenants share the deployment, or compliance requires per-user attribution.
+Private corpuses and authenticated MCP become necessary when the service leaves the trusted network, users require different confidentiality scopes, multiple tenants share the deployment, or compliance requires per-user attribution.
 
 ## SEC-4 Corpus organization
 
@@ -37,15 +37,15 @@ Formal ingestion uses a WorkerKey bound to `contracts-history`. The credential i
 
 WorkerKeys never appear in Skill prose/frontmatter, Git commits, client bundles, reports/artifacts, experience notes, user-facing errors, or model-visible client configuration. The untracked server `.env` and Caddy runtime environment are the only intended locations.
 
-## SEC-7 Fixed-IP HTTP gateway
+## SEC-7 Fixed-IP HTTPS gateway
 
-The MVP leaves upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins `legal-network`, binds the fixed private IPv4 address on TCP 80, and proxies only the MCP and single-document import routes to `opencontracts-api:8000`.
+The MVP leaves upstream OpenContracts `local.yml` unchanged and runs Caddy as a separate Docker Compose project. Caddy joins `legal-network`, binds `192.168.200.69` on TCP 443, serves HTTPS, and proxies only the MCP and single-document import routes to `opencontracts-api:8000`.
 
-The import route overwrites the upstream Authorization header with the server-side WorkerKey. Clients require no CA certificate and no credential configuration.
+The import route overwrites the upstream Authorization header with the server-side WorkerKey. Clients require no WorkerKey configuration. The current Caddy configuration uses `tls internal`; certificate trust is provisioned at the host/infrastructure layer rather than by the ContractBot client bundle.
 
 ## SEC-8 Network controls
 
-Only intended LAN/VPN clients may reach the fixed server IP on TCP 80 for Harness traffic. Public NAT/port forwarding is prohibited.
+Only intended LAN/VPN clients may reach the fixed server IP on TCP 443 for Harness traffic. Public NAT/port forwarding is prohibited.
 
 Because upstream `local.yml` may publish development ports, host/network policy must prevent routine clients from directly reaching Django 8000 and other development-only ports. Caddy is the intended client-facing endpoint.
 
