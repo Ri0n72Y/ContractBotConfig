@@ -72,8 +72,16 @@ The fixed OpenContracts IP must be unreachable from untrusted networks. No publi
 
 OpenContracts continues to use upstream `local.yml` unchanged. Its `django` service exposes the stable Docker alias `opencontracts-api` on `legal-network`. ContractBotConfig runs Caddy as a separate Compose project on the same host and network.
 
-Caddy binds `192.168.200.69` on TCP 443, serves HTTPS, proxies only `/mcp/*` and `/api/imports/documents/*`, and returns 404 for other paths. The current configuration uses `tls internal`; CA trust is provided by host/IT infrastructure and is not part of the ContractBot client bundle.
+Caddy binds `192.168.200.69` on TCP 443, serves HTTPS with `tls internal`, proxies only `/mcp/*` and `/api/imports/documents/*`, and returns 404 for other paths.
+
+Server-side client preparation exports Caddy's public root certificate to:
+
+```text
+client/certificates/opencontracts-caddy-root.crt
+```
+
+The installing agent trusts this certificate for the current user before using the HTTPS endpoint. The CA private key remains only in Caddy's persistent data volume.
 
 ## OC-12 Write credentials
 
-A corpus-bound WorkerKey is required by OpenContracts for formal ingestion, but the credential stays only in the untracked server `deploy/opencontracts/.env` and Caddy runtime environment. It is never packaged into client MCP, Skills, ZIPs, or user environment variables.
+A corpus-bound WorkerKey is required by OpenContracts for formal ingestion, but the credential stays only in the untracked server `deploy/opencontracts/.env` and Caddy runtime environment. It is never packaged into client MCP, Skills, ZIPs, certificates, or user environment variables.
