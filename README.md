@@ -16,11 +16,10 @@ client/
 └── skills/
 ```
 
-After server preparation, two ignored deployment files are added:
+After server preparation, one ignored deployment file is added:
 
 ```text
 client/.mcp.json
-client/skills/contract-upload/DEPLOYMENT.md
 ```
 
 `client/` is the only directory that needs to be packaged and distributed to end users. The preferred flow is: the user uploads the prepared archive to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines that installation contract; `client-setup.ps1` is the Windows fallback.
@@ -47,7 +46,7 @@ cd deploy/opencontracts
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The script starts/updates Caddy, reads the fixed LAN IP, generates the client `.mcp.json` and formal-upload endpoint, and creates:
+The script starts/updates Caddy, reads the fixed LAN IP, generates `client/.mcp.json`, and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
@@ -65,9 +64,9 @@ Harness
   → opencontracts-api:8000
 ```
 
-For formal ingestion, the client submits to Caddy without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
+For formal ingestion, the Skill derives the import endpoint from the same MCP origin and submits without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
 
-No client CA, WorkerKey, ContractBot environment variables, or `CONTRACTBOT_HOME` are required.
+No client CA, WorkerKey, ContractBot environment variables, helper runtime, or `CONTRACTBOT_HOME` are required.
 
 Detailed server procedure: `deploy/opencontracts/README.md`.
 Architecture: `docs/architecture/c4.md`.
