@@ -2,7 +2,7 @@
 
 默认部署保持 OpenContracts 原生 `local.yml` 不变，只额外启动 Caddy。
 
-旧版 `.doc` 的默认策略已经改为 **Harness 本地优先**：优先复用用户机器现有的 Word/Office/文档能力读取或转换。仓库中的服务器转换容器仅作为 optional fallback 保留，默认不启动，也不通过 Caddy 暴露。
+旧版 `.doc` 默认由 Harness 本地处理；仓库中的服务器转换容器仅作为 optional fallback 保留，默认不启动，也不通过 Caddy 暴露。
 
 ## 默认拓扑
 
@@ -63,7 +63,7 @@ CADDY_IMAGE=caddy:2-alpine
 CADDY_CONTAINER_NAME=contractbot-opencontracts-caddy
 CADDY_CA_OUTPUT=runtime/opencontracts-caddy-root.crt
 
-HISTORY_CORPUS=contracts
+HISTORY_CORPUS=contracts-history
 TEMPLATE_CORPUS=contract-templates
 
 WORKER_NAME=contractbot-formal-ingest
@@ -89,7 +89,55 @@ networks:
 
 本仓库不修改 OpenContracts `local.yml`。
 
-## 3. 启动默认 Caddy
+### Django 管理命令与 `/entrypoint`
+
+当前 OpenContracts 镜像在 `/entrypoint` 中根据 `POSTGRES_*` 变量构造 `DATABASE_URL`。正常 Compose 启动会执行 `/entrypoint`，但 `docker compose exec django python manage.py ...` 新建的进程不会继承 entrypoint 进程后来导出的 `DATABASE_URL`。
+
+因此仓库中的管理脚本统一按以下形式执行 Django 管理命令：
+
+```text
+docker compose ... exec -T django /entrypoint python manage.py ...
+```
+
+不要把管理脚本改回直接 `django python manage.py ...`。
+
+## 3. 初始化 ContractBot Corpuses
+
+新 OpenContracts 数据库先创建两个运行时 Corpus：
+
+```text
+contracts-history
+contract-templates
+```
+
+执行：
+
+```bash
+sh deploy/opencontracts/opencontracts-admin.sh create-corpuses
+sh deploy/opencontracts/opencontracts-admin.sh publish-corpuses
+```
+
+`create-corpuses` 是幂等操作：使用第一个 superuser 作为新 Corpus 的 creator，关闭 auto branding，并调用 OpenContracts 当前的 `CorpusService.grant_creator_permissions()` 补齐 creator 的对象权限。若数据库中没有 superuser，先在 OpenContracts 中创建 superuser。
+
+`publish-corpuses` 使用模型 `save()` 设置 public，使 OpenContracts 自己的 visibility propagation 逻辑仍然生效。
+
+## 4. 签发正式入库 WorkerKey
+
+正式入库 WorkerKey 绑定 `contracts-history`：
+
+```bash
+sh deploy/opencontracts/opencontracts-admin.sh mint-worker-key
+```
+
+保存 OpenContracts 输出的 plaintext WorkerKey，并配置到 Harness 的：
+
+```text
+OPENCONTRACTS_UPLOAD_WORKER_KEY
+```
+
+新数据库需要重新签发 WorkerKey；旧机器上的 WorkerKey 不应复用。
+
+## 5. 启动默认 Caddy
 
 ```powershell
 cd deploy/opencontracts/caddy
@@ -112,9 +160,9 @@ docker compose `
 /api/imports/documents/*
 ```
 
-其他路径返回 `404`。默认**没有** `/contract-files/convert-to-pdf` 路由。
+其他路径返回 `404`。默认没有 `/contract-files/convert-to-pdf` 路由。
 
-## 4. 导出 Caddy Root CA
+## 6. 导出 Caddy Root CA
 
 ```powershell
 .\manage.ps1 export-ca
@@ -128,21 +176,31 @@ deploy/opencontracts/runtime/opencontracts-caddy-root.crt
 
 将该 CA 分发给需要访问 OpenContracts 的 Harness 主机。
 
-## 5. Agent / Harness 配置
+## 7. Agent / Harness 配置
 
 ```text
 OPENCONTRACTS_BASE_URL=https://<固定内网IP>
 OPENCONTRACTS_MCP_URL=https://<固定内网IP>/mcp/
-OPENCONTRACTS_HISTORY_CORPUS=contracts
+OPENCONTRACTS_HISTORY_CORPUS=contracts-history
 OPENCONTRACTS_TEMPLATE_CORPUS=contract-templates
 OPENCONTRACTS_CA_BUNDLE=<本机Root CA路径>
 NODE_EXTRA_CA_CERTS=<同一Root CA路径>
 OPENCONTRACTS_UPLOAD_WORKER_KEY=<WorkerKey>
 ```
 
-旧 `.doc` 不需要新增默认服务器配置。Skill 会先让 Harness 使用本地文档能力。
+Windows WorkBuddy / Harness 可以使用：
 
-## 6. `.doc` 默认处理策略
+```powershell
+.\Configure-AgentOpenContracts.ps1 `
+  -ServerIp '<固定内网IP>' `
+  -CaddyRootCertificate '<opencontracts-caddy-root.crt路径>' `
+  -HistoryCorpus 'contracts-history' `
+  -TemplateCorpus 'contract-templates' `
+  -UploadWorkerKey '<WorkerKey>' `
+  -EnvironmentScope Machine
+```
+
+## 8. `.doc` 默认处理策略
 
 ```text
 .doc
@@ -161,38 +219,24 @@ Harness 本地读取/转换
 
 正式入库时，如果 OpenContracts 不能可靠处理源 `.doc`，应使用 Harness 本地生成的 PDF 工作副本；不要直接提交旧 `.doc`。
 
-## 7. Optional server-side converter
+## 9. Optional server-side converter
 
-`deploy/opencontracts/converter/` 保留了从旧 AstrBot 方案抽出的轻量转换代码。
-
-如需要中央兜底，可单独启动：
+`deploy/opencontracts/converter/` 保留轻量转换代码。如需要中央兜底，可单独启动：
 
 ```powershell
 cd deploy/opencontracts/converter
 .\manage.ps1 up
 ```
 
-它会加入现有 `legal-network`，内部调用：
+它加入现有 `legal-network`，内部调用：
 
 ```text
 gotenberg:3000/forms/libreoffice/convert
 ```
 
-但 optional compose **没有宿主机 `ports:` 映射**，默认 Caddyfile **也没有转换路由**。因此仅启动该容器不会向 LAN/Harness 暴露转换能力。
+optional compose 没有宿主机 `ports:` 映射，默认 Caddyfile 也没有转换路由。只有未来明确启用远程 fallback 时再增加受控 Caddy route 和完整的 `OPENCONTRACTS_CONVERTER_URL`。
 
-如果未来明确决定启用远程 fallback，再单独增加受控 Caddy route，并给 Harness 配置完整的 `OPENCONTRACTS_CONVERTER_URL`。当前默认部署不配置该变量。
-
-## 8. WorkerKey
-
-正式入库 WorkerKey 继续按现有方式绑定历史合同 Corpus：
-
-```text
-opencontracts-admin.sh mint-worker-key
-```
-
-转换逻辑不接触 WorkerKey。
-
-## 9. 日常 Caddy 操作
+## 10. 日常 Caddy 操作
 
 ```powershell
 .\manage.ps1 up
