@@ -2,11 +2,11 @@
 
 ## OC-1 Endpoints
 
-The MVP OpenContracts deployment is reachable at a fixed private IPv4 address inside the trusted LAN/VPN.
+The MVP OpenContracts deployment is reachable at the fixed private IPv4 address inside the trusted LAN/VPN.
 
 ```text
-MCP:    http://<fixed-lan-ip>/mcp/
-Import: http://<fixed-lan-ip>/api/imports/documents/
+MCP:    https://192.168.200.69/mcp/
+Import: https://192.168.200.69/api/imports/documents/
 ```
 
 Normal MCP reads are anonymous because the retrieval corpuses remain public inside the trusted-network MVP.
@@ -68,13 +68,11 @@ Any ambiguous write outcome stops automatic retries. Read-side verification is r
 
 The fixed OpenContracts IP must be unreachable from untrusted networks. No public NAT/port forwarding is part of the MVP.
 
-## OC-11 Trusted-LAN gateway
+## OC-11 HTTPS gateway
 
 OpenContracts continues to use upstream `local.yml` unchanged. Its `django` service exposes the stable Docker alias `opencontracts-api` on `legal-network`. ContractBotConfig runs Caddy as a separate Compose project on the same host and network.
 
-Caddy binds the fixed private IP on TCP 80, proxies only `/mcp/*` and `/api/imports/documents/*`, and returns 404 for other paths.
-
-The MVP intentionally uses HTTP on the trusted LAN/VPN so clients can connect by fixed IP without certificate installation. If this network can no longer be treated as trusted, migrate to managed TLS and stronger application-layer authentication.
+Caddy binds `192.168.200.69` on TCP 443, serves HTTPS, proxies only `/mcp/*` and `/api/imports/documents/*`, and returns 404 for other paths. The current configuration uses `tls internal`; CA trust is provided by host/IT infrastructure and is not part of the ContractBot client bundle.
 
 ## OC-12 Write credentials
 
