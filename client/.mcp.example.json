@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "opencontracts": {
-      "type": "http",
-      "url": "http://10.10.20.15/mcp/",
-      "description": "OpenContracts MCP on the trusted internal network"
-    }
-  }
-}
