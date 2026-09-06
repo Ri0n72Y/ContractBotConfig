@@ -11,6 +11,8 @@ client/
 ├── .mcp.json
 ├── INSTALL.md
 ├── README.md
+├── certificates/
+│   └── opencontracts-caddy-root.crt   # generated during server preparation
 └── skills/
 ```
 
@@ -44,13 +46,13 @@ cd deploy/opencontracts
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The script starts/updates the HTTPS Caddy gateway and creates:
+The script starts/updates the HTTPS Caddy gateway, exports Caddy's public root CA into `client/certificates/`, and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
 
-The WorkerKey remains only on the server and is never copied into `client/` or the ZIP.
+The WorkerKey and Caddy CA private key remain only on the server. The client package contains only the public root certificate needed to trust the internal HTTPS endpoint.
 
 ## Runtime architecture
 
@@ -64,7 +66,7 @@ Harness
 
 For formal ingestion, the Skill derives `https://192.168.200.69/api/imports/documents/` from the same MCP origin and submits without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
 
-TLS trust for the internal Caddy certificate is handled by host/infrastructure policy and is outside the client bundle.
+During installation, the agent trusts `client/certificates/opencontracts-caddy-root.crt` for the current user before registering the MCP endpoint. Users do not manually configure certificates or WorkerKeys.
 
 Detailed server procedure: `deploy/opencontracts/README.md`.
 Architecture: `docs/architecture/c4.md`.
