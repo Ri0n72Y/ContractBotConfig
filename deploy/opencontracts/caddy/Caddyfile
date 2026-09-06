@@ -1,8 +1,11 @@
 {
+    auto_https disable_redirects
     admin off
 }
 
-http://{$OPENCONTRACTS_LAN_IP} {
+https://{$OPENCONTRACTS_LAN_IP} {
+    tls internal
+
     @mcp path /mcp /mcp/*
     handle @mcp {
         reverse_proxy opencontracts-api:8000 {
