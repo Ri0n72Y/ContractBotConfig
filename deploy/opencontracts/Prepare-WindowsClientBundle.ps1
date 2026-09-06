@@ -35,6 +35,11 @@ if (-not (Test-Path $ClientDir)) { throw "Client directory not found: $ClientDir
 # passed only to Caddy, which injects it for the formal-ingestion route.
 & (Join-Path $CaddyDir "manage.ps1") setup
 
+# Export only the public Caddy root certificate into the client package.
+# The CA private key remains inside Caddy's persistent data volume.
+$clientCa = Join-Path $ClientDir "certificates\opencontracts-caddy-root.crt"
+& (Join-Path $CaddyDir "manage.ps1") export-ca -Output $clientCa
+
 $runtimeDir = Join-Path $ScriptDir "runtime"
 if (-not $OutputZip) {
     $OutputZip = Join-Path $runtimeDir "ContractBot-Client.zip"
@@ -50,6 +55,6 @@ $items = Get-ChildItem -Force $ClientDir
 Compress-Archive -Path $items.FullName -DestinationPath $OutputZip -Force
 
 Write-Host "Caddy HTTPS gateway started."
+Write-Host "Caddy root CA added to client/certificates/."
 Write-Host "Client ZIP: $OutputZip"
-Write-Host "Client bundle contains only the fixed MCP configuration, Skills and installation instructions."
 Write-Host "The WorkerKey remains on the server."
