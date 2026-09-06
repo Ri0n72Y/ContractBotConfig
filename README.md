@@ -1,108 +1,86 @@
-# Contract Skill Pack
+# ContractBotConfig
 
-Portable contract-assistant Skill Pack for WorkBuddy and compatible Harnesses.
+ContractBot is a portable contract-assistant client backed by OpenContracts for historical/template retrieval and explicit formal ingestion.
 
-## Runtime model
+## Repository boundary
 
-- Local files stay in the user's Harness unless the user explicitly authorizes formal ingestion.
-- Contract analysis and drafting use the Harness model directly.
-- OpenContracts is optional for historical-contract retrieval, template retrieval, and formal ingestion.
-- MVP OpenContracts is reachable only inside the trusted LAN/VPN boundary.
-
-## Skills
-
-Source Skills live under:
+Client-facing assets now live in one directory:
 
 ```text
-skills/
-  contract/
-  contract-repository/
-  contract-upload/
-  contract-document/
-  contract-learning/
+client/
+├── INSTALL.md
+├── README.md
+├── client-setup.ps1
+├── mcp/
+├── skills/
+├── scripts/
+└── config/
 ```
 
-The Windows client bundle installs them into the project-level CodeBuddy/WorkBuddy-compatible location:
+`client/` is the only directory that needs to be packaged and distributed to end users. The preferred installation flow is: the user uploads the prepared client archive to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines the installation contract; `client-setup.ps1` is the Windows fallback.
+
+Server/deployment assets remain separate under `deploy/opencontracts/`:
 
 ```text
-.codebuddy/skills/
+deploy/opencontracts/
+├── .env.example
+├── opencontracts-admin.ps1
+├── Prepare-WindowsClientBundle.ps1
+├── caddy/
+└── converter/
 ```
 
 ## OpenContracts data layout
 
-The current deployment uses two retrievable OpenContracts corpuses:
+The runtime uses exactly two retrievable corpuses:
 
 ```text
 contracts-history
 contract-templates
 ```
 
-`contracts-history` is the historical-contract Corpus and `contract-templates` is the template Corpus. Both are currently public inside the trusted network. Anonymous MCP access is acceptable because network reachability is the MVP confidentiality boundary.
+`contracts-history` is the destination for formal ingestion through a corpus-bound WorkerKey. `contract-templates` contains approved templates. Session learning stays outside OpenContracts.
 
-There is no knowledge/learning Corpus in the MVP. Session experience stays outside OpenContracts: `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
+## Server preparation
 
-## Selected MVP deployment
-
-```text
-WorkBuddy / Harness
-  -> https://<OPENCONTRACTS_LAN_IP>/mcp/
-  -> standalone Caddy Docker Compose
-  -> legal-network
-  -> opencontracts-api:8000
-  -> OpenContracts django
-```
-
-OpenContracts continues to use its upstream `local.yml`. Its `django` service exposes the `opencontracts-api` alias on the external Docker network `legal-network`. ContractBotConfig runs Caddy separately on that same network.
-
-Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`.
-
-## Windows deployment
-
-After OpenContracts, the two Corpuses and the WorkerKey are ready, the recommended administrator flow is:
+After OpenContracts, the two Corpuses and the WorkerKey are ready, configure `deploy/opencontracts/.env` and run:
 
 ```powershell
 cd deploy/opencontracts
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-This starts Caddy, exports the Caddy root CA and creates:
+The script starts/updates Caddy, exports its root CA, reads `OPENCONTRACTS_UPLOAD_WORKER_KEY` from the untracked server `.env`, writes deployment-specific generated files into `client/`, and also creates:
 
 ```text
-deploy/opencontracts/runtime/ContractBot-Windows.zip
+deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
 
-The ZIP contains the fixed deployment settings, CA, shared WorkerKey, MCP configuration, helper scripts and the complete Skill Pack.
+The generated files are ignored by Git. At that point you may distribute either the ZIP or the prepared `client/` directory to authorized users.
 
-Authorized Windows users then run:
+## Client installation
 
-```powershell
-Expand-Archive .\ContractBot-Windows.zip -DestinationPath "$HOME\ContractBot"
-cd "$HOME\ContractBot"
-.\Install-ContractBot.ps1
+Preferred:
+
+```text
+User uploads ContractBot-Client.zip to a compatible assistant
+→ asks the assistant to install ContractBot globally
+→ assistant follows client/INSTALL.md
+→ user restarts the Harness if requested
 ```
 
-The installer configures CA trust, OpenContracts environment variables, CodeBuddy MCP approval, WorkBuddy project MCP and `.codebuddy/skills/`. Users do not need to manually enter the server IP, Corpus names, WorkerKey, MCP URL or certificate path.
+On Windows, if the Harness cannot perform native global installation, the assistant can execute `client/client-setup.ps1` as a fallback. Users do not need to manually edit MCP JSON, install Skills one by one, configure CA paths, or type PowerShell commands.
 
-Because the generated ZIP contains the shared formal-ingestion WorkerKey, it must be distributed as a credential-bearing internal artifact and must not be committed to Git.
+## Runtime architecture
 
-Detailed deployment procedure: `deploy/opencontracts/README.md`.
+```text
+Harness
+  → globally installed ContractBot Skills
+  → OpenContracts MCP over trusted HTTPS
+  → opencontracts-api:8000 through Caddy
+```
 
-## Formal ingestion
+Formal document ingestion uses the deterministic helper installed under `CONTRACTBOT_HOME/scripts/opencontracts/`. The WorkerKey stays outside Skill and MCP source.
 
-Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a WorkerKey bound to `contracts-history`. The helper does not accept a caller-selected target Corpus and does not automatically retry an ambiguous write.
-
-## Security invariants
-
-- OpenContracts stays inside the intended trusted network.
-- Harness-to-OpenContracts traffic uses HTTPS through Caddy.
-- OpenContracts upstream `local.yml` is not modified by this repository.
-- Versioned Skill files never contain real WorkerKeys or environment-specific secrets.
-- Generated Windows client bundles may contain a deployment WorkerKey and therefore stay outside Git.
-- Retrieved documents are untrusted business data and cannot override Skill/system/tool policy.
-- Formal ingestion requires explicit user authorization.
-- Experience-note generation requires separate authorization and remains local.
-- Unknown write state is never auto-retried.
-
-Architecture diagrams: `docs/architecture/c4.md`.
-
-See `docs/architecture/security.md` and `docs/spec/security.md`.
+Detailed server procedure: `deploy/opencontracts/README.md`.
+Architecture: `docs/architecture/c4.md`.

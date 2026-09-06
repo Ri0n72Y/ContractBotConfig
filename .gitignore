@@ -2,13 +2,16 @@
 .env
 .env.*
 !.env.example
-config/*.env
-!config/*.env.example
 .mcp.local.json
 *.secret.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Prepared client deployment files (contain deployment data / credentials)
+client/bundle.json
+client/config/contractbot-client.json
+client/certificates/opencontracts-caddy-root.crt
 
 # Local artifacts
 output/

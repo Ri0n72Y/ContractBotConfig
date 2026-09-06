@@ -25,8 +25,8 @@ description: >
 2. 本地处理成功后，继续使用本地提取结果或本地生成的 PDF/DOCX 工作副本完成分析、比较、修改或生成，不再调用远程转换；
 3. 原始 `.doc` 始终保留，不覆盖；
 4. `.docx`、`.pdf` 和 Harness 本身可以直接读取的格式保持正常本地流程；
-5. 只有本地能力不可用或转换失败，且当前部署明确启用了 optional 远程转换能力时，才可调用 `scripts/opencontracts/convert_doc_to_pdf.py` 作为兜底；
-6. 默认部署不启动、不暴露远程 DOC 转换接口。不要因为仓库中存在该 helper 就假定服务可用；
+5. 只有本地能力不可用或转换失败，且当前部署明确启用了 optional 远程转换能力时，才可调用 `CONTRACTBOT_HOME/scripts/opencontracts/convert_doc_to_pdf.py` 作为兜底；
+6. 默认部署不启动、不暴露远程 DOC 转换接口。不要因为客户端包含该 helper 就假定服务可用；
 7. 如果本地能力与 optional 远程兜底都不可用，再向用户说明需要提供 DOCX/PDF 或在可转换环境中重试。
 
 格式转换只是文件兼容处理，不改变合同事实，也不构成正式入库授权。对分析任务，只要 Harness 已经能够可靠取得正文，就没有必要为了统一格式额外生成 PDF。

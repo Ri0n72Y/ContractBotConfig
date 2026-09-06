@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "ContractBot",
+  "installScope": "user",
+  "server": {
+    "baseUrl": "https://10.10.20.15",
+    "mcpUrl": "https://10.10.20.15/mcp/"
+  },
+  "corpuses": {
+    "history": "contracts-history",
+    "templates": "contract-templates"
+  },
+  "mcp": {
+    "name": "opencontracts",
+    "type": "http"
+  }
+}

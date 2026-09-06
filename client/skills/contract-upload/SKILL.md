@@ -19,7 +19,7 @@ description: >
 
 1. 确认用户指向的本地文件；
 2. 如果源文件是旧版 `.doc`，优先使用 Harness 本地已有的 Word/Office/文档转换能力生成可供 OpenContracts 使用的 PDF 工作副本；原始 `.doc` 不覆盖；
-3. 如果本地转换不可用或失败，只有当前部署明确启用了 optional 远程转换服务时，才调用 `scripts/opencontracts/convert_doc_to_pdf.py`；默认部署不假定该服务存在；
+3. 如果本地转换不可用或失败，只有当前部署明确启用了 optional 远程转换服务时，才调用 `CONTRACTBOT_HOME/scripts/opencontracts/convert_doc_to_pdf.py`；默认部署不假定该服务存在；
 4. 如果 `.doc` 无法得到可靠 PDF 工作副本，不要直接把原始 `.doc` 提交给 OpenContracts；向用户说明需要提供 DOCX/PDF 或在可转换环境中重试；
 5. 确认正式合同标题，尽量使用合同正文标题；
 6. 如日期明确，可纳入标题/描述；日期不明确时不要猜测；
@@ -31,7 +31,7 @@ description: >
 
 ## 上传方式
 
-调用受控 helper `scripts/opencontracts/upload_document.py`。Helper 从运行时环境读取 WorkerKey；Skill 内容中不包含令牌。
+调用安装在 `CONTRACTBOT_HOME/scripts/opencontracts/upload_document.py` 的受控 helper。安装器负责设置 `CONTRACTBOT_HOME`；不要依赖当前工作目录或项目相对路径。Helper 从运行时环境读取 WorkerKey；Skill 内容中不包含令牌。
 
 正式合同使用 `OPENCONTRACTS_UPLOAD_WORKER_KEY`。Helper 不发送目标 Corpus ID，OpenContracts WorkerKey 的服务器端 Corpus 绑定决定写入位置。
 
