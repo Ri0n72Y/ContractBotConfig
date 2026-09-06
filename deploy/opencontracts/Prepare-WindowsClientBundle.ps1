@@ -53,9 +53,6 @@ if (-not $WorkerKey) {
 if (-not $WorkerKey) { throw "WorkerKey is required" }
 
 & (Join-Path $CaddyDir "manage.ps1") setup
-if ($LASTEXITCODE -ne 0) {
-    throw "Caddy setup failed"
-}
 
 $caPath = $env:CADDY_CA_OUTPUT
 if (-not [System.IO.Path]::IsPathRooted($caPath)) {
@@ -84,9 +81,15 @@ New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
 Copy-Item $ClientInstaller (Join-Path $bundleDir "Install-ContractBot.ps1") -Force
 Copy-Item $caPath (Join-Path $bundleDir "opencontracts-caddy-root.crt") -Force
 Copy-Item (Join-Path $RepoRoot ".mcp.json") (Join-Path $bundleDir ".mcp.json") -Force
-Copy-Item (Join-Path $RepoRoot "skills") (Join-Path $bundleDir "skills") -Recurse -Force
-Copy-Item (Join-Path $RepoRoot "scripts\opencontracts") (Join-Path $bundleDir "scripts\opencontracts") -Recurse -Force
-Copy-Item (Join-Path $RepoRoot "config\workbuddy.settings.example.json") (Join-Path $bundleDir "workbuddy.settings.example.json") -Force
+
+$bundleCodeBuddyDir = Join-Path $bundleDir ".codebuddy"
+$bundleSkillsDir = Join-Path $bundleCodeBuddyDir "skills"
+New-Item -ItemType Directory -Force -Path $bundleSkillsDir | Out-Null
+Copy-Item (Join-Path $RepoRoot "skills\*") $bundleSkillsDir -Recurse -Force
+
+$bundleScriptsDir = Join-Path $bundleDir "scripts"
+New-Item -ItemType Directory -Force -Path $bundleScriptsDir | Out-Null
+Copy-Item (Join-Path $RepoRoot "scripts\opencontracts") (Join-Path $bundleScriptsDir "opencontracts") -Recurse -Force
 
 $clientConfig = [ordered]@{
     serverIp = $env:OPENCONTRACTS_LAN_IP
@@ -100,22 +103,28 @@ $readme = @"
 ContractBot Windows Client
 ==========================
 
-1. Open PowerShell in this directory.
-2. Run:
+1. Extract this ZIP to a normal local directory.
+2. Open PowerShell in the extracted directory.
+3. Run:
 
    .\Install-ContractBot.ps1
 
-3. Restart WorkBuddy/CodeBuddy.
-4. Open this directory as the contract workspace.
+4. Restart WorkBuddy/CodeBuddy.
+5. Use the extracted directory as the contract workspace.
 
-The installer trusts the bundled OpenContracts CA and configures the current
-Windows user with the server URL, corpus names, and shared formal-ingestion
-WorkerKey. The WorkerKey is contained in contractbot-client.json, so distribute
-this ZIP only to authorized users.
+The installer will:
+- trust the bundled OpenContracts Caddy root CA;
+- configure the server URL, corpus names and formal-ingestion WorkerKey;
+- pre-approve the OpenContracts project MCP for CodeBuddy;
+- create WorkBuddy project MCP configuration;
+- install the ContractBot Skills under .codebuddy\skills.
 
-To copy the Skill Pack into another project directory instead, run:
+The WorkerKey is contained in contractbot-client.json. Distribute this ZIP only
+to authorized users and do not commit the extracted workspace to source control.
 
-   .\Install-ContractBot.ps1 -TargetDirectory 'C:\path\to\project'
+To install into another dedicated workspace instead, run:
+
+   .\Install-ContractBot.ps1 -TargetDirectory 'C:\path\to\contract-workspace'
 "@
 $readme | Set-Content (Join-Path $bundleDir "README.txt") -Encoding UTF8
 
