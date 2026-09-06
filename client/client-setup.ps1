@@ -57,17 +57,51 @@ foreach ($entry in $values.GetEnumerator()) {
     [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
 }
 
-# Install Python helper dependency when a normal Python launcher is available.
-$python = $null
+# Install the deterministic Python helper dependency when Python is available.
+$requirements = Join-Path $runtimeScripts "requirements.txt"
 if (Get-Command py -ErrorAction SilentlyContinue) {
-    $python = @("py", "-3")
+    & py -3 -m pip install --user -r $requirements | Out-Null
 }
 elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    $python = @("python")
+    & python -m pip install --user -r $requirements | Out-Null
 }
-if ($python) {
-    $requirements = Join-Path $runtimeScripts "requirements.txt"
-    & $python[0] @($python[1..($python.Count - 1)]) -m pip install --user -r $requirements | Out-Null
+
+function Set-McpServerInJsonFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Server
+    )
+
+    if (Test-Path $Path) {
+        try {
+            $cfg = Get-Content $Path -Raw | ConvertFrom-Json
+        }
+        catch {
+            throw "Existing MCP configuration cannot be safely merged: $Path"
+        }
+    }
+    else {
+        $cfg = [pscustomobject]@{}
+    }
+
+    if (-not $cfg.PSObject.Properties["mcpServers"]) {
+        Add-Member -InputObject $cfg -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
+    }
+    elseif ($null -eq $cfg.mcpServers) {
+        $cfg.mcpServers = [pscustomobject]@{}
+    }
+
+    $property = $cfg.mcpServers.PSObject.Properties["opencontracts"]
+    if ($property) {
+        $property.Value = $Server
+    }
+    else {
+        Add-Member -InputObject $cfg.mcpServers -MemberType NoteProperty -Name "opencontracts" -Value $Server
+    }
+
+    $parent = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $cfg | ConvertTo-Json -Depth 10 | Set-Content $Path -Encoding UTF8
 }
 
 # CodeBuddy: official user scope is ~/.codebuddy (or CODEBUDDY_CONFIG_DIR).
@@ -77,34 +111,28 @@ $codeBuddySkills = Join-Path $codeBuddyHome "skills"
 New-Item -ItemType Directory -Force -Path $codeBuddySkills | Out-Null
 Copy-Item (Join-Path $SkillsDir "*") $codeBuddySkills -Recurse -Force
 
+$server = [pscustomobject]@{
+    type = "http"
+    url = $mcpUrl
+    description = "OpenContracts MCP over trusted internal HTTPS"
+}
+
 $codeBuddy = Get-Command codebuddy -ErrorAction SilentlyContinue
 if ($codeBuddy) {
-    $mcpObject = [ordered]@{ type = "http"; url = $mcpUrl; description = "OpenContracts MCP over trusted internal HTTPS" }
-    $mcpJson = $mcpObject | ConvertTo-Json -Compress
+    $mcpJson = $server | ConvertTo-Json -Compress
+    & $codeBuddy.Source mcp remove opencontracts --scope user 2>$null | Out-Null
     & $codeBuddy.Source mcp add-json --scope user opencontracts $mcpJson | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "CodeBuddy global MCP registration failed"
+    }
 }
 else {
-    $codeBuddyMcp = Join-Path $codeBuddyHome ".mcp.json"
-    $cfg = [ordered]@{ mcpServers = [ordered]@{} }
-    if (Test-Path $codeBuddyMcp) {
-        try { $cfg = Get-Content $codeBuddyMcp -Raw | ConvertFrom-Json -AsHashtable } catch { throw "CodeBuddy MCP file exists but cannot be merged without the CodeBuddy CLI" }
-        if (-not $cfg.ContainsKey("mcpServers")) { $cfg["mcpServers"] = [ordered]@{} }
-    }
-    $cfg["mcpServers"]["opencontracts"] = [ordered]@{ type = "http"; url = $mcpUrl; description = "OpenContracts MCP over trusted internal HTTPS" }
-    $cfg | ConvertTo-Json -Depth 8 | Set-Content $codeBuddyMcp -Encoding UTF8
+    Set-McpServerInJsonFile -Path (Join-Path $codeBuddyHome ".mcp.json") -Server $server
 }
 
 # WorkBuddy: official user-level MCP path is ~/.workbuddy/mcp.json.
-$workBuddyHome = Join-Path $HOME ".workbuddy"
-New-Item -ItemType Directory -Force -Path $workBuddyHome | Out-Null
-$workBuddyMcp = Join-Path $workBuddyHome "mcp.json"
-$workCfg = [ordered]@{ mcpServers = [ordered]@{} }
-if (Test-Path $workBuddyMcp) {
-    $workCfg = Get-Content $workBuddyMcp -Raw | ConvertFrom-Json -AsHashtable
-    if (-not $workCfg.ContainsKey("mcpServers")) { $workCfg["mcpServers"] = [ordered]@{} }
-}
-$workCfg["mcpServers"]["opencontracts"] = [ordered]@{ type = "http"; url = $mcpUrl }
-$workCfg | ConvertTo-Json -Depth 8 | Set-Content $workBuddyMcp -Encoding UTF8
+$workBuddyServer = [pscustomobject]@{ type = "http"; url = $mcpUrl }
+Set-McpServerInJsonFile -Path (Join-Path (Join-Path $HOME ".workbuddy") "mcp.json") -Server $workBuddyServer
 
 # The secret is now persisted in the Windows user environment; remove the plaintext extracted copy.
 Remove-Item $SecretFile -Force
