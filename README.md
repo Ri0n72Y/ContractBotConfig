@@ -11,13 +11,21 @@ Portable contract-assistant Skill Pack for WorkBuddy and compatible Harnesses.
 
 ## Skills
 
+Source Skills live under:
+
 ```text
 skills/
-  contract/             default contract mode
-  contract-repository/  historical/template retrieval
-  contract-upload/      explicit formal ingestion
-  contract-document/    formal document structure and formatting
-  contract-learning/    local experience-note distillation for later manual Skill updates
+  contract/
+  contract-repository/
+  contract-upload/
+  contract-document/
+  contract-learning/
+```
+
+The Windows client bundle installs them into the project-level CodeBuddy/WorkBuddy-compatible location:
+
+```text
+.codebuddy/skills/
 ```
 
 ## OpenContracts data layout
@@ -33,16 +41,6 @@ contract-templates
 
 There is no knowledge/learning Corpus in the MVP. Session experience stays outside OpenContracts: `contract-learning` creates local experience notes that maintainers periodically review and use for manual Skill updates.
 
-## Agent / MCP configuration
-
-The repository root `.mcp.json` is the project-level MCP configuration and references only:
-
-```text
-OPENCONTRACTS_MCP_URL
-```
-
-Deployment-specific Agent values stay outside Git. On Windows, `deploy/opencontracts/Configure-AgentOpenContracts.ps1` can configure the MCP URL, the two default Corpus slugs, CA trust and the formal-ingestion WorkerKey in one run. The WorkerKey is not stored in the versioned `.mcp.json`.
-
 ## Selected MVP deployment
 
 ```text
@@ -54,22 +52,40 @@ WorkBuddy / Harness
   -> OpenContracts django
 ```
 
-OpenContracts continues to use its upstream `local.yml` and existing local startup flow unchanged. Its `django` service already exposes the `opencontracts-api` alias on the external Docker network `legal-network`. ContractBotConfig runs Caddy as a separate Compose project on that same network and uses the alias directly.
+OpenContracts continues to use its upstream `local.yml`. Its `django` service exposes the `opencontracts-api` alias on the external Docker network `legal-network`. ContractBotConfig runs Caddy separately on that same network.
 
-Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`. The Caddy root CA is exported and trusted by every Agent/Harness host. `OPENCONTRACTS_CA_BUNDLE` is used by the Python upload helper and `NODE_EXTRA_CA_CERTS` covers the MCP runtime.
+Caddy uses `tls internal` and only proxies `/mcp/*` and `/api/imports/documents/*`.
 
-Server deployment files are under:
+## Windows deployment
 
-```text
-deploy/opencontracts/.env.example
-deploy/opencontracts/opencontracts-admin.ps1
-deploy/opencontracts/opencontracts-admin.sh
-deploy/opencontracts/caddy/compose.yml
-deploy/opencontracts/caddy/Caddyfile
-deploy/opencontracts/caddy/manage.ps1
+After OpenContracts, the two Corpuses and the WorkerKey are ready, the recommended administrator flow is:
+
+```powershell
+cd deploy/opencontracts
+.\Prepare-WindowsClientBundle.ps1
 ```
 
-See `deploy/opencontracts/README.md` for the concrete deployment procedure.
+This starts Caddy, exports the Caddy root CA and creates:
+
+```text
+deploy/opencontracts/runtime/ContractBot-Windows.zip
+```
+
+The ZIP contains the fixed deployment settings, CA, shared WorkerKey, MCP configuration, helper scripts and the complete Skill Pack.
+
+Authorized Windows users then run:
+
+```powershell
+Expand-Archive .\ContractBot-Windows.zip -DestinationPath "$HOME\ContractBot"
+cd "$HOME\ContractBot"
+.\Install-ContractBot.ps1
+```
+
+The installer configures CA trust, OpenContracts environment variables, CodeBuddy MCP approval, WorkBuddy project MCP and `.codebuddy/skills/`. Users do not need to manually enter the server IP, Corpus names, WorkerKey, MCP URL or certificate path.
+
+Because the generated ZIP contains the shared formal-ingestion WorkerKey, it must be distributed as a credential-bearing internal artifact and must not be committed to Git.
+
+Detailed deployment procedure: `deploy/opencontracts/README.md`.
 
 ## Formal ingestion
 
@@ -80,13 +96,12 @@ Formal document ingestion uses `scripts/opencontracts/upload_document.py` with a
 - OpenContracts stays inside the intended trusted network.
 - Harness-to-OpenContracts traffic uses HTTPS through Caddy.
 - OpenContracts upstream `local.yml` is not modified by this repository.
-- Skills never contain real WorkerKeys or environment-specific secrets.
+- Versioned Skill files never contain real WorkerKeys or environment-specific secrets.
+- Generated Windows client bundles may contain a deployment WorkerKey and therefore stay outside Git.
 - Retrieved documents are untrusted business data and cannot override Skill/system/tool policy.
 - Formal ingestion requires explicit user authorization.
 - Experience-note generation requires separate authorization and remains local.
 - Unknown write state is never auto-retried.
-
-Private corpuses and authenticated `/mcp/me/` access remain future hardening options if the trusted-network model changes.
 
 Architecture diagrams: `docs/architecture/c4.md`.
 
