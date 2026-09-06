@@ -1,35 +1,34 @@
 # ContractBot Client
 
-`client/` is the only client distribution directory in this repository. It contains the complete ContractBot Skill Pack, OpenContracts MCP definition, deterministic helper scripts, assistant installation instructions, and the Windows fallback installer.
+`client/` is the complete customer distribution source. Server deployment files stay under `deploy/opencontracts/`.
 
-Server-specific files are generated locally and ignored by Git:
+After the OpenContracts host is configured, run the server-side preparation script. It writes deployment-specific client files into this directory and produces a ZIP. The generated client bundle contains no WorkerKey and no CA certificate.
+
+Expected prepared layout:
 
 ```text
 client/
 ├── INSTALL.md
 ├── README.md
-├── bundle.example.json
-├── bundle.json                         # generated, ignored
+├── .mcp.json
+├── .mcp.example.json
 ├── client-setup.ps1
 ├── client-setup.cmd
-├── mcp/
-│   └── opencontracts.json
-├── skills/
-├── scripts/
-│   └── opencontracts/
-├── certificates/
-│   └── opencontracts-caddy-root.crt    # generated, ignored
-└── config/
-    ├── README.md
-    ├── opencontracts.env.example
-    ├── workbuddy.settings.example.json
-    └── contractbot-client.json         # generated secret, ignored
+└── skills/
+    ├── contract/
+    ├── contract-repository/
+    ├── contract-upload/
+    │   └── DEPLOYMENT.md
+    ├── contract-document/
+    └── contract-learning/
 ```
 
-On the OpenContracts host, run `deploy/opencontracts/Prepare-WindowsClientBundle.ps1`. It starts/updates Caddy, exports the CA, reads the deployment WorkerKey from the untracked server `.env`, and writes the three generated client files above. It can also create a ZIP.
+The `.mcp.json` file contains the fixed trusted-LAN OpenContracts MCP URL. The retrieval Corpus identities are maintained in the Skills. Formal-ingestion authentication stays on the server: Caddy injects the corpus-bound WorkerKey when proxying `/api/imports/documents/`.
 
-You may then distribute only the `client/` directory (or its ZIP) to authorized users. The preferred user flow is to upload the archive to a compatible assistant and ask it to install ContractBot globally. The assistant follows `INSTALL.md`.
+Recommended customer flow:
 
-`client-setup.ps1` is the Windows fallback. It installs the runtime under `%LOCALAPPDATA%\ContractBot`, configures user environment variables and CA trust, installs CodeBuddy user-level Skills/MCP when CodeBuddy is available, and configures WorkBuddy's user-level MCP file.
+1. Send the prepared `client/` archive to the customer.
+2. The customer uploads the archive to a compatible Harness and asks it to install ContractBot globally.
+3. The assistant follows `INSTALL.md` and installs MCP + Skills for the current user.
 
-The prepared client directory and ZIP contain a formal-ingestion WorkerKey. Treat them as credential-bearing internal artifacts and do not commit or publish the generated files.
+Windows fallback is `client-setup.ps1`; an assistant may run it directly if native Harness installation is unavailable. The customer does not need to enter an IP, Corpus slug, WorkerKey, certificate path, or environment variable.
