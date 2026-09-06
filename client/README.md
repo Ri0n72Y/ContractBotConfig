@@ -2,16 +2,11 @@
 
 `client/` is the complete customer distribution source. Server deployment files stay under `deploy/opencontracts/`.
 
-After server preparation, the prepared client layout is:
-
 ```text
 client/
+├── .mcp.json
 ├── INSTALL.md
 ├── README.md
-├── .mcp.json
-├── .mcp.example.json
-├── client-setup.ps1
-├── client-setup.cmd
 └── skills/
     ├── contract/
     ├── contract-repository/
@@ -20,14 +15,20 @@ client/
     └── contract-learning/
 ```
 
-The `.mcp.json` file contains the fixed trusted-LAN OpenContracts MCP URL. The two Corpus identities are maintained in the Skills. Formal-ingestion authentication stays on the server: Caddy injects the corpus-bound WorkerKey when proxying `/api/imports/documents/`.
+The packaged MCP endpoint is fixed:
 
-The formal import endpoint uses the same origin as the MCP endpoint, so no second client URL/config file is required.
+```text
+https://192.168.200.69/mcp/
+```
+
+The two Corpus identities are maintained in the Skills. Formal-ingestion authentication stays on the server: Caddy injects the corpus-bound WorkerKey when proxying `/api/imports/documents/`.
+
+The formal import endpoint uses the same HTTPS origin as the MCP endpoint, so no second client URL or environment configuration is required.
 
 Recommended customer flow:
 
-1. Send the prepared `client/` archive to the customer.
+1. Zip and send only the `client/` directory.
 2. The customer uploads the archive to a compatible Harness and asks it to install ContractBot globally.
-3. The assistant follows `INSTALL.md` and installs MCP + Skills for the current user.
+3. The assistant follows `INSTALL.md` and installs `.mcp.json` plus all Skills using the Harness's native global/user installation mechanisms.
 
-Windows fallback is `client-setup.ps1`; an assistant may run it directly if native Harness installation is unavailable. The customer does not need to enter an IP, Corpus slug, WorkerKey, certificate path, or environment variable.
+The customer does not configure an IP, Corpus slug, WorkerKey, certificate path, environment variable, helper, or setup script.
