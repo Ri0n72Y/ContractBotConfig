@@ -6,11 +6,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CaddyRootCertificate,
 
-    [Parameter(Mandatory = $true)]
-    [string]$HistoryCorpus,
+    [string]$HistoryCorpus = "contracts-history",
 
-    [Parameter(Mandatory = $true)]
-    [string]$TemplateCorpus,
+    [string]$TemplateCorpus = "contract-templates",
 
     [string]$UploadWorkerKey = "",
 
