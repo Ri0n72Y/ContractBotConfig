@@ -41,7 +41,7 @@ The repository root `.mcp.json` is the project-level MCP configuration and refer
 OPENCONTRACTS_MCP_URL
 ```
 
-Deployment-specific Agent values stay outside Git and are listed in `config/opencontracts.env.example`.
+Deployment-specific Agent values stay outside Git. On Windows, `deploy/opencontracts/Configure-AgentOpenContracts.ps1` can configure the MCP URL, the two default Corpus slugs, CA trust and the formal-ingestion WorkerKey in one run. The WorkerKey is not stored in the versioned `.mcp.json`.
 
 ## Selected MVP deployment
 
@@ -62,13 +62,12 @@ Server deployment files are under:
 
 ```text
 deploy/opencontracts/.env.example
+deploy/opencontracts/opencontracts-admin.ps1
 deploy/opencontracts/opencontracts-admin.sh
 deploy/opencontracts/caddy/compose.yml
 deploy/opencontracts/caddy/Caddyfile
 deploy/opencontracts/caddy/manage.ps1
 ```
-
-Windows Agent configuration remains available through `deploy/opencontracts/Configure-AgentOpenContracts.ps1`.
 
 See `deploy/opencontracts/README.md` for the concrete deployment procedure.
 
