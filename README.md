@@ -4,83 +4,70 @@ ContractBot is a portable contract-assistant client backed by OpenContracts for 
 
 ## Repository boundary
 
-Client-facing assets now live in one directory:
+Customer-facing assets live only under:
 
 ```text
 client/
 ├── INSTALL.md
 ├── README.md
+├── .mcp.example.json
 ├── client-setup.ps1
-├── mcp/
-├── skills/
-├── scripts/
-└── config/
+├── client-setup.cmd
+└── skills/
 ```
 
-`client/` is the only directory that needs to be packaged and distributed to end users. The preferred installation flow is: the user uploads the prepared client archive to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines the installation contract; `client-setup.ps1` is the Windows fallback.
-
-Server/deployment assets remain separate under `deploy/opencontracts/`:
+After server preparation, two ignored deployment files are added:
 
 ```text
-deploy/opencontracts/
-├── .env.example
-├── opencontracts-admin.ps1
-├── Prepare-WindowsClientBundle.ps1
-├── caddy/
-└── converter/
+client/.mcp.json
+client/skills/contract-upload/DEPLOYMENT.md
 ```
+
+`client/` is the only directory that needs to be packaged and distributed to end users. The preferred flow is: the user uploads the prepared archive to a compatible Harness and asks the assistant to install it globally. `INSTALL.md` defines that installation contract; `client-setup.ps1` is the Windows fallback.
+
+Server/deployment assets remain separate under `deploy/opencontracts/`.
 
 ## OpenContracts data layout
 
-The runtime uses exactly two retrievable corpuses:
+The runtime uses exactly two corpuses:
 
 ```text
 contracts-history
 contract-templates
 ```
 
-`contracts-history` is the destination for formal ingestion through a corpus-bound WorkerKey. `contract-templates` contains approved templates. Session learning stays outside OpenContracts.
+`contracts-history` is the formal-ingestion destination. `contract-templates` contains approved templates. Session learning stays outside OpenContracts.
 
 ## Server preparation
 
-After OpenContracts, the two Corpuses and the WorkerKey are ready, configure `deploy/opencontracts/.env` and run:
+After OpenContracts, the Corpuses and WorkerKey are ready, configure the untracked `deploy/opencontracts/.env` and run:
 
 ```powershell
 cd deploy/opencontracts
 .\Prepare-WindowsClientBundle.ps1
 ```
 
-The script starts/updates Caddy, exports its root CA, reads `OPENCONTRACTS_UPLOAD_WORKER_KEY` from the untracked server `.env`, writes deployment-specific generated files into `client/`, and also creates:
+The script starts/updates Caddy, reads the fixed LAN IP, generates the client `.mcp.json` and formal-upload endpoint, and creates:
 
 ```text
 deploy/opencontracts/runtime/ContractBot-Client.zip
 ```
 
-The generated files are ignored by Git. At that point you may distribute either the ZIP or the prepared `client/` directory to authorized users.
-
-## Client installation
-
-Preferred:
-
-```text
-User uploads ContractBot-Client.zip to a compatible assistant
-→ asks the assistant to install ContractBot globally
-→ assistant follows client/INSTALL.md
-→ user restarts the Harness if requested
-```
-
-On Windows, if the Harness cannot perform native global installation, the assistant can execute `client/client-setup.ps1` as a fallback. Users do not need to manually edit MCP JSON, install Skills one by one, configure CA paths, or type PowerShell commands.
+The WorkerKey remains only on the server and is never copied into `client/` or the ZIP.
 
 ## Runtime architecture
 
 ```text
 Harness
   → globally installed ContractBot Skills
-  → OpenContracts MCP over trusted HTTPS
-  → opencontracts-api:8000 through Caddy
+  → http://<fixed-lan-ip>/mcp/
+  → Caddy on the trusted LAN/VPN
+  → opencontracts-api:8000
 ```
 
-Formal document ingestion uses the deterministic helper installed under `CONTRACTBOT_HOME/scripts/opencontracts/`. The WorkerKey stays outside Skill and MCP source.
+For formal ingestion, the client submits to Caddy without credentials. Caddy injects the server-side corpus-bound WorkerKey before proxying the request to OpenContracts.
+
+No client CA, WorkerKey, ContractBot environment variables, or `CONTRACTBOT_HOME` are required.
 
 Detailed server procedure: `deploy/opencontracts/README.md`.
 Architecture: `docs/architecture/c4.md`.
