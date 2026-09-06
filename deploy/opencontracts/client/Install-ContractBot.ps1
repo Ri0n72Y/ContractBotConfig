@@ -13,15 +13,20 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigFile = Join-Path $ScriptDir "contractbot-client.json"
 $CertificateFile = Join-Path $ScriptDir "opencontracts-caddy-root.crt"
 $McpFile = Join-Path $ScriptDir ".mcp.json"
-$SkillsDir = Join-Path $ScriptDir "skills"
-$ScriptsDir = Join-Path $ScriptDir "scripts"
-$WorkBuddySettings = Join-Path $ScriptDir "workbuddy.settings.example.json"
+$BundledSkillsDir = Join-Path $ScriptDir ".codebuddy\skills"
+$BundledScriptsDir = Join-Path $ScriptDir "scripts"
 
 if (-not (Test-Path $ConfigFile)) {
     throw "Client configuration not found: $ConfigFile"
 }
 if (-not (Test-Path $CertificateFile)) {
     throw "Caddy root certificate not found: $CertificateFile"
+}
+if (-not (Test-Path $McpFile)) {
+    throw "MCP configuration not found: $McpFile"
+}
+if (-not (Test-Path $BundledSkillsDir)) {
+    throw "Bundled Skills not found: $BundledSkillsDir"
 }
 
 $config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
@@ -86,21 +91,67 @@ foreach ($entry in $values.GetEnumerator()) {
     [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
 }
 
-if ($TargetDirectory) {
-    $target = [System.IO.Path]::GetFullPath($TargetDirectory)
-    New-Item -ItemType Directory -Force -Path $target | Out-Null
+$projectRoot = if ($TargetDirectory) {
+    [System.IO.Path]::GetFullPath($TargetDirectory)
+}
+else {
+    $ScriptDir
+}
+New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
 
-    if (Test-Path $McpFile) {
-        Copy-Item $McpFile (Join-Path $target ".mcp.json") -Force
+if ([System.IO.Path]::GetFullPath($McpFile) -ne [System.IO.Path]::GetFullPath((Join-Path $projectRoot ".mcp.json"))) {
+    Copy-Item $McpFile (Join-Path $projectRoot ".mcp.json") -Force
+}
+
+$codeBuddyDir = Join-Path $projectRoot ".codebuddy"
+$targetSkillsDir = Join-Path $codeBuddyDir "skills"
+New-Item -ItemType Directory -Force -Path $targetSkillsDir | Out-Null
+Copy-Item (Join-Path $BundledSkillsDir "*") $targetSkillsDir -Recurse -Force
+
+if (Test-Path $BundledScriptsDir) {
+    $targetScriptsDir = Join-Path $projectRoot "scripts"
+    New-Item -ItemType Directory -Force -Path $targetScriptsDir | Out-Null
+    Copy-Item (Join-Path $BundledScriptsDir "*") $targetScriptsDir -Recurse -Force
+}
+
+$settingsLocal = [ordered]@{
+    enabledMcpjsonServers = @("opencontracts")
+    permissions = [ordered]@{
+        deny = @(
+            "mcp__opencontracts__list_threads",
+            "mcp__opencontracts__get_thread_messages",
+            "mcp__opencontracts__create_thread_message",
+            "mcp__opencontracts__list_annotations",
+            "mcp__opencontracts__list_relationships"
+        )
     }
-    if (Test-Path $SkillsDir) {
-        Copy-Item $SkillsDir (Join-Path $target "skills") -Recurse -Force
+    env = $values
+}
+$settingsLocal | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $codeBuddyDir "settings.local.json") -Encoding UTF8
+
+$workBuddyDir = Join-Path $projectRoot ".workbuddy"
+New-Item -ItemType Directory -Force -Path $workBuddyDir | Out-Null
+$workBuddyMcp = [ordered]@{
+    mcpServers = [ordered]@{
+        opencontracts = [ordered]@{
+            type = "http"
+            url = "$baseUrl/mcp/"
+        }
     }
-    if (Test-Path $ScriptsDir) {
-        Copy-Item $ScriptsDir (Join-Path $target "scripts") -Recurse -Force
+}
+$workBuddyMcp | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $workBuddyDir "mcp.json") -Encoding UTF8
+
+$gitDir = Join-Path $projectRoot ".git"
+if (Test-Path $gitDir) {
+    $excludeFile = Join-Path $gitDir "info\exclude"
+    $excludeDir = Split-Path -Parent $excludeFile
+    New-Item -ItemType Directory -Force -Path $excludeDir | Out-Null
+    if (-not (Test-Path $excludeFile)) {
+        New-Item -ItemType File -Path $excludeFile | Out-Null
     }
-    if (Test-Path $WorkBuddySettings) {
-        Copy-Item $WorkBuddySettings (Join-Path $target "workbuddy.settings.example.json") -Force
+    $excludeLines = Get-Content $excludeFile -ErrorAction SilentlyContinue
+    if ($excludeLines -notcontains ".codebuddy/settings.local.json") {
+        Add-Content $excludeFile ".codebuddy/settings.local.json"
     }
 }
 
@@ -111,11 +162,9 @@ Write-Host "History corpus: $historyCorpus"
 Write-Host "Template corpus: $templateCorpus"
 Write-Host "CA: $caTarget"
 Write-Host "WorkerKey: configured"
-if ($TargetDirectory) {
-    Write-Host "Project files copied to: $target"
-}
-else {
-    Write-Host "Use this extracted directory directly as the WorkBuddy project, or rerun with -TargetDirectory <project-path>."
-}
+Write-Host "Workspace: $projectRoot"
+Write-Host "CodeBuddy Skills: $targetSkillsDir"
+Write-Host "CodeBuddy MCP approval: configured"
+Write-Host "WorkBuddy MCP: configured"
 Write-Host ""
-Write-Host "Restart WorkBuddy/CodeBuddy after installation."
+Write-Host "Restart WorkBuddy/CodeBuddy, then use this workspace."
