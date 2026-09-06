@@ -53,15 +53,6 @@ $mcp = [ordered]@{
 }
 $mcp | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $ClientDir ".mcp.json") -Encoding UTF8
 
-$deployment = @"
-# Contract Upload Deployment
-
-IMPORT_URL=$baseUrl/api/imports/documents/
-
-The client must not send an Authorization header. Caddy injects the corpus-bound WorkerKey server-side.
-"@
-$deployment | Set-Content (Join-Path $ClientDir "skills\contract-upload\DEPLOYMENT.md") -Encoding UTF8
-
 $runtimeDir = Join-Path $ScriptDir "runtime"
 if (-not $OutputZip) {
     $OutputZip = Join-Path $runtimeDir "ContractBot-Client.zip"
