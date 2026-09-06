@@ -1,8 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("setup", "up", "logs", "down")]
-    [string]$Command
+    [ValidateSet("setup", "up", "export-ca", "logs", "down")]
+    [string]$Command,
+
+    [string]$Output = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,9 +32,29 @@ function Invoke-CaddyCompose {
     }
 }
 
+function Export-CaddyRootCa {
+    param([Parameter(Mandatory = $true)][string]$Target)
+
+    $targetPath = if ([System.IO.Path]::IsPathRooted($Target)) {
+        $Target
+    }
+    else {
+        Join-Path $DeployDir $Target
+    }
+    $targetPath = [System.IO.Path]::GetFullPath($targetPath)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+
+    Invoke-CaddyCompose cp "caddy:/data/caddy/pki/authorities/local/root.crt" $targetPath
+    Write-Host "Caddy root CA exported: $targetPath"
+}
+
 switch ($Command) {
     "setup" { Invoke-CaddyCompose up -d }
     "up" { Invoke-CaddyCompose up -d }
+    "export-ca" {
+        if (-not $Output) { throw "-Output is required for export-ca" }
+        Export-CaddyRootCa -Target $Output
+    }
     "logs" { Invoke-CaddyCompose logs --tail=200 -f caddy }
     "down" { Invoke-CaddyCompose down }
 }
