@@ -10,14 +10,15 @@ deploy/opencontracts/
 ├── opencontracts-admin.ps1
 ├── opencontracts-admin.sh
 ├── Prepare-WindowsClientBundle.ps1
-├── caddy/
-│   ├── compose.yml
-│   ├── Caddyfile
-│   └── manage.ps1
-└── converter/                 # optional
+└── caddy/
+    ├── compose.yml
+    ├── Caddyfile
+    └── manage.ps1
 ```
 
 OpenContracts continues to use its upstream `local.yml`. ContractBot adds a separate Caddy project on the existing `legal-network`, targeting `opencontracts-api:8000`.
+
+ContractBot does not run a server-side DOC/DOCX/PDF converter. File reading, conversion and editable-document generation are handled by the customer's Harness and local machine capabilities according to the client Skills.
 
 ## 1. Server `.env`
 
@@ -124,7 +125,7 @@ The customer uploads the `client/` ZIP to a compatible Harness and asks the assi
 
 On Windows, the intended trust scope is the current user's Trusted Root Certification Authorities store, so the agent can normally install the CA without machine-wide administrator configuration.
 
-There is no client setup script, WorkerKey configuration, helper runtime, or ContractBot environment-variable setup.
+There is no client setup script, WorkerKey configuration, helper runtime, ContractBot environment-variable setup, or server-side document-conversion service.
 
 ## Caddy operations
 
