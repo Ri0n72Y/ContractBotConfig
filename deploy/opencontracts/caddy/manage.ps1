@@ -25,8 +25,9 @@ Get-Content $EnvFile | ForEach-Object {
 }
 
 function Invoke-CaddyCompose {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
-    & docker compose --env-file $EnvFile -f $ComposeFile @Args
+    param([Parameter(Mandatory = $true)][string[]]$ComposeArgs)
+
+    & docker compose --env-file $EnvFile -f $ComposeFile @ComposeArgs
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose failed"
     }
@@ -44,17 +45,29 @@ function Export-CaddyRootCa {
     $targetPath = [System.IO.Path]::GetFullPath($targetPath)
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
 
-    Invoke-CaddyCompose cp "caddy:/data/caddy/pki/authorities/local/root.crt" $targetPath
+    Invoke-CaddyCompose -ComposeArgs @(
+        "cp",
+        "caddy:/data/caddy/pki/authorities/local/root.crt",
+        $targetPath
+    )
     Write-Host "Caddy root CA exported: $targetPath"
 }
 
 switch ($Command) {
-    "setup" { Invoke-CaddyCompose up -d }
-    "up" { Invoke-CaddyCompose up -d }
+    "setup" {
+        Invoke-CaddyCompose -ComposeArgs @("up", "-d")
+    }
+    "up" {
+        Invoke-CaddyCompose -ComposeArgs @("up", "-d")
+    }
     "export-ca" {
         if (-not $Output) { throw "-Output is required for export-ca" }
         Export-CaddyRootCa -Target $Output
     }
-    "logs" { Invoke-CaddyCompose logs --tail=200 -f caddy }
-    "down" { Invoke-CaddyCompose down }
+    "logs" {
+        Invoke-CaddyCompose -ComposeArgs @("logs", "--tail=200", "-f", "caddy")
+    }
+    "down" {
+        Invoke-CaddyCompose -ComposeArgs @("down")
+    }
 }
