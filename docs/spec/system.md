@@ -2,7 +2,7 @@
 
 ## SYS-1 Runtime boundary
 
-The Harness owns conversation/runtime state, local files, model execution and user interaction. The Skill Pack owns contract-specific behavior and deterministic helper usage. OpenContracts owns retrievable enterprise contract data and formal ingestion processing.
+The Harness owns conversation/runtime state, local files, model execution and user interaction. The Skill Pack owns contract-specific behavioral guidance. OpenContracts owns retrievable enterprise contract data and formal ingestion processing.
 
 ## SYS-2 Trusted-network MVP
 
@@ -14,7 +14,7 @@ Contract-related requests activate `contract` and use local/Harness capabilities
 
 ## SYS-4 Formal ingestion
 
-Formal ingestion is a distinct user-authorized operation and uses the OpenContracts upload helper with a corpus-bound WorkerKey.
+Formal ingestion is a distinct user-authorized operation. The Harness submits the document over HTTPS without a WorkerKey; Caddy injects a server-held WorkerKey bound to `contracts-history` before forwarding to OpenContracts.
 
 ## SYS-5 Experience learning
 
