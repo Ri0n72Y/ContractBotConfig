@@ -39,9 +39,9 @@ if (-not $env:TEMPLATE_CORPUS) {
 }
 
 function Invoke-OpenContractsCompose {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    param([Parameter(Mandatory = $true)][string[]]$ComposeArgs
 
-    & docker compose -f $env:OPENCONTRACTS_LOCAL_YML @Args
+    & docker compose -f $env:OPENCONTRACTS_LOCAL_YML @ComposeArgs
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose failed"
     }
@@ -78,10 +78,12 @@ for slug, title, description in specs:
     print(f"CORPUS={slug} ID={corpus.pk} CREATED={created}")
 '@
 
-        Invoke-OpenContractsCompose exec -T `
-            -e "HISTORY_CORPUS=$($env:HISTORY_CORPUS)" `
-            -e "TEMPLATE_CORPUS=$($env:TEMPLATE_CORPUS)" `
-            django /entrypoint python manage.py shell -c $code
+        Invoke-OpenContractsCompose -ComposeArgs @(
+            "exec", "-T",
+            "-e", "HISTORY_CORPUS=$($env:HISTORY_CORPUS)",
+            "-e", "TEMPLATE_CORPUS=$($env:TEMPLATE_CORPUS)",
+            "django", "/entrypoint", "python", "manage.py", "shell", "-c", $code
+        )
     }
 
     "publish-corpuses" {
@@ -97,10 +99,12 @@ for slug in [os.environ["HISTORY_CORPUS"], os.environ["TEMPLATE_CORPUS"]]:
     print(f"PUBLIC={slug} ID={corpus.pk}")
 '@
 
-        Invoke-OpenContractsCompose exec -T `
-            -e "HISTORY_CORPUS=$($env:HISTORY_CORPUS)" `
-            -e "TEMPLATE_CORPUS=$($env:TEMPLATE_CORPUS)" `
-            django /entrypoint python manage.py shell -c $code
+        Invoke-OpenContractsCompose -ComposeArgs @(
+            "exec", "-T",
+            "-e", "HISTORY_CORPUS=$($env:HISTORY_CORPUS)",
+            "-e", "TEMPLATE_CORPUS=$($env:TEMPLATE_CORPUS)",
+            "django", "/entrypoint", "python", "manage.py", "shell", "-c", $code
+        )
     }
 
     "mint-worker-key" {
@@ -110,12 +114,11 @@ from opencontractserver.corpuses.models import Corpus
 print(f"HISTORY_ID={Corpus.objects.get(slug=os.environ['HISTORY_CORPUS']).pk}")
 '@
 
-        $result = & docker compose -f $env:OPENCONTRACTS_LOCAL_YML exec -T `
-            -e "HISTORY_CORPUS=$($env:HISTORY_CORPUS)" `
-            django /entrypoint python manage.py shell -c $code
-        if ($LASTEXITCODE -ne 0) {
-            throw "docker compose failed while resolving history corpus id"
-        }
+        $result = Invoke-OpenContractsCompose -ComposeArgs @(
+            "exec", "-T",
+            "-e", "HISTORY_CORPUS=$($env:HISTORY_CORPUS)",
+            "django", "/entrypoint", "python", "manage.py", "shell", "-c", $code
+        )
 
         $historyLine = $result | Where-Object { $_ -match '^HISTORY_ID=\d+$' } | Select-Object -Last 1
         if (-not $historyLine) {
@@ -123,10 +126,16 @@ print(f"HISTORY_ID={Corpus.objects.get(slug=os.environ['HISTORY_CORPUS']).pk}")
         }
         $historyId = ($historyLine -split "=", 2)[1]
 
-        Invoke-OpenContractsCompose exec -T django /entrypoint python manage.py mint_worker_token `
-            --corpus $historyId `
-            --worker-name $(if ($env:WORKER_NAME) { $env:WORKER_NAME } else { "contractbot-formal-ingest" }) `
-            --rate-limit $(if ($env:WORKER_RATE_LIMIT) { $env:WORKER_RATE_LIMIT } else { "30" }) `
-            --expires-days $(if ($env:WORKER_EXPIRES_DAYS) { $env:WORKER_EXPIRES_DAYS } else { "365" })
+        $workerName = if ($env:WORKER_NAME) { $env:WORKER_NAME } else { "contractbot-formal-ingest" }
+        $rateLimit = if ($env:WORKER_RATE_LIMIT) { $env:WORKER_RATE_LIMIT } else { "30" }
+        $expiresDays = if ($env:WORKER_EXPIRES_DAYS) { $env:WORKER_EXPIRES_DAYS } else { "365" }
+
+        Invoke-OpenContractsCompose -ComposeArgs @(
+            "exec", "-T", "django", "/entrypoint", "python", "manage.py", "mint_worker_token",
+            "--corpus", $historyId,
+            "--worker-name", $workerName,
+            "--rate-limit", $rateLimit,
+            "--expires-days", $expiresDays
+        )
     }
 }
