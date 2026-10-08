@@ -20,7 +20,7 @@ flowchart LR
     M[OpenContracts MCP /mcp/]
     RH[contracts-history]
     RT[contract-templates]
-    W[WorkerKey upload helper]
+    W[Server-side WorkerKey injection]
     MT[Maintainer]
     G[Git / Skill source]
 
@@ -29,7 +29,8 @@ flowchart LR
     S -->|historical/template retrieval when requested or approved| N --> C --> M
     M --> RH
     M --> RT
-    S -->|explicit formal ingestion| W --> N --> C --> RH
+    S -->|explicit formal ingestion via HTTPS| N
+    C -->|import route| W --> RH
     S -->|explicit learning consent| E
     MT -->|periodic review| E
     MT -->|manual Skill changes| G --> S
@@ -45,7 +46,7 @@ The Skill Pack owns contract-mode behavior, retrieval guidance, evidence handlin
 
 OpenContracts owns stored historical contracts and templates, extraction/retrieval, public MCP reads for the trusted-network MVP, WorkerKey-bound formal ingestion, and server-side processing state.
 
-Infrastructure owns the fixed LAN IP, LAN/VPN routing, Caddy HTTPS termination, Caddy CA distribution, and firewall rules that prevent untrusted-network access.
+Infrastructure owns the fixed LAN IP, LAN/VPN routing, Caddy HTTPS termination, server-held WorkerKey injection, and firewall rules that prevent untrusted-network access. The client bundle distributes Caddy's public root CA; the installing Harness establishes its local trust.
 
 Maintainers periodically collect experience notes, review/generalize useful lessons, update the relevant Skills, and release them through normal version control.
 
@@ -94,7 +95,7 @@ local/generated contract
 → explicit user ingestion intent
 → contract-upload
 → duplicate check via MCP
-→ corpus-bound WorkerKey helper
+→ Caddy import route injects server-held corpus-bound WorkerKey
 → submitted/processing feedback
 → later MCP verification
 ```
