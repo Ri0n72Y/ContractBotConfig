@@ -60,11 +60,7 @@ Unknown required business facts should be represented as explicit placeholders s
 
 `contract-learning` is a low-priority auxiliary Skill.
 
-After a meaningful task and separate user consent, it MAY create a local `contract-experience-note.md` containing:
-
-- session facts;
-- distilled knowledge points linked back to those facts;
-- scope/confidence qualifiers.
+After a meaningful task and separate user consent, it MAY create a non-overwriting local experience record containing the observed issue and user feedback, the accepted result, a reusable suggestion tied to those observations, and its scope/evidence limits.
 
 MVP learning material MUST NOT be uploaded to OpenContracts, vectorized, automatically retrieved or automatically applied to future sessions.
 
