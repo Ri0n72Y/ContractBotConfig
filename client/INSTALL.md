@@ -13,7 +13,17 @@ This directory is the complete client distribution unit. When a user uploads an 
 4. Do not ask for or configure a WorkerKey. Formal-ingestion authentication is injected by the server-side Caddy gateway.
 5. Do not create ContractBot environment variables, helper runtimes, or a `CONTRACTBOT_HOME` directory.
 6. For formal ingestion, follow `skills/contract-upload/SKILL.md`. It derives the import endpoint from the installed `opencontracts` MCP origin; the client must not send an Authorization header.
-7. Tell the user only that installation completed and whether a Harness restart is required.
+7. After installation, perform the self-check below before reporting completion.
+
+## Post-install self-check
+
+Use the current Harness's native inspection/testing capability after installing, without asking the user to run commands:
+
+1. Confirm the bundled certificate is trusted in the current-user CA store (on Windows, \`Cert:\CurrentUser\Root\`).
+2. Confirm the registered \`opencontracts\` MCP points to the unchanged URL in \`.mcp.json\` and that its tools can actually be listed over verified HTTPS.
+3. Confirm all five ContractBot Skills can be discovered from the installed user/global Skill locations: \`contract\`, \`contract-repository\`, \`contract-upload\`, \`contract-document\`, \`contract-learning\`.
+
+Do not upload a document or make any formal write merely to test installation. If a Harness restart is required, report that verification is pending rather than claiming success. If the Harness lacks permissions or tools to perform a check, distinguish "installed but unverified" from "verified working" and identify the blocked item. Report the result and any required restart succinctly.
 
 ## Installed client boundary
 
